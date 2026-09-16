@@ -35,10 +35,16 @@ type app struct {
 	secretsBinding   *desktop.SecretsBinding
 	providersBinding *desktop.ProvidersBinding
 	jobsBinding      *desktop.JobsBinding
-	providerWiring   *providerWiring
-	jobWiring        *jobWiring
-	emit             func(context.Context, string, ...interface{})
-	newEnvelope      func(string, any) (desktop.Envelope, error)
+	// projectsBinding and legacyUploadBinding are the WP-04 surface: the canvas
+	// reads and writes through the first, and a legacy blob travels through the
+	// second.
+	projectsBinding     *desktop.ProjectsBinding
+	legacyUploadBinding *desktop.LegacyUploadBinding
+	providerWiring      *providerWiring
+	jobWiring           *jobWiring
+	projectWiring       *projectWiring
+	emit                func(context.Context, string, ...interface{})
+	newEnvelope         func(string, any) (desktop.Envelope, error)
 }
 
 func newApp(shutdown func(context.Context) error) *app {
@@ -133,6 +139,18 @@ func (a *app) startup(ctx context.Context) {
 				}
 				jobStack.attach(ctx)
 				a.jobWiring = jobStack
+			}
+
+			// The WP-04 stack shares the same database and FileStore, so a
+			// migrated project's media lands in the same content-addressed store
+			// the job pipeline writes to.
+			projectStack := composeProjects(handle, dirs, store, a.legacyUploadBinding)
+			if projectStack != nil {
+				if a.projectsBinding != nil {
+					projectStack.binding = a.projectsBinding
+				}
+				projectStack.attach(ctx)
+				a.projectWiring = projectStack
 			}
 		}
 	}

@@ -132,6 +132,7 @@ const SECRET_PATTERNS = [
 // actually match a pattern. Entries are exact; a listed file that no longer
 // matches is reported as a stale exemption so the list cannot rot.
 const FIXTURE_FILES = new Set([
+    "internal/application/backup/service_test.go",
     "internal/infrastructure/logging/logging_test.go",
     "internal/infrastructure/secretstore/wincred_windows_test.go",
     "web/src/services/__tests__/security.spec.ts",

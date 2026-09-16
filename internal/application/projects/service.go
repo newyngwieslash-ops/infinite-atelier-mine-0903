@@ -367,6 +367,58 @@ func (s *Service) CreateNode(ctx context.Context, documentID string, input NodeI
 	return node, nil
 }
 
+// UpdateNodeRequest replaces a node's stored fields.
+//
+// A canvas save sends the node's current shape, so this is a full replace
+// rather than a patch: a field the caller omits becomes its zero value, which
+// is what makes the stored row match what the canvas rendered.
+type UpdateNodeRequest struct {
+	ID             string
+	NodeType       string
+	Title          string
+	EntityType     string
+	EntityID       string
+	PositionX      float64
+	PositionY      float64
+	Width          float64
+	Height         float64
+	ZIndex         int
+	UIState        string
+	LegacyMetadata string
+	Revision       int64
+}
+
+// UpdateNode stores a node's new shape under a revision guard.
+func (s *Service) UpdateNode(ctx context.Context, request UpdateNodeRequest) (project.Node, error) {
+	if !s.Available() || s.canvas == nil {
+		return project.Node{}, storageFailure()
+	}
+	node, err := s.canvas.GetNode(ctx, request.ID)
+	if err != nil {
+		return project.Node{}, err
+	}
+	node.NodeType = strings.TrimSpace(request.NodeType)
+	node.Title = request.Title
+	node.EntityType = strings.TrimSpace(request.EntityType)
+	node.EntityID = strings.TrimSpace(request.EntityID)
+	node.PositionX = request.PositionX
+	node.PositionY = request.PositionY
+	node.Width = request.Width
+	node.Height = request.Height
+	node.ZIndex = request.ZIndex
+	node.UIState = request.UIState
+	node.LegacyMetadata = request.LegacyMetadata
+	node.UpdatedAt = s.now()
+	if err := project.ValidateNode(node); err != nil {
+		return project.Node{}, err
+	}
+	if err := s.canvas.UpdateNode(ctx, node, request.Revision); err != nil {
+		return project.Node{}, err
+	}
+	node.Revision = request.Revision + 1
+	return node, nil
+}
+
 // MoveNodesRequest moves one or more nodes in a single pass.
 type MoveNodesRequest struct {
 	DocumentID string

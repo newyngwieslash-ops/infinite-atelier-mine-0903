@@ -53,6 +53,8 @@ func run() error {
 	application.secretsBinding = &desktop.SecretsBinding{}
 	application.providersBinding = &desktop.ProvidersBinding{}
 	application.jobsBinding = &desktop.JobsBinding{}
+	application.projectsBinding = &desktop.ProjectsBinding{}
+	application.legacyUploadBinding = desktop.NewLegacyUploadBinding()
 	application.emit = wailsruntime.EventsEmit
 	shutdown := newShutdownSequence(application.closeDatabase, logger, logCloser.Close, reportIndependent)
 	application.shutdown = shutdown
@@ -79,6 +81,8 @@ func run() error {
 			application.secretsBinding,
 			application.providersBinding,
 			application.jobsBinding,
+			application.projectsBinding,
+			application.legacyUploadBinding,
 		},
 		SingleInstanceLock: &options.SingleInstanceLock{
 			UniqueId: singleInstanceID,

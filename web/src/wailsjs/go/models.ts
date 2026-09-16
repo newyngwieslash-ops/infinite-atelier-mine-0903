@@ -1,5 +1,247 @@
 export namespace desktop {
 	
+	export class CanvasChatSessionDTO {
+	    id: string;
+	    title: string;
+	    messagesJson: string;
+	    createdAt: string;
+	    updatedAt: string;
+	    revision: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new CanvasChatSessionDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.title = source["title"];
+	        this.messagesJson = source["messagesJson"];
+	        this.createdAt = source["createdAt"];
+	        this.updatedAt = source["updatedAt"];
+	        this.revision = source["revision"];
+	    }
+	}
+	export class CanvasEdgeDTO {
+	    id: string;
+	    fromNodeId: string;
+	    toNodeId: string;
+	    relationType: string;
+	    fromPort?: string;
+	    toPort?: string;
+	    required: boolean;
+	    validationStatus: string;
+	    metadata?: string;
+	    legacyMetadata?: string;
+	    revision: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new CanvasEdgeDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.fromNodeId = source["fromNodeId"];
+	        this.toNodeId = source["toNodeId"];
+	        this.relationType = source["relationType"];
+	        this.fromPort = source["fromPort"];
+	        this.toPort = source["toPort"];
+	        this.required = source["required"];
+	        this.validationStatus = source["validationStatus"];
+	        this.metadata = source["metadata"];
+	        this.legacyMetadata = source["legacyMetadata"];
+	        this.revision = source["revision"];
+	    }
+	}
+	export class CanvasNodeDTO {
+	    id: string;
+	    nodeType: string;
+	    title: string;
+	    entityType?: string;
+	    entityId?: string;
+	    positionX: number;
+	    positionY: number;
+	    width: number;
+	    height: number;
+	    zIndex: number;
+	    uiState?: string;
+	    legacyMetadata?: string;
+	    revision: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new CanvasNodeDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.nodeType = source["nodeType"];
+	        this.title = source["title"];
+	        this.entityType = source["entityType"];
+	        this.entityId = source["entityId"];
+	        this.positionX = source["positionX"];
+	        this.positionY = source["positionY"];
+	        this.width = source["width"];
+	        this.height = source["height"];
+	        this.zIndex = source["zIndex"];
+	        this.uiState = source["uiState"];
+	        this.legacyMetadata = source["legacyMetadata"];
+	        this.revision = source["revision"];
+	    }
+	}
+	export class ViewportDTO {
+	    x: number;
+	    y: number;
+	    k: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ViewportDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.x = source["x"];
+	        this.y = source["y"];
+	        this.k = source["k"];
+	    }
+	}
+	export class ProjectDTO {
+	    id: string;
+	    workspaceId: string;
+	    projectType: string;
+	    name: string;
+	    description: string;
+	    language: string;
+	    status: string;
+	    createdAt: string;
+	    updatedAt: string;
+	    revision: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ProjectDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.workspaceId = source["workspaceId"];
+	        this.projectType = source["projectType"];
+	        this.name = source["name"];
+	        this.description = source["description"];
+	        this.language = source["language"];
+	        this.status = source["status"];
+	        this.createdAt = source["createdAt"];
+	        this.updatedAt = source["updatedAt"];
+	        this.revision = source["revision"];
+	    }
+	}
+	export class CanvasSnapshotDTO {
+	    project: ProjectDTO;
+	    documentId: string;
+	    canvasKind: string;
+	    viewport: ViewportDTO;
+	    background?: string;
+	    nodes: CanvasNodeDTO[];
+	    edges: CanvasEdgeDTO[];
+	    chatSessions: CanvasChatSessionDTO[];
+	
+	    static createFrom(source: any = {}) {
+	        return new CanvasSnapshotDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.project = this.convertValues(source["project"], ProjectDTO);
+	        this.documentId = source["documentId"];
+	        this.canvasKind = source["canvasKind"];
+	        this.viewport = this.convertValues(source["viewport"], ViewportDTO);
+	        this.background = source["background"];
+	        this.nodes = this.convertValues(source["nodes"], CanvasNodeDTO);
+	        this.edges = this.convertValues(source["edges"], CanvasEdgeDTO);
+	        this.chatSessions = this.convertValues(source["chatSessions"], CanvasChatSessionDTO);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class CreateEdgeRequest {
+	    documentId: string;
+	    fromNodeId: string;
+	    toNodeId: string;
+	    relationType?: string;
+	    fromPort?: string;
+	    toPort?: string;
+	    required?: boolean;
+	    metadata?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new CreateEdgeRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.documentId = source["documentId"];
+	        this.fromNodeId = source["fromNodeId"];
+	        this.toNodeId = source["toNodeId"];
+	        this.relationType = source["relationType"];
+	        this.fromPort = source["fromPort"];
+	        this.toPort = source["toPort"];
+	        this.required = source["required"];
+	        this.metadata = source["metadata"];
+	    }
+	}
+	export class CreateProjectRequest {
+	    name: string;
+	    description: string;
+	    projectType: string;
+	    language: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new CreateProjectRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.description = source["description"];
+	        this.projectType = source["projectType"];
+	        this.language = source["language"];
+	    }
+	}
+	export class ImportProjectsRequest {
+	    snapshotJson: string;
+	    mode?: string;
+	    sourceCase?: string;
+	    legacyRoot?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ImportProjectsRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.snapshotJson = source["snapshotJson"];
+	        this.mode = source["mode"];
+	        this.sourceCase = source["sourceCase"];
+	        this.legacyRoot = source["legacyRoot"];
+	    }
+	}
 	export class JobAttemptDTO {
 	    id: string;
 	    attemptNumber: number;
@@ -137,6 +379,78 @@ export namespace desktop {
 	        this.offset = source["offset"];
 	    }
 	}
+	export class ListProjectsRequest {
+	    statuses?: string[];
+	    limit?: number;
+	    offset?: number;
+	    includeTrashed?: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new ListProjectsRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.statuses = source["statuses"];
+	        this.limit = source["limit"];
+	        this.offset = source["offset"];
+	        this.includeTrashed = source["includeTrashed"];
+	    }
+	}
+	export class NodePositionDTO {
+	    id: string;
+	    x: number;
+	    y: number;
+	    zIndex?: number;
+	    revision: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new NodePositionDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.x = source["x"];
+	        this.y = source["y"];
+	        this.zIndex = source["zIndex"];
+	        this.revision = source["revision"];
+	    }
+	}
+	export class MoveNodesRequest {
+	    documentId: string;
+	    positions: NodePositionDTO[];
+	
+	    static createFrom(source: any = {}) {
+	        return new MoveNodesRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.documentId = source["documentId"];
+	        this.positions = this.convertValues(source["positions"], NodePositionDTO);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	
+	
 	export class ProviderConfigRequest {
 	    id: string;
 	    kind: string;
@@ -183,6 +497,58 @@ export namespace desktop {
 	        this.cancelled = source["cancelled"];
 	        this.activeTotal = source["activeTotal"];
 	        this.paused = source["paused"];
+	    }
+	}
+	export class RenameProjectRequest {
+	    id: string;
+	    name: string;
+	    revision: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new RenameProjectRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.revision = source["revision"];
+	    }
+	}
+	export class SaveChatSessionRequest {
+	    id?: string;
+	    canvasDocumentId: string;
+	    title: string;
+	    messagesJson: string;
+	    revision?: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new SaveChatSessionRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.canvasDocumentId = source["canvasDocumentId"];
+	        this.title = source["title"];
+	        this.messagesJson = source["messagesJson"];
+	        this.revision = source["revision"];
+	    }
+	}
+	export class SetProjectStatusRequest {
+	    id: string;
+	    status: string;
+	    revision: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new SetProjectStatusRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.status = source["status"];
+	        this.revision = source["revision"];
 	    }
 	}
 	export class SetSecretRequest {
@@ -270,6 +636,78 @@ export namespace desktop {
 		    }
 		    return a;
 		}
+	}
+	export class UpdateViewportRequest {
+	    documentId: string;
+	    viewport: ViewportDTO;
+	    revision: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new UpdateViewportRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.documentId = source["documentId"];
+	        this.viewport = this.convertValues(source["viewport"], ViewportDTO);
+	        this.revision = source["revision"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class UpsertNodeRequest {
+	    id?: string;
+	    documentId: string;
+	    nodeType: string;
+	    title: string;
+	    entityType?: string;
+	    entityId?: string;
+	    positionX: number;
+	    positionY: number;
+	    width: number;
+	    height: number;
+	    zIndex: number;
+	    uiState?: string;
+	    legacyMetadata?: string;
+	    revision?: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new UpsertNodeRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.documentId = source["documentId"];
+	        this.nodeType = source["nodeType"];
+	        this.title = source["title"];
+	        this.entityType = source["entityType"];
+	        this.entityId = source["entityId"];
+	        this.positionX = source["positionX"];
+	        this.positionY = source["positionY"];
+	        this.width = source["width"];
+	        this.height = source["height"];
+	        this.zIndex = source["zIndex"];
+	        this.uiState = source["uiState"];
+	        this.legacyMetadata = source["legacyMetadata"];
+	        this.revision = source["revision"];
+	    }
 	}
 
 }
