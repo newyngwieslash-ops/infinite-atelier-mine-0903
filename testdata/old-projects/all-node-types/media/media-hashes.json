@@ -1,0 +1,14 @@
+{
+  "note.png": {
+    "bytes": 77,
+    "sha256": "a703bd0ad5455766ea9fe00989929aadc48ffe5bc9aff665d7f66d6a3178db89"
+  },
+  "clip.mp4": {
+    "bytes": 24,
+    "sha256": "6455d3be97e897bd7fa9cf215bd5694d67da966407f9e38d56154db747172ace"
+  },
+  "tone.wav": {
+    "bytes": 60,
+    "sha256": "885dfb6d581fab8a9c916b68ab6cef7da036baedd7e3f6c3c5fa587682ebe309"
+  }
+}

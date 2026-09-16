@@ -10,6 +10,8 @@ import "dayjs/locale/zh-cn";
 import { useTranslation } from "react-i18next";
 
 import { ClientRootInit } from "@/components/layout/client-root-init";
+import { LegacyMediaNotice } from "@/components/layout/legacy-media-notice";
+import { LegacySecretNotice } from "@/components/layout/legacy-secret-notice";
 import type { AppLocale } from "@/i18n";
 import { getAntThemeConfig } from "@/lib/app-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
@@ -47,7 +49,11 @@ export function AppProviders({ children }: { children: ReactNode }) {
             <ProConfigProvider dark={dark}>
                 <App>
                     <QueryClientProvider client={queryClient}>
-                        <ClientRootInit>{children}</ClientRootInit>
+                        <ClientRootInit>
+                            <LegacySecretNotice />
+                            <LegacyMediaNotice />
+                            {children}
+                        </ClientRootInit>
                     </QueryClientProvider>
                 </App>
             </ProConfigProvider>

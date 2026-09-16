@@ -33,51 +33,83 @@ Infinite Atelier 将画布编排、图片生成、参考图、提示词、资产
 - [MONOFORM 素形白模预演工作台源码](https://github.com/GuiYi-Xi/monoform-previs-studio)
 - [导演台使用教程（哔哩哔哩）](https://www.bilibili.com/video/BV1HNud6SEgs/)
 
-## Windows 启动
+## 运行模式
 
-双击仓库根目录的 `start.bat`。电脑需要先安装 Node.js LTS（Node.js 20.19+ 或 22.12+）。启动器会刷新系统 PATH，并识别官方安装、NVM、Volta、Scoop、fnm、注册表和常见安装目录：
+### 浏览器开发模式
 
-[下载 Node.js LTS](https://nodejs.org/en/download)
-
-启动脚本会自动安装依赖，并从 `3000` 开始选择可用端口启动：
-
-```text
-http://localhost:3000
-```
-
-也可以手动运行：
+现有自由画布仍可通过 Vite 在浏览器中开发。安装 Node.js 22 LTS 后，在仓库根目录执行：
 
 ```powershell
 cd web
-npm install --legacy-peer-deps --include=optional
-npm run dev
+npm ci --legacy-peer-deps
+npm run dev -- --host 127.0.0.1
 ```
 
-`start.bat` 会校验 Vite 及其 Windows 原生模块；依赖不完整时会自动补装。
+Vite 只应绑定到 `127.0.0.1`；浏览器地址形如 `http://127.0.0.1:3000`。浏览器模式继续使用既有本地浏览器存储，不会调用 Wails Binding，也不会显示桌面核心状态。
 
-如果安装 Node.js 后仍提示找不到，请先重启 Windows（或注销后重新登录），然后再次运行 `start.bat`。启动器不会自动重复打开 Node.js 下载页面。
+`start.bat` 仍可用于现有 Windows 浏览器启动流程；它会检查 Node.js 与 Vite 依赖。首次安装会在 `web/node_modules` 创建大量已忽略的依赖文件。
 
-首次启动会在 `web/node_modules` 安装前端依赖，因此本地目录会增加数万个文件和约数百 MB 占用。该目录已被 Git 忽略，不会上传到仓库。
+### 桌面开发与生产构建
 
-## 生产构建
+WP-01 使用 Wails v2、Go 1.25 和系统 WebView 承载同一 React 应用。Windows 需要 Node.js 22 LTS、Go 1.25、Microsoft Edge WebView2 Runtime，以及可用的 Windows 编译工具链。安装固定 Wails CLI：
 
 ```powershell
-cd web
-npm run typecheck
-npm run build:monoform
-npm run build
+go install github.com/wailsapp/wails/v2/cmd/wails@v2.15.0
 ```
 
-构建结果位于 `web/dist`。
+确保 Go 的 bin 目录在 `PATH` 中，然后从仓库根目录运行：
+
+```powershell
+wails dev
+wails build
+```
+
+`wails dev` 仅用于本地桌面开发；`wails build` 生成嵌入前端的 Windows 可分发程序到 `build/bin/`，运行已构建程序不需要目标机器安装 Node.js 或 Vite。不要提交 `build/bin/`、`build/appicon.png` 或 `build/windows/`。`web/dist/.gitkeep` 是零字节嵌入目录占位文件，执行 Vite 或 Wails 构建清理后应恢复它，不应提交其他 `web/dist` 文件。
+
+桌面模式的 WP-01 数据目录由 Go 管理，默认位于当前用户配置目录下的 `InfiniteAtelier`，其中包括 SQLite 数据库、受管文件、临时文件、日志和迁移快照。现有浏览器画布数据尚未迁移到该数据库；WP-01 不读取或迁移已有浏览器数据。
+
+## 验证
+
+在已安装现有前端依赖后，从仓库根目录运行对应平台脚本：
+
+```powershell
+./scripts/verify.ps1
+```
+
+```sh
+./scripts/verify.sh
+```
+
+两个脚本都会运行前端 typecheck、前端安全测试（`npm test`）、production build、可用的 MONOFORM source build、`go test ./... -count=1`、`go vet ./...`，以及安全静态扫描（动态执行、密钥模式、未受保护的配置序列化）。安装 Wails CLI 时脚本还会执行 `wails build`；未安装时会报告固定版本的安装命令及该 production gate 的 SKIP。当前仓库仍没有前端 lint script，脚本会如实报告 SKIP。
+
+## 当前范围
+
+WP-01 提供 Wails、Go Core、SQLite foundation、FileStore、日志和只读 health binding。
+
+WP-02 增加安全 Provider 基础（仅文本链路）：
+
+- API Key 保存在 Windows 凭据管理器；数据库只保存密钥引用，普通备份与配置文件不包含密钥；
+- 文本生成经 Go Provider Gateway 执行受控 HTTPS 请求（域名/IP/端口策略、DNS 固定、重定向复检、TLS 校验、超时与响应大小限制），并记录脱敏调用审计；
+- 桌面模式下模型调用脚本不可达，URL 传入的 API Key 会被忽略并提示。
+
+WP-03 增加持久任务与图像 Provider：
+
+- 任务持久化在 SQLite：排队、优先级、租约、重试退避、取消、失败分类，关闭应用后未完成任务在下次启动时恢复或安全失败；
+- **图片生成与编辑**改由 Go 任务核心执行：密钥不进入前端，结果先经内容校验再以内容寻址方式入库，成功必须对应已提交的文件引用；
+- Provider 返回的远程结果 URL 走单独下载策略：仅 HTTPS、拒绝私网/回环/云 metadata、逐跳复检、流式大小上限；
+- 异步远程任务按固定间隔轮询（`RemotePollInterval`，默认 5 秒），轮询本身不占用重试次数；已有远程 ID 的任务重启后只轮询、不会重复提交；取消时若无法确认远端已停止，会记录为待人工确认的孤儿任务；
+- 「任务中心」页面可查看队列、进度与失败原因，支持暂停/恢复、批量取消、仅重试失败；
+- 视频与音频目前只有契约与确定性 Mock（真实适配器属后续工作包）；界面仍走既有浏览器直连链路，启动时会明确提示该范围，安全扫描器拒绝新增浏览器直连调用。
 
 ## 使用说明
 
-1. 打开右上角配置，添加 API 地址和 API Key。
-2. 为渠道拉取或手动添加模型，并设置图片、视频、文本或音频能力。
+1. 打开右上角配置，添加渠道的 API 地址与模型。
+2. 在「渠道」中通过安全密钥输入框保存 API Key（桌面模式）；密钥写入系统凭据存储，界面只显示是否已配置与短提示。
 3. 新建画布，将提示词、参考图和生成节点组织到同一工作区。
-4. 主页提示词库的内置封面位于 `web/public/prompt-covers`，卡片右上角可以随时替换。
+4. 在「任务中心」查看生成任务队列与失败重试。
+5. 主页提示词库的内置封面位于 `web/public/prompt-covers`，卡片右上角可以随时替换。
 
-所有配置、画布、资产和生成记录默认保存在当前浏览器本地。浏览器数据按网址来源隔离，因此不同磁盘目录只要都使用 `http://localhost:3000`，就会读取同一份本地配置。API Key 不会提交到仓库；分享导出的配置或截图前仍应检查敏感信息。
+浏览器开发模式仍把配置保存在当前浏览器本地。桌面模式的安全密钥不再进入浏览器存储；旧版本保存的明文密钥会在桌面模式下收到迁移提示，请通过安全输入框重新保存后再清除旧值。API Key 不会提交到仓库；分享导出的配置或截图前仍应检查敏感信息。
 
 ## 目录
 

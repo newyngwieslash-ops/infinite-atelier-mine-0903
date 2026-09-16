@@ -1,0 +1,68 @@
+{
+  "manifestVersion": 1,
+  "case": "minimal",
+  "description": "One free-canvas project with two text nodes and one connection. No media, no chat, no history.",
+  "expected": {
+    "projects": 1,
+    "nodes": 2,
+    "edges": 1,
+    "mediaFiles": 0,
+    "chatSessions": 0,
+    "generationHistory": 0,
+    "assets": 0,
+    "warnings": 0
+  },
+  "snapshot": {
+    "app": "infinite-canvas",
+    "manifestVersion": 1,
+    "exportedAt": "2026-09-16T00:00:00.000Z",
+    "projects": [
+      {
+        "id": "legacy-minimal-1",
+        "title": "Minimal Project",
+        "createdAt": "2026-09-01T10:00:00.000Z",
+        "updatedAt": "2026-09-02T11:30:00.000Z",
+        "nodes": [
+          {
+            "id": "node-text-1",
+            "type": "text",
+            "title": "Opening line",
+            "position": { "x": 120, "y": 80 },
+            "width": 320,
+            "height": 180,
+            "metadata": {
+              "content": "A quiet morning on the pier.",
+              "status": "success"
+            }
+          },
+          {
+            "id": "node-text-2",
+            "type": "text",
+            "title": "Second line",
+            "position": { "x": 520, "y": 80 },
+            "width": 320,
+            "height": 180,
+            "metadata": {
+              "content": "The boats are still asleep.",
+              "status": "success"
+            }
+          }
+        ],
+        "connections": [
+          { "id": "edge-1", "fromNodeId": "node-text-1", "toNodeId": "node-text-2" }
+        ],
+        "chatSessions": [],
+        "activeChatId": null,
+        "backgroundMode": "lines",
+        "showImageInfo": false,
+        "viewport": { "x": -40, "y": 25, "k": 1.25 }
+      }
+    ],
+    "assets": [],
+    "generationHistory": [],
+    "promptLibrary": { "builtInCovers": {} },
+    "uiPreferences": {},
+    "media": [],
+    "unsupported": {}
+  }
+}

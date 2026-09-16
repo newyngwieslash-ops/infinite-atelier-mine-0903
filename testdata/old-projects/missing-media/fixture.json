@@ -1,0 +1,80 @@
+{
+  "manifestVersion": 1,
+  "case": "missing-media",
+  "description": "One project whose image node references a media key that is listed in the manifest but whose bytes are never uploaded. The import must complete, keep the node, and report a missing-file warning instead of failing the whole project or silently producing a broken node.",
+  "expected": {
+    "projects": 1,
+    "nodes": 2,
+    "edges": 1,
+    "mediaFiles": 1,
+    "chatSessions": 0,
+    "generationHistory": 0,
+    "assets": 0,
+    "warnings": 1,
+    "warningCodes": ["missing_media"],
+    "missingKeys": ["image:legacy-missing-1"],
+    "presentKeys": ["image:legacy-media-image-1"]
+  },
+  "snapshot": {
+    "app": "infinite-canvas",
+    "manifestVersion": 1,
+    "exportedAt": "2026-09-16T00:00:00.000Z",
+    "projects": [
+      {
+        "id": "legacy-missing-1",
+        "title": "Missing Media",
+        "createdAt": "2026-08-25T08:00:00.000Z",
+        "updatedAt": "2026-08-25T08:00:00.000Z",
+        "nodes": [
+          {
+            "id": "node-image-present",
+            "type": "image",
+            "title": "Present image",
+            "position": { "x": 0, "y": 0 },
+            "width": 256,
+            "height": 256,
+            "metadata": {
+              "content": "image:legacy-media-image-1",
+              "storageKey": "image:legacy-media-image-1",
+              "mimeType": "image/png",
+              "bytes": 77,
+              "status": "success"
+            }
+          },
+          {
+            "id": "node-image-absent",
+            "type": "image",
+            "title": "Absent image",
+            "position": { "x": 320, "y": 0 },
+            "width": 256,
+            "height": 256,
+            "metadata": {
+              "content": "image:legacy-missing-1",
+              "storageKey": "image:legacy-missing-1",
+              "mimeType": "image/png",
+              "bytes": 4096,
+              "status": "success"
+            }
+          }
+        ],
+        "connections": [
+          { "id": "edge-1", "fromNodeId": "node-image-present", "toNodeId": "node-image-absent" }
+        ],
+        "chatSessions": [],
+        "activeChatId": null,
+        "backgroundMode": "lines",
+        "showImageInfo": false,
+        "viewport": { "x": 0, "y": 0, "k": 1 }
+      }
+    ],
+    "assets": [],
+    "generationHistory": [],
+    "promptLibrary": { "builtInCovers": {} },
+    "uiPreferences": {},
+    "media": [
+      { "legacyKey": "image:legacy-media-image-1", "mimeType": "image/png", "bytes": 77, "file": "note.png" },
+      { "legacyKey": "image:legacy-missing-1", "mimeType": "image/png", "bytes": 4096, "file": "absent.png" }
+    ],
+    "unsupported": {}
+  }
+}

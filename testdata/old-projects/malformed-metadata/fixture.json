@@ -1,0 +1,101 @@
+{
+  "manifestVersion": 1,
+  "case": "malformed-metadata",
+  "description": "One project whose nodes carry fields the new schema does not model: a legacy-only node type, unknown metadata keys at several nesting levels, a connection with extra fields, and a node with a null/absent metadata object. Every unknown field must be retained in legacy_metadata_json and reported as a warning; nothing may be dropped, and the import must still complete.",
+  "expected": {
+    "projects": 1,
+    "nodes": 3,
+    "edges": 1,
+    "mediaFiles": 0,
+    "chatSessions": 0,
+    "generationHistory": 0,
+    "assets": 0,
+    "warnings": 3,
+    "warningCodes": ["unsupported_node_type", "unsupported_metadata", "unsupported_edge_metadata"],
+    "retained": {
+      "node-legacy-only": {
+        "nodeType": "legacy:arc-graph",
+        "metadataKeys": ["arcPoints", "renderHint"]
+      },
+      "node-unknown-fields": {
+        "nodeType": "text",
+        "metadataKeys": ["content", "status", "mysteryFlag", "vendorExtras"]
+      },
+      "edge-extra": {
+        "extraKeys": ["label", "strokeDash"]
+      }
+    }
+  },
+  "snapshot": {
+    "app": "infinite-canvas",
+    "manifestVersion": 1,
+    "exportedAt": "2026-09-16T00:00:00.000Z",
+    "projects": [
+      {
+        "id": "legacy-malformed-1",
+        "title": "Malformed Metadata",
+        "createdAt": "2026-08-26T08:00:00.000Z",
+        "updatedAt": "2026-08-26T08:00:00.000Z",
+        "nodes": [
+          {
+            "id": "node-legacy-only",
+            "type": "legacy:arc-graph",
+            "title": "Legacy only",
+            "position": { "x": 0, "y": 0 },
+            "width": 300,
+            "height": 200,
+            "metadata": {
+              "arcPoints": [
+                { "x": 0, "y": 1 },
+                { "x": 1, "y": 0.4 }
+              ],
+              "renderHint": "curved"
+            }
+          },
+          {
+            "id": "node-unknown-fields",
+            "type": "text",
+            "title": "Unknown fields",
+            "position": { "x": 360, "y": 0 },
+            "width": 320,
+            "height": 180,
+            "metadata": {
+              "content": "Kept verbatim, unknown keys and all.",
+              "status": "success",
+              "mysteryFlag": true,
+              "vendorExtras": { "a": 1, "b": [true, null] }
+            }
+          },
+          {
+            "id": "node-no-metadata",
+            "type": "text",
+            "title": "No metadata",
+            "position": { "x": 720, "y": 0 },
+            "width": 320,
+            "height": 180
+          }
+        ],
+        "connections": [
+          {
+            "id": "edge-extra",
+            "fromNodeId": "node-unknown-fields",
+            "toNodeId": "node-no-metadata",
+            "label": "flow",
+            "strokeDash": "dashed"
+          }
+        ],
+        "chatSessions": [],
+        "activeChatId": null,
+        "backgroundMode": "blank",
+        "showImageInfo": false,
+        "viewport": { "x": 0, "y": 0, "k": 1 }
+      }
+    ],
+    "assets": [],
+    "generationHistory": [],
+    "promptLibrary": { "builtInCovers": {} },
+    "uiPreferences": {},
+    "media": [],
+    "unsupported": {}
+  }
+}

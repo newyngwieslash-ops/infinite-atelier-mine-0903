@@ -5,6 +5,7 @@ import i18n from "@/i18n";
 import { createZip, readZip } from "@/lib/zip";
 import { setImageBlob } from "@/services/image-storage";
 import { setMediaBlob } from "@/services/file-storage";
+import { stripSecretsFromConfig } from "@/services/config-secrets";
 import { useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-store";
 import { useAssetStore, type Asset } from "@/stores/use-asset-store";
 import { useConfigStore, type AiConfig } from "@/stores/use-config-store";
@@ -25,6 +26,7 @@ type AppBackupFile = {
 };
 
 // Export every canvas project, asset, media file, and configuration as a single zip that can be restored later.
+// Ordinary backups never include API keys; keys live only in the OS credential store.
 export async function exportAppBackup() {
     const { projects } = useCanvasStore.getState();
     const { assets } = useAssetStore.getState();
@@ -32,7 +34,7 @@ export async function exportAppBackup() {
     const files: BackupItem[] = [];
     const zipFiles: { name: string; data: BlobPart }[] = [];
     await Promise.all([collectStoreFiles(imageStore, files, zipFiles), collectStoreFiles(mediaStore, files, zipFiles)]);
-    const data: AppBackupFile = { app: "infinite-canvas", version: 1, exportedAt: new Date().toISOString(), projects, assets, config, files };
+    const data: AppBackupFile = { app: "infinite-canvas", version: 1, exportedAt: new Date().toISOString(), projects, assets, config: stripSecretsFromConfig(config), files };
     zipFiles.push({ name: "backup.json", data: new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }) });
     const zip = await createZip(zipFiles);
     const stamp = new Date().toISOString().slice(0, 10);
@@ -59,7 +61,10 @@ export async function importAppBackup(file: File) {
             await (item.storageKey.startsWith("image:") ? setImageBlob(item.storageKey, typedBlob) : setMediaBlob(item.storageKey, typedBlob));
         }),
     );
-    useConfigStore.setState({ config: data.config });
+    // A restored backup may be an older file that still embeds keys; strip
+    // them so the store never regains raw secrets. The user must re-enter
+    // keys through the secure input.
+    useConfigStore.setState({ config: stripSecretsFromConfig(data.config) });
     useCanvasStore.getState().replaceProjects(data.projects);
     useAssetStore.getState().replaceAssets(data.assets);
 }

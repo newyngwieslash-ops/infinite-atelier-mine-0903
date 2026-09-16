@@ -1,0 +1,205 @@
+schema: comet.native.v4
+name: wp-01-session-handoff
+language: zh-CN
+phase: archive
+status: done
+state_version: 7
+brief: brief.md
+spec_changes:
+  - capability: session-handoff
+    operation: create
+    source: specs/session-handoff/spec.md
+workspace:
+  isolation: current
+  change_branch: codex/wp-01-desktop-foundation
+  target_branch: codex/wp-01-desktop-foundation
+  finish: null
+loop:
+  stage: done
+  goal_cycle: 1
+  iteration: 1
+  attempt: 1
+  retry_epoch: 0
+  failed_iteration_count: 0
+  no_progress_count: 0
+  execution_failure_count: 0
+  previous_unresolved_ids: []
+  next_action: null
+acceptance:
+  - id: A1
+    source: brief.md
+    text: A1：项目中存在文件名含当前 Asia/Shanghai 时间戳的
+      `docs/implementation/handoff-*.md`，文档开头记录分支、HEAD、工作包和准确恢复点。
+    result: passed
+    reason:
+      text: 带 Asia/Shanghai 时间戳的最新 handoff 存在，开头准确记录分支、HEAD、WP-01 与 Task 4 恢复点。
+      truncated: false
+  - id: A2
+    source: brief.md
+    text: A2：文档明确区分已通过、进行中、未开始和环境限制，并记录 Task 4 已落盘文件及未执行的矩阵/双审。
+    result: passed
+    reason:
+      text: 清楚区分 Task 1-3 已批准、Task 4 进行中、Task 5-11 未开始及 race 环境限制，并列明 Task 4 已落盘和待办。
+      truncated: false
+  - id: A3
+    source: brief.md
+    text: A3：文档包含 WP-01 Task 4–11 与 WP-02–WP-12 的完整剩余任务清单，并按当前 PRD 标题校正 FR 映射。
+    result: passed
+    reason:
+      text: 覆盖 WP-01 Task 4-11 与 WP-02-12，FR-001、FR-010 至 FR-180 映射与当前 PRD 标题一致。
+      truncated: false
+  - id: A4
+    source: brief.md
+    text: A4：文档包含一段可直接复制给新 Codex 或 Grok 的完整提示词，要求先读最新 handoff、保护脏工作树、按 implementer →
+      spec reviewer → quality reviewer 串行恢复 Task 4。
+    result: passed
+    reason:
+      text: 包含可直接复制的 Codex/Grok 提示词，要求先读 handoff、保护现场并按三角色串行恢复 Task 4。
+      truncated: false
+  - id: A5
+    source: brief.md
+    text: A5：运行 Git 状态与 diff 检查，证明本次只新增/修改交接与 Comet
+      工件，且未删除、覆盖或提交现有用户现场；文档中的验证结果与实际命令一致。
+    result: passed
+    reason:
+      text: 分支与 HEAD 正确，index 为空，diff check 通过；Comet 创建后的写入仅涉及 handoff 与 Comet 工件，Task
+        4 文件均更早写入。
+      truncated: false
+  - id: A6
+    source: specs/session-handoff/spec.md
+    text: 系统在 `docs/implementation` 中保留不可覆盖的带时间戳 handoff
+      Markdown。每次交接描述当时的真实工作树与验证结论，旧 handoff 作为历史证据继续保留。
+    result: passed
+    reason:
+      text: 旧 handoff 保留，新 handoff 使用独立时间戳，未覆盖历史证据。
+      truncated: false
+  - id: A7
+    source: specs/session-handoff/spec.md
+    text: 交接文档必须包含仓库路径、分支、HEAD、当前工作包和精确恢复点；Git/数据安全现场；已完成工作；当前未完成实现及审查；环境限制；WP-01
+      剩余任务；对标当前 PRD 的 WP-02–WP-12 后续任务；发布阻断条件；以及可直接用于新 Codex 或 Grok 会话的完整续接提示词。
+    result: passed
+    reason:
+      text: 仓库、Git、安全、进度、环境、完整后续任务、阻断条件和续接提示词均具备。
+      truncated: false
+  - id: A8
+    source: specs/session-handoff/spec.md
+    text: 提示词必须要求新会话先读取最新 handoff 与仓库规定，重新核对 Git 现场，保护全部 tracked/untracked 文件，从 Task
+      4 继续，并严格串行执行 implementer、独立 spec reviewer、独立 quality reviewer。Task 4
+      未通过双审前不能进入 Task 5，WP-01 完成后不能自动进入 WP-02。
+    result: passed
+    reason:
+      text: 提示词要求重新核对 Git、保护 tracked/untracked、Task 4 双审前不进 Task 5、WP-01 后不自动进 WP-02。
+      truncated: false
+  - id: A9
+    source: specs/session-handoff/spec.md
+    text: 文档只能声称有真实命令或审查证据支持的结果。因本机 32 位 MinGW 导致的 race 编译失败应标为环境限制。未完成的 Task 4
+      矩阵、Wails production smoke 和独立双审必须明确列为待办。
+    result: passed
+    reason:
+      text: 只声称有证据的结果；MinGW race 失败如实列为环境限制，Task 4 矩阵、production smoke 和双审保持待办。
+      truncated: false
+  - id: A10
+    source: specs/session-handoff/spec.md
+    text: 生成交接不得修改产品代码、依赖、用户数据、密钥、媒体或 Provider，不得执行提交、推送、stash、reset 或 clean。
+    result: passed
+    reason:
+      text: 未发现 Comet 创建后写入产品代码、依赖、测试或用户数据；HEAD、index 和既存现场保持。
+      truncated: false
+builder_handoff:
+  candidate_id: 83a062b8-605b-4e88-9dba-f8a7c4767ddb
+  identity_provider: skill-coordinated
+  builder_execution_ref: skill-coordinated:builder:848de1ef-505f-45a0-b400-6229e9e71d08
+  iteration: 1
+  summary:
+    text: 生成 docs/implementation/handoff-2026-09-07-161115+0800.md，记录最新 WP-01
+      状态、Task 4 精确中断点、WP-01 Task 4-11、WP-02-12、发布阻断条件及新 Codex/Grok 完整续接提示词；同步完成
+      Comet brief 与 session-handoff spec。
+    truncated: false
+  addressed_acceptance_ids:
+    - A1
+    - A2
+    - A3
+    - A4
+    - A5
+    - A6
+    - A7
+    - A8
+    - A9
+    - A10
+  checks:
+    - name:
+        text: handoff structure and required-content inspection
+        truncated: false
+      result: passed
+      note:
+        text: 文件存在且包含分支、HEAD、Task 4/11、WP-02/WP-12、Codex/Grok 和完整提示词；Markdown fence
+          总数为偶数。
+        truncated: false
+    - name:
+        text: git diff --check
+        truncated: false
+      result: passed
+      note:
+        text: 退出 0；仅有既存 LF/CRLF 警告。
+        truncated: false
+    - name:
+        text: git staged/status inspection
+        truncated: false
+      result: passed
+      note:
+        text: staged diff 为空，分支与 HEAD 未变；既存 tracked/untracked 现场保留。
+        truncated: false
+  checks_truncated: false
+  known_limits:
+    - text: 本 Comet 只验证交接文档，不运行或声称完成 WP-01 Task 4 产品验证。
+      truncated: false
+    - text: Task 4 的 go mod tidy、CGO0、三目标交叉编译、race 环境记录及独立双审仍由新开发会话完成。
+      truncated: false
+  known_limits_truncated: false
+  submitted_at: 2026-09-07T08:18:37.554Z
+blockers: []
+verification:
+  candidate_id: 83a062b8-605b-4e88-9dba-f8a7c4767ddb
+  identity_provider: skill-coordinated
+  verifier_execution_ref: skill-coordinated:verifier:74a54781-faa3-49e3-86d2-c2e8928b856f
+  iteration: 1
+  attempt: 1
+  assurance: skill-coordinated
+  verdict: pass
+  checks: []
+  summary:
+    text: 交接文档准确、完整、可直接用于新 Codex/Grok 会话；本 Comet 仅生成交接与工作流工件，没有推进或误报 WP-01 产品实现。
+    truncated: false
+  risks:
+    - text: STATUS.md 仍有过时的 WP-01 implementation not started 陈述，新会话必须以 Git 与审查证据为准。
+      truncated: false
+    - text: Task 4 的 go mod tidy、CGO0、三目标交叉编译、race 环境记录、完整验证和独立双审尚未完成。
+      truncated: false
+    - text: 当前大量工件未跟踪，新会话应以 git status --untracked-files=all 建立保护基线。
+      truncated: false
+  risks_truncated: false
+  completed_at: 2026-09-07T08:28:37.179Z
+history:
+  - goal_cycle: 1
+    iteration: 1
+    attempt: 1
+    outcome: pass
+    unresolved_ids: []
+    summary:
+      text: 交接文档准确、完整、可直接用于新 Codex/Grok 会话；本 Comet 仅生成交接与工作流工件，没有推进或误报 WP-01 产品实现。
+      truncated: false
+    completed_at: 2026-09-07T08:28:37.179Z
+history_overflow:
+  dropped_entries: 0
+  first_dropped_at: null
+  last_dropped_at: null
+  outcome_counts:
+    pass: 0
+    fail: 0
+    blocked: 0
+    execution-error: 0
+    recovery: 0
+verification_result: pass
+verification_report: verification.md
+archived: true
+created_at: 2026-09-07T07:48:29.556Z

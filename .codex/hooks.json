@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"F:/AI_Movie_Things_202606/Infinite_Atelier_Drama_Studio_Spec_Pack_v1.0/infinite-atelier-mine-0903/.agents/skills/comet/scripts/comet-hook-router.mjs\" --platform \"codex\" --project-root \"F:/AI_Movie_Things_202606/Infinite_Atelier_Drama_Studio_Spec_Pack_v1.0/infinite-atelier-mine-0903\""
+          }
+        ]
+      }
+    ]
+  }
+}

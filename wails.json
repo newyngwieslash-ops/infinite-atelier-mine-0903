@@ -1,0 +1,19 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "源铭振跃",
+  "outputfilename": "InfiniteAtelier",
+  "frontend:dir": "web",
+  "frontend:install": "npm ci --legacy-peer-deps",
+  "frontend:build": "npm run build",
+  "frontend:dev:watcher": "npm run dev -- --host 127.0.0.1",
+  "frontend:dev:serverUrl": "auto",
+  "wailsjsdir": "web/src",
+  "author": {
+    "name": "GuiYi-Xi"
+  },
+  "info": {
+    "productName": "源铭振跃",
+    "productVersion": "1.0.0",
+    "copyright": "Copyright © 2026 GuiYi-Xi"
+  }
+}

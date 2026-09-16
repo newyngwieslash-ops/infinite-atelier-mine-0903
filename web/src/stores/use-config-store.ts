@@ -4,6 +4,7 @@ import { persist } from "zustand/middleware";
 import { nanoid } from "nanoid";
 
 import i18n from "@/i18n";
+import { isSecureProviderMode } from "@/services/desktop/providers";
 
 export type ApiCallFormat = "openai" | "gemini";
 export type ModelCapability = "image" | "video" | "text" | "audio";
@@ -169,6 +170,13 @@ export function resolveModelScript(config: AiConfig, value: string) {
 
 function isAiConfigReady(config: AiConfig, model: string) {
     const channel = resolveModelChannel(config, model);
+    // Secure desktop mode keeps the key in the OS credential store, not in the
+    // frontend config, so requiring a plaintext apiKey here would block every
+    // secure generation. Readiness then means "a channel and base URL exist";
+    // the Go gateway reports a precise error if no secret is configured.
+    if (isSecureProviderMode()) {
+        return Boolean((model || "").trim() && channel.baseUrl.trim());
+    }
     return Boolean(model.trim() && channel.baseUrl.trim() && channel.apiKey.trim());
 }
 

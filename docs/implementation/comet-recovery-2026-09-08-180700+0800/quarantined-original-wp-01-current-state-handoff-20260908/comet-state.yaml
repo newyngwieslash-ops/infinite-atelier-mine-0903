@@ -1,0 +1,39 @@
+schema: comet.native.v4
+name: wp-01-current-state-handoff-20260908
+language: zh-CN
+phase: verify
+status: verified
+state_version: 2
+brief: brief.md
+spec_changes:
+  - capability: session-handoff
+    operation: modify
+    source: specs/session-handoff/spec.md
+workspace:
+  isolation: current
+  change_branch: codex/wp-01-desktop-foundation
+  target_branch: codex/wp-01-desktop-foundation
+  finish: null
+acceptance:
+  - id: A1
+    source: brief.md
+    result: passed
+  - id: A2
+    source: brief.md
+    result: passed
+  - id: A3
+    source: brief.md
+    result: passed
+  - id: A4
+    source: brief.md
+    result: passed
+  - id: A5
+    source: brief.md
+    result: passed
+  - id: A6
+    source: brief.md
+    result: passed
+verification_result: pass
+verification_report: verification.md
+archived: false
+created_at: 2026-09-08T15:12:49+08:00

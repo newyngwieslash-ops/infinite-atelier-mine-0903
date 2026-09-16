@@ -1,0 +1,6 @@
+{
+  "schema": "comet.selection.v2",
+  "workflow": "native",
+  "change": "wp-01-current-state-handoff-20260908",
+  "branch": null
+}

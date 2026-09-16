@@ -5,9 +5,14 @@ import { Group, Video } from "lucide-react";
 import { saveAs } from "file-saver";
 import { useTranslation } from "react-i18next";
 
-import { requestEdit, requestGeneration, requestImageQuestion } from "@/services/api/image";
+import { requestImageQuestion } from "@/services/api/image";
+// Image generation routes through the Go job manager in secure desktop mode;
+// the module falls back to the legacy direct call only in browser dev mode.
+import { requestEdit, requestGeneration } from "@/services/image-generation";
 import { requestAudioGeneration, storeGeneratedAudio } from "@/services/api/audio";
 import { requestVideoGeneration, storeGeneratedVideo } from "@/services/api/video";
+import { isSecureProviderMode } from "@/services/desktop/providers";
+import { streamSecureText, toSecureMessages } from "@/services/desktop/text";
 import { defaultConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { uploadImage } from "@/services/image-storage";
 import { uploadMediaFile } from "@/services/file-storage";
@@ -1669,7 +1674,7 @@ function AtelierCanvasPage() {
             setDialogNodeId(childId);
             const controller = startGenerationRequest(childId, node.id, childId);
             try {
-                const image = await requestEdit(generationConfig, prompt, [source], { id: `${node.id}-mask`, name: "mask.png", type: "image/png", dataUrl: payload.maskDataUrl }, { signal: controller.signal }).then((items) => items[0]);
+                const image = await requestEdit(generationConfig, prompt, [source], { id: `${node.id}-mask`, name: "mask.png", type: "image/png", dataUrl: payload.maskDataUrl }, { signal: controller.signal, jobScope: { projectId, entityId: node.id, entityType: "canvas_node" } }).then((items) => items[0]);
                 const uploaded = await uploadImage(image.dataUrl);
                 const size = fitNodeSize(uploaded.width, uploaded.height, node.width, node.height);
                 setNodes((prev) => prev.map((item) => (item.id === childId ? { ...item, width: size.width, height: size.height, metadata: { ...item.metadata, ...imageMetadata(uploaded), prompt, ...generationMetadata } } : item)));
@@ -1683,7 +1688,7 @@ function AtelierCanvasPage() {
                 setRunningNodeId(null);
             }
         },
-        [effectiveConfig, finishGenerationRequest, isAiConfigReady, message, openConfigDialog, startGenerationRequest, t],
+        [effectiveConfig, finishGenerationRequest, isAiConfigReady, message, openConfigDialog, startGenerationRequest, projectId, t],
     );
 
     const upscaleImageNode = useCallback(async (node: CanvasNodeData, params: CanvasImageUpscaleParams) => {
@@ -1750,7 +1755,11 @@ function AtelierCanvasPage() {
                     prompt,
                     [{ id: node.id, name: `${node.title || node.id}.png`, type: node.metadata.mimeType || "image/png", dataUrl: node.metadata.content, storageKey: node.metadata.storageKey }],
                     undefined,
-                    { signal: controller.signal },
+                    // The node identity scopes the job, so an angle edit that
+                    // failed can be re-run instead of replaying the old job.
+                    // The component-level projectId is used because `params` is
+                    // shadowed here by the angle parameters.
+                    { signal: controller.signal, jobScope: { projectId, entityId: node.id, entityType: "canvas_node" } },
                 ).then((items) => items[0]);
                 const uploaded = await uploadImage(image.dataUrl);
                 const size = fitNodeSize(uploaded.width, uploaded.height, imageConfig.width, imageConfig.height);
@@ -1764,7 +1773,7 @@ function AtelierCanvasPage() {
                 setRunningNodeId(null);
             }
         },
-        [effectiveConfig, finishGenerationRequest, openConfigDialog, startGenerationRequest, t],
+        [effectiveConfig, finishGenerationRequest, openConfigDialog, startGenerationRequest, projectId, t],
     );
 
     const handleFontSizeChange = useCallback((nodeId: string, fontSize: number) => {
@@ -1972,8 +1981,8 @@ function AtelierCanvasPage() {
                             : [],
                     );
                     const image = refs.length
-                        ? await requestEdit({ ...generationConfig, count: "1" }, fullPrompt, refs, undefined, { signal: controller.signal }).then((items) => items[0])
-                        : await requestGeneration({ ...generationConfig, count: "1" }, fullPrompt, { signal: controller.signal }).then((items) => items[0]);
+                        ? await requestEdit({ ...generationConfig, count: "1" }, fullPrompt, refs, undefined, { signal: controller.signal, jobScope: { projectId, entityId: nodeId, entityType: "canvas_node" } }).then((items) => items[0])
+                        : await requestGeneration({ ...generationConfig, count: "1" }, fullPrompt, { signal: controller.signal, jobScope: { projectId, entityId: nodeId, entityType: "canvas_node" } }).then((items) => items[0]);
                     const uploaded = await uploadImage(image.dataUrl);
                     setNodes((prev) =>
                         prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, ...imageMetadata(uploaded), prompt: scene, model: generationConfig.model, status: NODE_STATUS_SUCCESS, errorDetails: undefined } } : node)),
@@ -2096,11 +2105,15 @@ function AtelierCanvasPage() {
                     let firstError = "";
                     const succeededImages: GenerationHistoryImage[] = [];
                     await Promise.all(
-                        imageIds.map(async (imageId) => {
+                        imageIds.map(async (imageId, batchIndex) => {
                             try {
+                                // The node identity scopes the job's idempotency key, so
+                                // two nodes with the same prompt are two jobs and a node can
+                                // regenerate after a terminal failure.
+                                const generationJobScope = { projectId, entityId: nodeId, entityType: "canvas_node", batchIndex };
                                 const image = referenceImages.length
-                                    ? await requestEdit({ ...generationConfig, count: "1" }, effectivePrompt, referenceImages, undefined, { signal: controller.signal }).then((items) => items[0])
-                                    : await requestGeneration({ ...generationConfig, count: "1" }, effectivePrompt, { signal: controller.signal }).then((items) => items[0]);
+                                    ? await requestEdit({ ...generationConfig, count: "1" }, effectivePrompt, referenceImages, undefined, { signal: controller.signal, jobScope: generationJobScope }).then((items) => items[0])
+                                    : await requestGeneration({ ...generationConfig, count: "1" }, effectivePrompt, { signal: controller.signal, jobScope: generationJobScope }).then((items) => items[0]);
                                 const uploaded = await uploadImage(image.dataUrl);
                                 const imageSize = fitNodeSize(uploaded.width, uploaded.height, imageConfig.width, imageConfig.height);
                                 const item: CanvasNodeImage = {
@@ -2310,18 +2323,23 @@ function AtelierCanvasPage() {
                 textTargetIds.forEach((targetNodeId) => startGenerationRequest(targetNodeId, nodeId, nodeId, controller));
                 const answers = await Promise.all(
                     textTargetIds.map((targetNodeId) => {
+                        const messages = buildNodeResponseMessages({ ...generationContext, prompt: effectivePrompt });
                         let localStreamed = "";
-                        return requestImageQuestion(
-                            generationConfig,
-                            buildNodeResponseMessages({ ...generationContext, prompt: effectivePrompt }),
-                            (text) => {
-                                localStreamed = text;
-                                streamed = text;
-                                if (isConfigNode) return;
-                                setNodes((prev) => prev.map((node) => (node.id === targetNodeId ? { ...node, type: CanvasNodeType.Text, metadata: { ...node.metadata, content: text, status: NODE_STATUS_LOADING } } : node)));
-                            },
-                            { signal: controller.signal },
-                        )
+                        const handleDelta = (text: string) => {
+                            localStreamed = text;
+                            streamed = text;
+                            if (isConfigNode) return;
+                            setNodes((prev) => prev.map((node) => (node.id === targetNodeId ? { ...node, type: CanvasNodeType.Text, metadata: { ...node.metadata, content: text, status: NODE_STATUS_LOADING } } : node)));
+                        };
+                        const request = isSecureProviderMode()
+                            ? streamSecureText(
+                                  toSecureMessages(messages),
+                                  generationConfig.model || generationConfig.textModel,
+                                  handleDelta,
+                                  controller.signal,
+                              )
+                            : requestImageQuestion(generationConfig, messages, handleDelta, { signal: controller.signal });
+                        return request
                             .then((answer) => ({ nodeId: targetNodeId, content: answer || localStreamed }))
                             .finally(() => finishGenerationRequest(targetNodeId, controller));
                     }),
@@ -2356,7 +2374,7 @@ function AtelierCanvasPage() {
                 setRunningNodeId(null);
             }
         },
-        [effectiveConfig, finishGenerationRequest, isAiConfigReady, message, openConfigDialog, startGenerationRequest, t],
+        [effectiveConfig, finishGenerationRequest, isAiConfigReady, message, openConfigDialog, startGenerationRequest, projectId, t],
     );
     useEffect(() => {
         generateNodeRef.current = handleGenerateNode;
@@ -2436,15 +2454,19 @@ function AtelierCanvasPage() {
                 if (node.type === CanvasNodeType.Text) {
                     if (!context) return;
                     let streamed = "";
-                    const answer = await requestImageQuestion(
-                        generationConfig,
-                        buildNodeResponseMessages({ ...context, prompt }),
-                        (text) => {
-                            streamed = text;
-                            setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, type: CanvasNodeType.Text, metadata: { ...item.metadata, content: text, status: NODE_STATUS_LOADING } } : item)));
-                        },
-                        { signal: controller.signal },
-                    );
+                    const messages = buildNodeResponseMessages({ ...context, prompt });
+                    const handleDelta = (text: string) => {
+                        streamed = text;
+                        setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, type: CanvasNodeType.Text, metadata: { ...item.metadata, content: text, status: NODE_STATUS_LOADING } } : item)));
+                    };
+                    const answer = isSecureProviderMode()
+                        ? await streamSecureText(
+                              toSecureMessages(messages),
+                              generationConfig.model || generationConfig.textModel,
+                              handleDelta,
+                              controller.signal,
+                          )
+                        : await requestImageQuestion(generationConfig, messages, handleDelta, { signal: controller.signal });
                     setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, type: CanvasNodeType.Text, metadata: { ...item.metadata, content: answer || streamed, prompt, status: NODE_STATUS_SUCCESS } } : item)));
                     return;
                 }
@@ -2483,8 +2505,8 @@ function AtelierCanvasPage() {
                 }
 
                 const image = useReferenceImages
-                    ? await requestEdit(generationConfig, prompt, retryImages, undefined, { signal: controller.signal }).then((items) => items[0])
-                    : await requestGeneration(generationConfig, prompt, { signal: controller.signal }).then((items) => items[0]);
+                    ? await requestEdit(generationConfig, prompt, retryImages, undefined, { signal: controller.signal, jobScope: { projectId, entityId: node.id, entityType: "canvas_node" } }).then((items) => items[0])
+                    : await requestGeneration(generationConfig, prompt, { signal: controller.signal, jobScope: { projectId, entityId: node.id, entityType: "canvas_node" } }).then((items) => items[0]);
                 const uploadedImage = await uploadImage(image.dataUrl);
                 const imageConfig = NODE_DEFAULT_SIZE[CanvasNodeType.Image];
                 const retryImage: CanvasNodeImage = {
@@ -2560,7 +2582,7 @@ function AtelierCanvasPage() {
                 setRunningNodeId(null);
             }
         },
-        [effectiveConfig, finishGenerationRequest, isAiConfigReady, message, openConfigDialog, startGenerationRequest, t],
+        [effectiveConfig, finishGenerationRequest, isAiConfigReady, message, openConfigDialog, startGenerationRequest, projectId, t],
     );
 
     const deleteBatchImage = useCallback((nodeId: string, imageId: string) => {

@@ -3,6 +3,7 @@ import { useEffect, useRef } from "react";
 import { App } from "antd";
 import { useTranslation } from "react-i18next";
 
+import { isSecureProviderMode } from "@/services/desktop/providers";
 import { createModelChannel, useConfigStore } from "@/stores/use-config-store";
 
 export function ClientRootInit({ children }: { children: ReactNode }) {
@@ -19,6 +20,23 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
         const baseUrl = searchParams.get("baseUrl") || searchParams.get("baseurl");
         const apiKey = searchParams.get("apiKey") || searchParams.get("apikey");
         if (!baseUrl && !apiKey) return;
+
+        // Secure desktop mode never accepts API keys (or any secret) from the
+        // URL: a query string can be logged, bookmarked, shared, or retained
+        // by the WebView profile. Strip the parameters and explain how to
+        // configure the provider properly.
+        if (isSecureProviderMode()) {
+            handledConfigParams.current = true;
+            searchParams.delete("baseUrl");
+            searchParams.delete("baseurl");
+            searchParams.delete("apiKey");
+            searchParams.delete("apikey");
+            window.history.replaceState(null, "", `${window.location.pathname}${searchParams.size ? `?${searchParams}` : ""}${window.location.hash}`);
+            message.warning(t("config.secureModeIgnoresUrlSecrets"));
+            openConfigDialog(false);
+            return;
+        }
+
         handledConfigParams.current = true;
         searchParams.delete("baseUrl");
         searchParams.delete("baseurl");

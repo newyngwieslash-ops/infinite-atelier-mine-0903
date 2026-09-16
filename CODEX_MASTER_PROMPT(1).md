@@ -1,0 +1,359 @@
+# Infinite Atelier Drama Studio — Codex 主提示词
+
+> 使用方法：把本规格包完整放在目标仓库根目录，然后将下面“可直接提交给 Codex 的提示词”整段作为首次指令。  
+> 首次运行只执行 WP-00。不要把整个 PRD 一次性交给 Codex 自由实现。
+
+---
+
+# 可直接提交给 Codex 的提示词
+
+```text
+你正在现有仓库中工作。仓库根目录已经放置完整规格包。你是本仓库的资深产品工程师、Go 架构师、React/TypeScript 工程师、Wails 桌面工程师、SQLite 工程师、AI/Agent 平台工程师、测试工程师和安全工程师。
+
+你的长期任务是将现有 Infinite Atelier 演进为：
+
+Infinite Atelier Core
++ Drama Production Pack
++ Go Core Service
++ Durable Workflow Engine
++ Three-layer Agent Runtime
++ Persistent Semantic Memory
++ Secure Multi-provider Gateway
+
+但是本次绝对禁止一次性实现整个项目。本次只执行 `docs/implementation/STATUS.md` 指定的当前工作包；当前规格初始状态应为 WP-00。完成后必须停止，不能自动开始下一工作包。
+
+一、先读取事实，禁止凭印象开发
+
+在修改任何文件前，按顺序完整阅读：
+
+1. `PRD.md`
+2. `AGENTS.md`
+3. `docs/implementation/STATUS.md`
+4. `docs/ROADMAP.md` 中当前工作包全文
+5. `docs/ARCHITECTURE.md`
+6. `docs/DOMAIN_MODEL.md`
+7. `docs/AGENT_CONTRACTS.md`
+8. `docs/SECURITY.md`
+9. `docs/ACCEPTANCE.md`
+10. `docs/reference/INTEGRATION_ANALYSIS.md`
+11. `docs/reference/TOONFLOW_AGENT_MEMORY_ANALYSIS.md`
+12. 当前仓库的 README、package 文件、lockfile、配置、CI、源码和测试
+
+不得只读摘要，不得跳过长文件。参考分析只用于理解设计来源，不能覆盖 PRD 和代码中的已验证事实。
+
+二、固定产品边界
+
+必须遵守：
+
+1. 数据库是事实来源，画布是领域实体的视觉投影。
+2. 保留现有自由画布；短剧工作室是独立业务包，不得把产品强制变成只能做短剧。
+3. Go 负责领域、SQLite、FileStore、Secret、Provider、Job、Agent、Workflow、Memory、备份和媒体。
+4. React 负责 UI、画布和临时交互状态，不直接持有密钥、不直连外部 Provider、不成为业务事实来源。
+5. 桌面 MVP 使用 Wails v2 稳定线。未经 ADR 不得切换 Electron、Tauri 或 Wails v3 beta。
+6. Decision、Execution、Supervision 必须是独立 LLM invocation。
+7. Workflow 状态由数据库和程序状态机决定，不能只写在 Prompt 中。
+8. Supervisor 默认只读，必须重新加载实际 Workspace/DB，不相信 Execution 自述。
+9. Agent 输出、Tool 输入和 Tool 输出必须结构化并通过 Schema 验证。
+10. 用户保留 PASS、FIX、REDO、MANUAL_EDIT 和 CANCEL 权力。
+11. 禁止 `new Function`、`eval`、任意 JavaScript 模型脚本、动态代码和用户控制 Shell。
+12. API Key 不得进入 React、Zustand、localStorage、IndexedDB、SQLite 业务表、普通备份、日志、Agent Prompt 或 Memory。
+13. Provider 只通过安全 Go Gateway；自定义 URL 必须防 SSRF、DNS Rebinding、私网和重定向逃逸。
+14. 现有用户数据、用户修改、Git 脏文件和旧项目不得被静默删除、覆盖或 reset。
+15. Toonflow 只作为公开行为和架构思想参考。不得复制 Toonflow 源码、Skill/Prompt 原文、品牌、图标、界面文案、素材或受补充商业条款约束的实现；不得把 Toonflow 加为依赖、子模块或 vendored code。
+16. 保留 Infinite Atelier 的 MIT License、版权和第三方声明。
+
+三、Git 与工作树安全
+
+第一条命令必须检查：
+
+`git status --short --branch`
+
+然后：
+
+- 记录当前分支、未跟踪文件、已修改文件和 staged 文件；
+- 不执行 `git reset --hard`；
+- 不执行 `git clean -fd`；
+- 不自动 stash；
+- 不覆盖不属于当前工作的修改；
+- 不修改 Git 历史；
+- 不自动 commit 或 push；
+- 不删除未知文件；
+- 不把 `.env`、API Key、数据库、真实用户素材、大模型权重或构建产物提交。
+
+如果工作树已有修改，先区分用户修改与本规格包文件。可以继续完成不冲突的 WP-00 审计；把冲突准确写入 STATUS，不得用“仓库不干净”作为停止全部工作的理由。
+
+四、本次工作范围：只执行 WP-00
+
+本次目标是建立真实仓库基线和实现契约。不要引入 Wails，不要实现 Go Core，不要重构画布，不要迁移数据，不要删除动态脚本，不要开始短剧 UI，不要开始 WP-01。
+
+必须完成以下步骤：
+
+A. 环境与 Git 基线
+
+1. 记录操作系统、架构、Shell。
+2. 记录 Git 分支和工作树状态。
+3. 识别 Node、npm/yarn/pnpm、lockfile、TypeScript、Vite 版本。
+4. 检查是否已有 Go/Wails；没有就记录，不要本次引入。
+5. 记录可复现安装命令。
+6. 不混用包管理器，不生成第二套 lockfile。
+
+B. 运行真实基线
+
+1. 根据现有 lockfile 安装依赖。
+2. 执行现有 typecheck。
+3. 执行现有 tests；若无测试脚本，明确记录。
+4. 执行现有 production build。
+5. 能安全启动时执行开发启动和最小冒烟；不能自动浏览 UI 时记录人工步骤。
+6. 记录每个命令、退出码和关键输出。
+7. 不修改断言或代码来伪造通过。
+8. 环境/网络导致失败时记录具体错误，继续完成其余可执行审计。
+
+C. 仓库结构审计
+
+至少确认并记录：
+
+1. 根目录、`web/`、脚本、CI、部署和文档结构。
+2. React 路由及页面清单。
+3. 所有内置 Canvas Node 类型和 Node Registry。
+4. 节点、连接、Viewport、撤销重做、虚拟化/裁剪的实现位置。
+5. Project、Asset、Generation History、Model Config 的 Store 和持久化位置。
+6. localStorage、localForage、IndexedDB 的 key、Schema 和迁移逻辑。
+7. 图片、视频、音频和文本 Provider 调用路径。
+8. OpenAI/Gemini/自定义 Base URL 的适配方式。
+9. API Key 在状态、导入导出、备份和日志中的流向。
+10. `new Function`、`eval`、动态脚本及其调用链。
+11. Vite proxy、`0.0.0.0`、任意 target URL 及生产 CORS 行为。
+12. Video polling、AbortController、任务内存状态和重启行为。
+13. File/Blob、Object URL、Data URL、ZIP 备份的实现。
+14. MONOFORM 源码、构建产物、iframe、权限和通信。
+15. 当前未实现入口、TODO、placeholder、dead code。
+16. 大文件/God Component 和模块耦合。
+17. package scripts、CI、typecheck、lint、unit、E2E 的现状。
+18. LICENSE、CHANGELOG、NOTICES 和第三方依赖许可证。
+19. Windows 启动脚本、端口、Node 版本和打包形态。
+
+所有结论必须给出准确文件路径、符号名或行号范围。不要把参考分析中的结论直接复制为已验证事实。
+
+D. 建立功能基线
+
+创建现有自由画布行为清单，至少包括：
+
+- 创建/删除节点；
+- 拖动、平移、缩放；
+- 多选、框选；
+- 连线和删除连线；
+- 撤销/重做；
+- 小地图；
+- 图片裁剪、分割、遮罩；
+- 参考图；
+- 图片/视频/音频/文本生成；
+- 子节点和生成历史；
+- 素材导入导出；
+- 项目备份恢复；
+- 模型配置；
+- Director/MONOFORM。
+
+区分：已验证、从源码确认但未运行、不可验证、未实现。
+
+E. 生成本工作包文件
+
+必须创建或更新：
+
+1. `docs/implementation/BASELINE.md`
+   - 环境；
+   - Git 状态；
+   - 安装命令；
+   - typecheck/test/build/启动结果；
+   - 已知基线失败；
+   - 复现步骤。
+
+2. `docs/implementation/REPO_AUDIT.md`
+   - 架构图；
+   - 目录与模块；
+   - 路由；
+   - Node；
+   - Store/数据；
+   - Provider；
+   - Secret；
+   - Proxy；
+   - Backup；
+   - MONOFORM；
+   - 测试；
+   - 安全问题；
+   - 许可证；
+   - 与目标架构的 Gap；
+   - 每项准确代码证据。
+
+3. `docs/implementation/TRACEABILITY.md`
+   - 把 PRD 的 FR/NFR/SEC/AC 组映射到现有模块、未来工作包和当前差距；
+   - 不需要逐行复制 PRD，但必须覆盖每个功能组。
+
+4. `docs/adr/0001-desktop-framework.md`
+   - 状态：Accepted；
+   - 决定 MVP 使用 Wails v2 稳定线；
+   - 记录现有项目实际形态；
+   - 记录 Electron/Tauri/Wails v3 等备选与权衡；
+   - 说明未来 v3 GA 后可重新评估。
+
+5. `docs/adr/0002-sqlite-driver-and-migrations.md`
+   - 状态可为 Proposed；
+   - 比较至少两个可行 SQLite Driver；
+   - 比较 migration 方案；
+   - 考虑 Wails、CGO、Windows/macOS/Linux、sqlite-vec、备份、测试和包体积；
+   - 不在证据不足时假装最终决定。
+
+6. `scripts/verify.sh`
+7. `scripts/verify.ps1`
+
+verify 脚本要求：
+
+- 只执行仓库当前真实存在的可验证命令；
+- 检查依赖和工作目录；
+- 失败时返回非零；
+- 不安装全局软件；
+- 不修改源码；
+- 不联网调用真实 Provider；
+- 不输出 Secret；
+- Shell 和 PowerShell 行为尽量一致；
+- 如果当前仓库没有测试/lint，明确输出 SKIP 原因，不假装 PASS。
+
+F. 更新 STATUS
+
+更新 `docs/implementation/STATUS.md`：
+
+- WP-00 状态：COMPLETE、PARTIAL 或 BLOCKED；
+- 执行命令和结果；
+- 创建文件；
+- 发现的风险；
+- 当前基线失败；
+- AC-BASE-001/002 证据；
+- 用户修改是否保留；
+- 下一安全工作包建议为 WP-01；
+- 明确“未开始 WP-01”。
+
+五、本次允许修改的文件
+
+优先只修改：
+
+- `docs/implementation/*`
+- `docs/adr/*`
+- `scripts/verify.sh`
+- `scripts/verify.ps1`
+- 为修复规格文件内部明显断链而进行的最小文档修改
+
+除非基线命令必须有一个不改变产品行为的极小修复，否则不要修改 `web/src`、Provider、Store、Canvas、package 依赖或生产配置。若确需修改，先在 BASELINE 记录原失败，再做最小补丁，并在最终报告单独说明。
+
+六、质量要求
+
+- 所有陈述可由代码或命令证据支持。
+- 不使用“看起来”“应该”“大概”替代审计。
+- 不把无法运行的功能标为已验证。
+- 不创建空文档、占位表格或 TODO 来宣称完成。
+- 文档使用清晰中文，代码符号和命令保持原文。
+- 路径和符号准确。
+- verify 脚本可执行并有错误处理。
+- 不引入新安全风险。
+- 不访问真实用户密钥和付费模型。
+
+七、完成前验证
+
+至少执行：
+
+1. 新建 verify shell 脚本自身语法检查。
+2. PowerShell 脚本在可用环境下语法/解析检查；若当前非 Windows，记录未运行原因并做静态审查。
+3. `git diff --check`。
+4. 运行 `scripts/verify.sh` 或平台对应脚本。
+5. 检查 Git diff 中是否有密钥、数据库、构建产物和无关修改。
+6. 检查上述必需文档都存在且非空。
+7. 检查 STATUS 与实际结果一致。
+
+八、最终回复格式
+
+完成后严格按以下格式回复，不要自动继续：
+
+## 工作包
+WP-00 — 仓库审计、基线与实施契约
+
+## 状态
+COMPLETE / PARTIAL / BLOCKED
+
+## 已完成
+- 精确列出结果
+
+## 修改文件
+- `path` — 用途
+
+## 基线命令
+- `command` — PASS/FAIL/SKIP；关键结果
+
+## 关键发现
+- 按架构、数据、Provider、安全、测试、许可证归纳
+
+## 验收
+- AC-BASE-001 — PASS/FAIL/BLOCKED + 证据
+- AC-BASE-002 — PASS/FAIL/BLOCKED + 证据
+
+## 未完成与风险
+- 只列真实问题
+
+## Git 与数据安全
+- 是否保留现有用户修改
+- 是否发现/引入 Secret
+- 是否修改产品代码
+
+## 下一步
+建议进入 WP-01，但本次未开始；等待用户明确批准。
+
+现在开始。先执行 Git 状态检查，然后按顺序阅读规格与仓库事实。本次只完成 WP-00。
+```
+
+---
+
+# WP-00 完成后的下一工作包提示词模板
+
+用户检查 Codex 的 WP-00 结果并确认后，使用下面模板。把 `WP-01` 替换为实际批准工作包；不要一次批准多个包。
+
+```text
+我已经审阅并批准上一工作包的结果。现在只进入 `docs/ROADMAP.md` 的 WP-01。
+
+开始前：
+
+1. 按 `AGENTS.md` 重新读取必需文件；
+2. 读取 `docs/implementation/STATUS.md`、上一工作包验收记录和全部未解决风险；
+3. 检查 Git 状态，保留用户修改；
+4. 将 STATUS 的 Current Work Package 更新为 WP-01 / IN PROGRESS；
+5. 只实现 WP-01，不开始 WP-02；
+6. 按该工作包范围、非范围、验收项和 Definition of Done 执行；
+7. 结束时运行验证、更新 STATUS，并停下等待下一次批准。
+
+禁止跳过当前包的基础设施、迁移、错误处理、安全和测试，只做 UI 演示。禁止用 Mock 或 TODO 冒充生产实现。现在开始 WP-01。
+```
+
+---
+
+# 通用“修复当前工作包”提示词模板
+
+当 Codex 的结果未通过验收时，不要进入下一包，使用：
+
+```text
+当前工作包尚未通过验收。不要进入下一工作包。
+
+请读取：
+- `docs/implementation/STATUS.md`
+- 当前工作包的验收记录
+- `docs/ACCEPTANCE.md`
+- 失败测试和 Git diff
+
+只修复以下未通过项：
+
+[在这里粘贴失败的 AC、命令或问题]
+
+要求：
+1. 先复现失败；
+2. 找到根因，不放宽断言、不删除测试、不绕过安全；
+3. 做最小、正确、可维护的修复；
+4. 运行当前包和完整可用回归；
+5. 更新 STATUS 和验收证据；
+6. 完成后停止，仍不进入下一工作包。
+```
+

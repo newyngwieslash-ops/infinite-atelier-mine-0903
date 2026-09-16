@@ -7,6 +7,7 @@ import CanvasProjectPage from "@/pages/canvas/project";
 import ConfigPage from "@/pages/config";
 import DirectorPage from "@/pages/director";
 import HomePage from "@/pages/home";
+import JobsPage from "@/pages/jobs";
 import NotFound from "@/pages/not-found";
 
 export const router = createBrowserRouter([
@@ -22,6 +23,7 @@ export const router = createBrowserRouter([
             { path: "/canvas", element: <CanvasPage /> },
             { path: "/canvas/:id", element: <CanvasProjectPage /> },
             { path: "/director", element: <DirectorPage /> },
+            { path: "/jobs", element: <JobsPage /> },
             { path: "/config", element: <ConfigPage /> },
         ],
     },

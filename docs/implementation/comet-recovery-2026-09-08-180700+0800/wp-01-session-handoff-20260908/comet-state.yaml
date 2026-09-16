@@ -1,0 +1,237 @@
+schema: comet.native.v4
+name: wp-01-session-handoff-20260908
+language: zh-CN
+phase: verify
+status: await-user
+state_version: 5
+brief: brief.md
+spec_changes:
+  - capability: session-handoff
+    operation: modify
+    source: specs/session-handoff/spec.md
+workspace:
+  isolation: current
+  change_branch: codex/wp-01-desktop-foundation
+  target_branch: codex/wp-01-desktop-foundation
+  finish: null
+loop:
+  stage: await-user
+  goal_cycle: 1
+  iteration: 1
+  attempt: 1
+  retry_epoch: 0
+  failed_iteration_count: 0
+  no_progress_count: 0
+  execution_failure_count: 0
+  previous_unresolved_ids: []
+  next_action: confirm-skill-coordinated-pass
+acceptance:
+  - id: A1
+    source: brief.md
+    text: A1：项目中存在文件名含当前 Asia/Shanghai 时间戳的
+      `docs/implementation/handoff-*.md`，文档开头记录分支、HEAD、工作包和准确恢复点。
+    result: passed
+    reason:
+      text: Timestamped handoff exists; header records branch, HEAD, WP-01, Task 7
+        resume point.
+      truncated: false
+  - id: A2
+    source: brief.md
+    text: A2：文档明确区分已通过、进行中、未开始和环境限制，并记录 Task 7 已落盘文件及未执行的 Wails generate/双审。
+    result: passed
+    reason:
+      text: Separates Task 1-6 approved, Task 7 in progress, Task 8-11/WP-02-12 not
+        started, race env limit; lists Task 7 files and unfinished generate/dual
+        review.
+      truncated: false
+  - id: A3
+    source: brief.md
+    text: A3：文档包含 WP-01 Task 7–11 与 WP-02–WP-12 的完整剩余任务清单，并按当前 PRD 标题校正 FR 映射。
+    result: passed
+    reason:
+      text: WP-01 Task 7-11 and WP-02-12 listed; FR titles match current PRD.
+      truncated: false
+  - id: A4
+    source: brief.md
+    text: A4：文档包含一段可直接复制给新 Codex 或 Cursor 的完整提示词，要求先读最新 handoff、保护脏工作树、按 implementer
+      → spec reviewer → quality reviewer 串行恢复 Task 7。
+    result: passed
+    reason:
+      text: Copy-paste Codex/Cursor prompt resumes Task 7 with serial
+        implementer/spec/quality review.
+      truncated: false
+  - id: A5
+    source: brief.md
+    text: A5：运行 Git 状态与 diff 检查，证明本次只新增/修改交接与 Comet
+      工件，且未删除、覆盖或提交现有用户现场；文档中的验证结果与实际命令一致。
+    result: passed
+    reason:
+      text: Independent git status/diff-check/HEAD match the document; only handoff
+        and Comet artifacts added in this change.
+      truncated: false
+  - id: A6
+    source: specs/session-handoff/spec.md
+    text: 系统在 `docs/implementation` 中保留不可覆盖的带时间戳 handoff
+      Markdown。每次交接描述当时的真实工作树与验证结论，旧 handoff 作为历史证据继续保留。
+    result: passed
+    reason:
+      text: New timestamped handoff added; older handoffs remain unmodified.
+      truncated: false
+  - id: A7
+    source: specs/session-handoff/spec.md
+    text: 交接文档必须包含仓库路径、分支、HEAD、当前工作包和精确恢复点；Git/数据安全现场；已完成工作；当前未完成实现及审查；环境限制；WP-01
+      剩余任务；对标当前 PRD 的 WP-02–WP-12 后续任务；发布阻断条件；以及可直接用于新 Codex 或 Cursor
+      会话的完整续接提示词。
+    result: passed
+    reason:
+      text: "Required content present: repo, git, safety, completed/unfinished work,
+        env limits, remaining tasks, blockers, resume prompt."
+      truncated: false
+  - id: A8
+    source: specs/session-handoff/spec.md
+    text: 提示词必须要求新会话先读取最新 handoff 与仓库规定，重新核对 Git 现场，保护全部 tracked/untracked 文件，从 Task
+      7 继续，并严格串行执行 implementer、独立 spec reviewer、独立 quality reviewer。Task 7
+      未通过双审前不能进入 Task 8，WP-01 完成后不能自动进入 WP-02。
+    result: passed
+    reason:
+      text: Prompt requires Git recheck, protect dirty tree, Task 7 serial dual review
+        before Task 8, no auto WP-02.
+      truncated: false
+  - id: A9
+    source: specs/session-handoff/spec.md
+    text: 文档只能声称有真实命令或审查证据支持的结果。因本机 32 位 MinGW 导致的 race 编译失败应标为环境限制。未完成的 Task 7
+      Wails generate、binding 审计、独立双审、Windows production smoke 必须明确列为待办。
+    result: passed
+    reason:
+      text: Claims match worktree; Wails generate/audit/dual review and production
+        smoke remain todos; race is env limit.
+      truncated: false
+  - id: A10
+    source: specs/session-handoff/spec.md
+    text: 生成交接不得修改产品代码、依赖、用户数据、密钥、媒体或 Provider，不得执行提交、推送、stash、reset 或 clean。
+    result: passed
+    reason:
+      text: No product/deps changes in this change window; no
+        commit/push/stash/reset/clean; HEAD unchanged.
+      truncated: false
+builder_handoff:
+  candidate_id: 127576c3-8140-4435-88e3-ecc6d3423e39
+  identity_provider: skill-coordinated
+  builder_execution_ref: skill-coordinated:builder:797b9445-71da-43d8-9b14-0d7e788243a5
+  iteration: 1
+  summary:
+    text: Generated docs/implementation/handoff-2026-09-08-103244+0800.md recording
+      WP-01 Task 7 resume point, Tasks 1-6 approvals, remaining Task 7-11 and
+      WP-02-12 vs current PRD, plus a copy-paste Codex/Cursor prompt. Comet
+      brief/spec updated. No product implementation in this change.
+    truncated: false
+  addressed_acceptance_ids:
+    - A1
+    - A2
+    - A3
+    - A4
+    - A5
+    - A6
+    - A7
+    - A8
+    - A9
+    - A10
+  checks:
+    - name:
+        text: handoff structure and required-content inspection
+        truncated: false
+      result: passed
+      note:
+        text: Timestamped file exists; header has branch, HEAD, WP-01, Task 7 resume
+          point; remaining WP-01 Task 7-11 and WP-02-12; copy-paste prompt
+          resumes Task 7 serially.
+        truncated: false
+    - name:
+        text: git diff --check
+        truncated: false
+      result: passed
+      note:
+        text: exit 0; only pre-existing LF/CRLF warnings on tracked .gitignore and
+          web/package.json.
+        truncated: false
+    - name:
+        text: git staged/status inspection
+        truncated: false
+      result: passed
+      note:
+        text: staged empty; branch codex/wp-01-desktop-foundation; HEAD a243891;
+          existing tracked/untracked preserved; this change added handoff and
+          Comet artifacts only.
+        truncated: false
+  checks_truncated: false
+  known_limits:
+    - text: This Comet verifies handoff documents only and does not run or claim WP-01
+        Task 7 product completion.
+      truncated: false
+    - text: wails generate module was interrupted in the previous implementation turn;
+        web/src/wailsjs is absent.
+      truncated: false
+    - text: go test -race remains an environment limitation on 32-bit MinGW.
+      truncated: false
+  known_limits_truncated: false
+  submitted_at: 2026-09-08T02:37:12.820Z
+blockers:
+  - owner: user
+    reason:
+      text: The generic Skill bridge cannot prove an independent Verifier execution;
+        user confirmation is required before Archive.
+      truncated: false
+    acceptance_ids: []
+    resolution_action: await-user
+verification:
+  candidate_id: 127576c3-8140-4435-88e3-ecc6d3423e39
+  identity_provider: skill-coordinated
+  verifier_execution_ref: skill-coordinated:verifier:1ae61273-4083-4fb6-b41b-a917a9e427f0
+  iteration: 1
+  attempt: 1
+  assurance: skill-coordinated
+  verdict: pass
+  checks: []
+  summary:
+    text: Session-handoff artifacts are accurate and additive. This change records
+      the Task 7 mid-implementer interrupt without claiming WP-01/Task 7
+      complete and without touching product code.
+    truncated: false
+  risks:
+    - text: Task 7 Go tests were not re-run by the verifier; on-disk files match the
+        description.
+      truncated: false
+    - text: Canonical docs/comet/specs/session-handoff/spec.md still has the older
+        Task 4 resume text until archive copies the change-local spec.
+      truncated: false
+    - text: Compressed git status in the handoff omits extra untracked spec files that
+        the next session must still protect.
+      truncated: false
+  risks_truncated: false
+  completed_at: 2026-09-08T02:43:50.637Z
+history:
+  - goal_cycle: 1
+    iteration: 1
+    attempt: 1
+    outcome: pass
+    unresolved_ids: []
+    summary:
+      text: Session-handoff artifacts are accurate and additive. This change records
+        the Task 7 mid-implementer interrupt without claiming WP-01/Task 7
+        complete and without touching product code.
+      truncated: false
+    completed_at: 2026-09-08T02:43:50.637Z
+history_overflow:
+  dropped_entries: 0
+  first_dropped_at: null
+  last_dropped_at: null
+  outcome_counts:
+    pass: 0
+    fail: 0
+    blocked: 0
+    execution-error: 0
+    recovery: 0
+verification_result: pass
+verification_report: verification.md
+archived: false
+created_at: 2026-09-08T02:33:09.416Z

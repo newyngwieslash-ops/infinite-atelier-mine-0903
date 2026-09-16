@@ -111,8 +111,17 @@ function createPoll(signal?: AbortSignal) {
  *   model / baseUrl / apiKey / systemPrompt / reasoningEffort     — current channel and text settings
  *   http / request / poll / sleep / signal / onDelta    — request helpers
  * The script must `return` the result; each caller normalizes it to its capability's shape.
+ *
+ * Secure desktop mode NEVER executes user scripts (PRD fixed decision 12,
+ * SECURITY.md §5). In secure mode this function fails closed instead of
+ * running arbitrary code, and there is intentionally no fallback to another
+ * execution mechanism.
  */
 export async function runModelPlugin<T = unknown>(args: RunPluginArgs): Promise<T> {
+    const { isSecureProviderMode } = await import("@/services/desktop/providers");
+    if (isSecureProviderMode()) {
+        throw new Error(i18n.t("modelPlugin.secureModeDisabled"));
+    }
     const { config } = args;
     const http = createPluginHttp(config, { signal: args.signal });
     const request = createPluginRequest(config, { signal: args.signal });

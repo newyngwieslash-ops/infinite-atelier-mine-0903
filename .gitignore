@@ -16,3 +16,19 @@ web/dist
 web/.fix-tmp/
 web/.playwright-cli/
 web/output/
+
+# Keep the Wails embed root present without tracking generated frontend assets.
+!web/dist/
+web/dist/*
+!web/dist/.gitkeep
+
+# Wails production build outputs are reproducible Task 9 artifacts.
+# Keep source/configuration outside these exact generated output paths trackable.
+build/bin/
+build/appicon.png
+build/windows/
+# >>> Comet managed project state >>>
+!/.comet/
+/.comet/*
+!/.comet/config.yaml
+# <<< Comet managed project state <<<

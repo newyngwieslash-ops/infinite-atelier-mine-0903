@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 jobs:
-  verify:
+  web:
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -24,4 +24,47 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - run: npm ci --legacy-peer-deps
       - run: npm run typecheck
+      - run: npm test
       - run: npm run build
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Security scans (dynamic execution, secrets, persistence, direct calls)
+        run: node scripts/security-scan.mjs
+
+  windows-desktop:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+      - name: Install frontend dependencies
+        working-directory: web
+        run: npm ci --legacy-peer-deps
+      - name: Typecheck frontend
+        working-directory: web
+        run: npm run typecheck
+      - name: Frontend security tests
+        working-directory: web
+        run: npm test
+      - name: Security scans (dynamic execution, secrets, persistence, direct calls)
+        run: node scripts/security-scan.mjs
+      - name: Run Go tests
+        run: go test ./... -count=1
+      - name: Run Go vet
+        run: go vet ./...
+      - name: Install Wails CLI
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.15.0
+      - name: Build Windows desktop application
+        run: wails build
