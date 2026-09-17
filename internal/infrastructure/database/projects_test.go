@@ -221,3 +221,64 @@ func TestProjectRepositorySoftDeleteFilter(t *testing.T) {
 		t.Fatalf("IncludeDeleted returned %d rows, want 1", len(all))
 	}
 }
+
+// TestProjectRepositoryRejectsDuplicateID proves the primary key rejects a
+// second project with an identifier already stored, which is the guarantee
+// ADR-0005 relies on instead of trusting the generator.
+func TestProjectRepositoryRejectsDuplicateID(t *testing.T) {
+	projectsRepo, _, _ := openWP04Repo(t)
+	ctx := context.Background()
+	record := sampleProject(t, newTestIDGenerator())
+	if err := projectsRepo.CreateProject(ctx, record); err != nil {
+		t.Fatal(err)
+	}
+	// A second insert of the same id is a conflict, not a second row.
+	duplicate := record
+	duplicate.Name = "A different name"
+	err := projectsRepo.CreateProject(ctx, duplicate)
+	if err == nil {
+		t.Fatal("a duplicate project id was accepted")
+	}
+	domainErr, ok := project.AsError(err)
+	if !ok || domainErr.Category != project.CategoryConflict {
+		t.Fatalf("expected a conflict, got %v", err)
+	}
+	count, err := projectsRepo.CountProjects(ctx, projects.ListFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("the duplicate created %d rows", count)
+	}
+}
+
+// TestProjectRepositoryStoresTheSuppliedID proves the repository persists the
+// identifier it was given rather than minting one: ADR-0005 requires generation
+// in the application layer, and a repository that substituted its own value
+// would break every cross-table reference.
+func TestProjectRepositoryStoresTheSuppliedID(t *testing.T) {
+	projectsRepo, _, _ := openWP04Repo(t)
+	ctx := context.Background()
+	generator := newTestIDGenerator()
+	record := sampleProject(t, generator)
+	if err := projectsRepo.CreateProject(ctx, record); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := projectsRepo.GetProject(ctx, record.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.ID != record.ID {
+		t.Fatalf("stored id = %q, want the supplied %q", loaded.ID, record.ID)
+	}
+	// The identifier is the UUIDv7 the application generated, not a value the
+	// store invented.
+	if !idValid(record.ID) {
+		t.Fatalf("the stored id is not the UUIDv7 the application supplied: %q", record.ID)
+	}
+}
+
+// idValid reports whether a value is a canonical UUIDv7 (ADR-0005).
+func idValid(value string) bool {
+	return id.Valid(value)
+}

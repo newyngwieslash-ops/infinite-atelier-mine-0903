@@ -1,6 +1,7 @@
 package backup
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -219,7 +220,11 @@ func (r *RestoreService) Restore(ctx context.Context, data []byte) (RestoreResul
 	result := RestoreResult{Manifest: manifest}
 	// A secret-shaped string in an ordinary archive means the archive is not
 	// ordinary; it is refused rather than imported (AC-BACKUP-001).
-	result.SyntheticSecretsFound = scanForSecretShapes(rawManifest, databaseBytes)
+	// The scan runs before anything is staged, and it covers every entry: a
+	// credential could sit in the provider metadata or inside an archived object,
+	// and AC-BACKUP-001 asks for a scan of the backup rather than of two of its
+	// files.
+	result.SyntheticSecretsFound = scanArchiveForSecretShapes(reader, rawManifest, databaseBytes)
 	if len(result.SyntheticSecretsFound) > 0 {
 		return RestoreResult{}, importError("secrets",
 			"The archive contains credential material, which an ordinary backup must not.", nil)
@@ -299,29 +304,66 @@ func validateManifest(manifest Manifest) error {
 
 // secretShapes are prefixes that identify credential material. They are the
 // same patterns the security scanner uses, so a key that would be caught in a
-// source file is caught in an archive too.
-var secretShapes = []string{"sk-", "AKIA", "ghp_", "gho_", "xoxb-", "-----BEGIN "}
+// source file is caught in an archive too. The header names are included because
+// AC-BACKUP-001 names Authorization and Cookie explicitly.
+var secretShapes = []string{
+	"sk-", "AKIA", "ghp_", "gho_", "xoxb-", "-----BEGIN ",
+	"Authorization:", "authorization:", "Cookie:", "Set-Cookie:",
+}
 
-// scanForSecretShapes reports which credential shapes appear in the archived
-// bytes.
+// scanArchiveForSecretShapes reports which credential shapes appear anywhere in
+// an archive.
 //
-// It searches the database snapshot and the manifest because those are the
-// places a key could hide: the media files are opaque bytes, and the provider
-// metadata is written from a shape that has no secret field. Finding one is
-// reported by shape only, never by value, so the report cannot leak what it
-// found.
-func scanForSecretShapes(manifest, database []byte) []string {
+// Every entry is read: the manifest, the database, the provider metadata and each
+// archived object. The database is binary, but searching it as text is still
+// meaningful because a leaked key would be stored as a text column value. An
+// entry that cannot be read is skipped rather than failing the scan, because the
+// checksum pass has already rejected a truncated archive.
+//
+// Finding one is reported by shape only, never by value, so the report cannot
+// leak what it found.
+func scanArchiveForSecretShapes(reader *archive.Reader, manifest, database []byte) []string {
 	found := make([]string, 0, 2)
 	seen := map[string]bool{}
-	for _, payload := range [][]byte{manifest, database} {
-		// The database is binary; searching it as text is still meaningful
-		// because a leaked key would be stored as a text column value.
-		haystack := string(payload)
+	scan := func(payload []byte) {
+		// A binary payload is searched as bytes: converting a large media object
+		// to a string would copy it, and the shapes are ASCII.
 		for _, shape := range secretShapes {
 			if seen[shape] {
 				continue
 			}
-			if strings.Contains(haystack, shape) {
+			if bytes.Contains(payload, []byte(shape)) {
+				seen[shape] = true
+				found = append(found, shape)
+			}
+		}
+	}
+	scan(manifest)
+	scan(database)
+	for _, entry := range reader.Entries() {
+		if entry.IsDir {
+			continue
+		}
+		content, err := reader.Read(entry.Name)
+		if err != nil {
+			continue
+		}
+		scan(content)
+	}
+	return found
+}
+
+// scanForSecretShapes reports which credential shapes appear in the given
+// payloads. It exists for tests that check the shapes themselves.
+func scanForSecretShapes(payloads ...[]byte) []string {
+	found := make([]string, 0, 2)
+	seen := map[string]bool{}
+	for _, payload := range payloads {
+		for _, shape := range secretShapes {
+			if seen[shape] {
+				continue
+			}
+			if bytes.Contains(payload, []byte(shape)) {
 				seen[shape] = true
 				found = append(found, shape)
 			}

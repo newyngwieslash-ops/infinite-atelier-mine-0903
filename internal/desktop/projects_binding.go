@@ -393,29 +393,19 @@ type UpsertNodeRequest struct {
 
 // UpsertNode adds or updates one canvas node, returning the stored row.
 //
-// An empty ID creates; a set ID replaces that node's fields under the supplied
-// revision, so a concurrent edit in another window is reported as a conflict
-// rather than overwritten.
+// The canvas owns its node identifiers: it mints an id when it creates a node
+// and keeps it, so a save sends a non-empty id for a node the database has never
+// seen. Creation is therefore decided by whether the row exists, not by whether
+// the id is empty. An update carries the revision the canvas last read, so a
+// concurrent edit is reported as a conflict rather than overwritten.
 func (b *ProjectsBinding) UpsertNode(request UpsertNodeRequest) (CanvasNodeDTO, error) {
 	service := b.projectService()
 	if service == nil {
 		return CanvasNodeDTO{}, bindingUnavailable()
 	}
 	if request.ID == "" {
-		if request.DocumentID == "" {
-			return CanvasNodeDTO{}, bindingInvalidInput()
-		}
-		node, err := service.CreateNode(b.context(), request.DocumentID, appprojects.NodeInput{
-			NodeType: request.NodeType, Title: request.Title,
-			EntityType: request.EntityType, EntityID: request.EntityID,
-			PositionX: request.PositionX, PositionY: request.PositionY,
-			Width: request.Width, Height: request.Height, ZIndex: request.ZIndex,
-			UIState: request.UIState, LegacyMetadata: request.LegacyMetadata,
-		})
-		if err != nil {
-			return CanvasNodeDTO{}, toProjectError(err)
-		}
-		return toNodeDTO(node), nil
+		// An id-less write is a create: the canvas has no identifier yet.
+		return b.createNode(request)
 	}
 	node, err := service.UpdateNode(b.context(), appprojects.UpdateNodeRequest{
 		ID: request.ID, NodeType: request.NodeType, Title: request.Title,
@@ -424,6 +414,43 @@ func (b *ProjectsBinding) UpsertNode(request UpsertNodeRequest) (CanvasNodeDTO, 
 		Width: request.Width, Height: request.Height, ZIndex: request.ZIndex,
 		UIState: request.UIState, LegacyMetadata: request.LegacyMetadata,
 		Revision: request.Revision,
+	})
+	if err == nil {
+		return toNodeDTO(node), nil
+	}
+	// A node the database does not hold is the canvas's first save of it, which
+	// is a create. Any other failure is reported as it stands.
+	if !b.isMissingNode(err) {
+		return CanvasNodeDTO{}, toProjectError(err)
+	}
+	return b.createNode(request)
+}
+
+// isMissingNode reports whether an error means the row does not exist.
+func (b *ProjectsBinding) isMissingNode(err error) bool {
+	domainErr, ok := project.AsError(err)
+	return ok && domainErr.Category == project.CategoryNotFound
+}
+
+// createNode stores a node the canvas has already identified.
+func (b *ProjectsBinding) createNode(request UpsertNodeRequest) (CanvasNodeDTO, error) {
+	service := b.projectService()
+	if service == nil {
+		return CanvasNodeDTO{}, bindingUnavailable()
+	}
+	if request.DocumentID == "" {
+		return CanvasNodeDTO{}, bindingInvalidInput()
+	}
+	node, err := service.CreateNode(b.context(), request.DocumentID, appprojects.NodeInput{
+		// The canvas's identifier is preserved so the canvas keeps addressing the
+		// same node across a save and a reload.
+		ID:         request.ID,
+		NodeType:   request.NodeType,
+		Title:      request.Title,
+		EntityType: request.EntityType, EntityID: request.EntityID,
+		PositionX: request.PositionX, PositionY: request.PositionY,
+		Width: request.Width, Height: request.Height, ZIndex: request.ZIndex,
+		UIState: request.UIState, LegacyMetadata: request.LegacyMetadata,
 	})
 	if err != nil {
 		return CanvasNodeDTO{}, toProjectError(err)

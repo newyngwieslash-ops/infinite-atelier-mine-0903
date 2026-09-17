@@ -40,11 +40,12 @@ func (r *LegacyRepository) conn() querier {
 	return connection(r.db, r.tx)
 }
 
-// HasCompletedImport reports whether a fingerprint already finished.
+// HasCompletedImport reports whether this project content already imported.
 //
-// Only a 'completed' row counts: a failed or already-imported record must not
-// suppress a retry. This is what makes AC-LEGACY-002's second import detect
-// itself without treating a failure as success.
+// The fingerprint identifies one project, not one run: the decision this answers
+// is per project, because a snapshot may hold several and only some may have
+// been imported before. A row exists only when the project committed, so a
+// failed import is retried rather than treated as a duplicate.
 func (r *LegacyRepository) HasCompletedImport(ctx context.Context, fingerprint string) (bool, error) {
 	conn := r.conn()
 	if conn == nil {
@@ -52,8 +53,8 @@ func (r *LegacyRepository) HasCompletedImport(ctx context.Context, fingerprint s
 	}
 	var count int
 	if err := conn.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM legacy_imports WHERE source_fingerprint = ? AND status = ?`,
-		fingerprint, legacy.StatusCompleted).Scan(&count); err != nil {
+		`SELECT COUNT(*) FROM legacy_project_imports WHERE fingerprint = ?`,
+		fingerprint).Scan(&count); err != nil {
 		return false, storageError("LEGACY_READ_FAILED", "The import records could not be read.", err)
 	}
 	return count > 0, nil
@@ -157,6 +158,11 @@ func (r *LegacyRepository) ImportSnapshot(ctx context.Context, request legacy.Im
 			if err := legacyRepo.insertMapping(ctx, importID, mapping); err != nil {
 				return legacy.ImportOutcome{}, err
 			}
+		}
+		// The per-project fingerprint is recorded here, inside the transaction, so
+		// it exists only if the project rows did.
+		if err := legacyRepo.recordProjectFingerprint(ctx, importID, bundle); err != nil {
+			return legacy.ImportOutcome{}, err
 		}
 	}
 
@@ -291,6 +297,35 @@ func (r *LegacyRepository) insertMapping(ctx context.Context, importID string, m
 		ON CONFLICT(import_id, kind, legacy_id) DO NOTHING`,
 		importID, mapping.Kind, mapping.LegacyID, mapping.NewID, requestTime()); err != nil {
 		return storageError("LEGACY_WRITE_FAILED", "The import mapping could not be saved.", err)
+	}
+	return nil
+}
+
+// recordProjectFingerprint notes that one project content is now imported.
+func (r *LegacyRepository) recordProjectFingerprint(ctx context.Context, importID string, bundle legacy.ProjectBundle) error {
+	conn := r.conn()
+	if conn == nil {
+		return storageError("LEGACY_STORE_UNAVAILABLE", "The import store is unavailable.", nil)
+	}
+	legacyProjectID := ""
+	for _, mapping := range bundle.Mappings {
+		if mapping.Kind == legacy.MapProject {
+			legacyProjectID = mapping.LegacyID
+			break
+		}
+	}
+	if legacyProjectID == "" || bundle.Fingerprint == "" {
+		// Without an identifier and a fingerprint there is nothing to detect a
+		// repeat by, and writing a blank key would make every later import look
+		// like a duplicate of nothing.
+		return nil
+	}
+	if _, err := conn.ExecContext(ctx, `INSERT INTO legacy_project_imports
+		(fingerprint, import_id, legacy_project_id, project_id, created_at)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(fingerprint) DO NOTHING`,
+		bundle.Fingerprint, importID, legacyProjectID, bundle.Project.ID, requestTime()); err != nil {
+		return storageError("LEGACY_WRITE_FAILED", "The import record could not be saved.", err)
 	}
 	return nil
 }

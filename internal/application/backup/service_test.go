@@ -564,3 +564,68 @@ func TestManifestRecordsWhatTheReaderNeeds(t *testing.T) {
 		t.Fatalf("the provider metadata carries a secret-shaped field: %s", provider)
 	}
 }
+
+// TestRestoreRefusesCredentialHiddenInAnObject is the regression test for the
+// scan's coverage.
+//
+// The scan originally read only the manifest and the database, so a credential
+// sitting inside an archived object or the provider metadata would have restored
+// successfully. AC-BACKUP-001 asks for a scan of the backup, not of two of its
+// files.
+func TestRestoreRefusesCredentialHiddenInAnObject(t *testing.T) {
+	// A valid archive whose media object carries a credential-shaped string.
+	object := []byte("PK\x03\x04 pretend media payload apiKey=sk-1234567890abcdefghijklmnop")
+	sum := sha256.Sum256(object)
+	hash := hex.EncodeToString(sum[:])
+
+	writer := archive.NewWriter(archive.WriterOptions{})
+	manifest := Manifest{
+		ManifestVersion: SupportedManifestVersion, App: "infinite-canvas",
+		AppVersion: "test", SchemaVersion: 4, CreatedAt: "2026-09-16T12:00:00Z",
+		Files: 1, FileBytes: int64(len(object)),
+	}
+	encodedManifest, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Add(ManifestName, encodedManifest); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Add(DatabaseName, []byte("SQLite format 3\x00clean")); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Add(FilesPrefix+hash, object); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.AddChecksums(); err != nil {
+		t.Fatal(err)
+	}
+	data, err := writer.Finish()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sink := newFakeSink()
+	restore := NewRestoreService(sink)
+	_, err = restore.Restore(context.Background(), data)
+	if err == nil {
+		t.Fatal("an archive with a credential inside an object was restored")
+	}
+	if !strings.Contains(err.Error(), "credential material") {
+		t.Fatalf("the refusal does not name the reason: %v", err)
+	}
+	if sink.database != nil {
+		t.Fatal("a refused restore staged the database")
+	}
+}
+
+// TestBackupScanCoversAuthorizationAndCookie proves the header names
+// AC-BACKUP-001 names explicitly are part of the shape list.
+func TestBackupScanCoversAuthorizationAndCookie(t *testing.T) {
+	for _, shape := range []string{"Authorization:", "authorization:", "Cookie:", "Set-Cookie:"} {
+		found := scanForSecretShapes([]byte("x-" + shape + " bearer abcdef"))
+		if len(found) == 0 {
+			t.Fatalf("the scan does not look for %q", shape)
+		}
+	}
+}

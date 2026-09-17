@@ -303,10 +303,16 @@ func (s *Service) UpdateViewport(ctx context.Context, request UpdateViewportRequ
 	}
 	document.Viewport = request.Viewport
 	document.UpdatedAt = s.now()
-	if err := s.canvas.UpdateDocument(ctx, document, request.Revision); err != nil {
+	// The revision written against is the one just read, not the caller's: a
+	// viewport is the canvas's least contended state (the user pans, and the
+	// debounce serialises the writes), and requiring the caller to track the
+	// document revision would make every pan fail against a stale value. Any
+	// other column change still travels through UpdateDocument with a caller
+	// revision, so a structural edit is still guarded.
+	if err := s.canvas.UpdateDocument(ctx, document, document.Revision); err != nil {
 		return project.CanvasDocument{}, err
 	}
-	document.Revision = request.Revision + 1
+	document.Revision++
 	return document, nil
 }
 

@@ -149,9 +149,16 @@ export class GoCanvasAdapter implements CanvasPersistenceAdapter {
         for (const node of document.nodes) {
             const payload = toNodeWrite(node, documentId, revisions.get(node.id));
             const fingerprint = JSON.stringify(payload);
-            nextKnown.nodes.set(node.id, fingerprint);
-            if (previous?.nodes.get(node.id) === fingerprint) continue;
-            await ignoreFailure(() => UpsertNode(payload));
+            // The fingerprint is recorded only when the write succeeded: recording
+            // it first would make a failed write look like a completed one and the
+            // next save would skip the node, losing the edit.
+            if (previous?.nodes.get(node.id) === fingerprint) {
+                nextKnown.nodes.set(node.id, fingerprint);
+                continue;
+            }
+            if (await ignoreFailure(() => UpsertNode(payload))) {
+                nextKnown.nodes.set(node.id, fingerprint);
+            }
         }
 
         for (const connection of document.connections) {
@@ -171,9 +178,11 @@ export class GoCanvasAdapter implements CanvasPersistenceAdapter {
 
         for (const session of document.chatSessions) {
             const messagesJson = JSON.stringify(session.messages);
-            nextKnown.sessions.set(session.id, messagesJson);
-            if (previous?.sessions.get(session.id) === messagesJson) continue;
-            await ignoreFailure(() =>
+            if (previous?.sessions.get(session.id) === messagesJson) {
+                nextKnown.sessions.set(session.id, messagesJson);
+                continue;
+            }
+            const saved = await ignoreFailure(() =>
                 SaveChatSession({
                     // A session the canvas created in this session has no stored id
                     // yet; the binding assigns one when the id is empty.
@@ -183,6 +192,7 @@ export class GoCanvasAdapter implements CanvasPersistenceAdapter {
                     messagesJson,
                 }),
             );
+            if (saved) nextKnown.sessions.set(session.id, messagesJson);
         }
 
         this.known.set(projectId, nextKnown);

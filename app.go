@@ -40,6 +40,7 @@ type app struct {
 	// second.
 	projectsBinding     *desktop.ProjectsBinding
 	legacyUploadBinding *desktop.LegacyUploadBinding
+	backupBinding       *desktop.BackupBinding
 	providerWiring      *providerWiring
 	jobWiring           *jobWiring
 	projectWiring       *projectWiring
@@ -144,7 +145,12 @@ func (a *app) startup(ctx context.Context) {
 			// The WP-04 stack shares the same database and FileStore, so a
 			// migrated project's media lands in the same content-addressed store
 			// the job pipeline writes to.
-			projectStack := composeProjects(handle, dirs, store, a.legacyUploadBinding)
+			projectStack := composeProjects(handle, dirs, store, a.legacyUploadBinding, a.backupBinding)
+			// A restore stages into the private temp area; a copy left by an
+			// interrupted attempt is removed at startup rather than accumulating.
+			if projectStack != nil {
+				projectStack.cleanStaging()
+			}
 			if projectStack != nil {
 				if a.projectsBinding != nil {
 					projectStack.binding = a.projectsBinding

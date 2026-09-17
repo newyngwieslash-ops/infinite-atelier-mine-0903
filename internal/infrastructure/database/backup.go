@@ -184,10 +184,33 @@ func (s *BackupStore) ProviderMetadata(ctx context.Context) ([]byte, error) {
 	return encoded, nil
 }
 
+// CleanStaging removes the restore staging area.
+//
+// It is called at startup and before a restore, so a failed attempt does not
+// leave a copy of an archive's database and files on disk. The directory is
+// private to the application, and the path is derived here rather than supplied,
+// so nothing outside the managed temp area can be removed.
+func (s *BackupStore) CleanStaging() error {
+	if s == nil || s.tempDir == "" {
+		return nil
+	}
+	directory := filepath.Join(s.tempDir, "restore")
+	if err := os.RemoveAll(directory); err != nil {
+		return apperror.New("BACKUP_RESTORE_FAILED", "storage", false,
+			"The restore staging area could not be cleared.", err)
+	}
+	return nil
+}
+
 // StageDatabase writes an archived database into the private staging area.
 func (s *BackupStore) StageDatabase(ctx context.Context, content []byte) (string, error) {
 	if s == nil || s.tempDir == "" {
 		return "", apperror.New("BACKUP_UNAVAILABLE", "storage", false, "The backup service is unavailable.", nil)
+	}
+	// A leftover from a previous attempt is cleared first, so the staged files
+	// this restore reports are its own.
+	if err := s.CleanStaging(); err != nil {
+		return "", err
 	}
 	directory := filepath.Join(s.tempDir, "restore")
 	if err := os.MkdirAll(directory, 0o700); err != nil {

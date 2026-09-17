@@ -74,9 +74,14 @@ func TestLegacyImportSnapshotIsAtomic(t *testing.T) {
 	canvasRepo := NewCanvasRepository(handle.SQL())
 	legacyRepo := NewLegacyRepository(handle.SQL())
 
+	// The project fingerprint identifies the project's content; the run
+	// fingerprint identifies the import attempt. They are different values,
+	// and a per-project question must be answered only by the former.
+	projectFingerprint := strings.Repeat("b", 64)
 	bundle := bundleFixture(t, "proj-legacy-1", "doc-1", "node-1", "edge-1", "node-2")
+	bundle.Fingerprint = projectFingerprint
 	request := legacy.ImportRequest{
-		Fingerprint: strings.Repeat("b", 64),
+		Fingerprint: strings.Repeat("f", 64),
 		Mode:        legacy.ModeInitial,
 		SourceCase:  "all-node-types",
 		StartedAt:   time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC),
@@ -122,13 +127,21 @@ func TestLegacyImportSnapshotIsAtomic(t *testing.T) {
 		t.Fatalf("mapping lookup = %q, %v", newID, found)
 	}
 
-	// The fingerprint is recorded as completed, so a second import detects it.
-	done, err := legacyRepo.HasCompletedImport(ctx, strings.Repeat("b", 64))
+	// The project's own fingerprint is recorded, so a second import of the
+	// same project detects it. The run fingerprint is not a project
+	// fingerprint and must not answer for one: a run covers several projects.
+	done, err := legacyRepo.HasCompletedImport(ctx, projectFingerprint)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !done {
-		t.Fatal("the fingerprint was not recorded as completed")
+		t.Fatal("the imported project's fingerprint was not recorded")
+	}
+	// The run fingerprint, which the request carried, answers for nothing.
+	if answered, err := legacyRepo.HasCompletedImport(ctx, request.Fingerprint); err != nil {
+		t.Fatal(err)
+	} else if answered {
+		t.Fatal("the run fingerprint answered a per-project question")
 	}
 }
 
@@ -292,5 +305,100 @@ func TestLegacyImportStoresAssetsAndHistory(t *testing.T) {
 	}
 	if len(files) != 1 || files[0].FileHash != hash {
 		t.Fatalf("files = %+v", files)
+	}
+}
+
+// TestLegacyProjectFingerprintIsPerProject is the regression test for the
+// idempotency bug the unit suite could not see.
+//
+// The application decides whether to skip a project by asking the store about
+// that project's content fingerprint. An earlier revision recorded the whole
+// run's fingerprint instead, so the question could never match its answer and a
+// second import silently duplicated the project. The in-memory double hid it by
+// recording whatever it was asked about.
+//
+// This test uses the real store, which is what the application runs against.
+func TestLegacyProjectFingerprintIsPerProject(t *testing.T) {
+	handle := legacyHandle(t)
+	ctx := context.Background()
+	legacyRepo := NewLegacyRepository(handle.SQL())
+
+	projectFingerprint := strings.Repeat("a", 64)
+	runFingerprint := strings.Repeat("b", 64)
+
+	// Before any import, neither question is answered.
+	done, err := legacyRepo.HasCompletedImport(ctx, projectFingerprint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if done {
+		t.Fatal("an unknown fingerprint reports as imported")
+	}
+
+	bundle := bundleFixture(t, "proj-fp", "doc-fp", "node-fp-1", "edge-fp", "node-fp-2")
+	// The bundle carries the project fingerprint; the run carries its own.
+	bundle.Fingerprint = projectFingerprint
+	request := legacy.ImportRequest{
+		Fingerprint: runFingerprint,
+		Mode:        legacy.ModeInitial,
+		SourceCase:  "fingerprint",
+		StartedAt:   time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC),
+		Bundles:     []legacy.ProjectBundle{bundle},
+	}
+	if _, err := legacyRepo.ImportSnapshot(ctx, request); err != nil {
+		t.Fatalf("ImportSnapshot: %v", err)
+	}
+
+	// The project's own fingerprint now reports as imported, which is what the
+	// second import asks.
+	done, err = legacyRepo.HasCompletedImport(ctx, projectFingerprint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !done {
+		t.Fatal("the imported project's fingerprint does not report as imported, so a second import would duplicate it")
+	}
+	// The run fingerprint is not a project fingerprint and must not answer for
+	// one: a run covers several projects, so its value cannot decide any single
+	// project's fate.
+	runAnswered, err := legacyRepo.HasCompletedImport(ctx, runFingerprint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runAnswered {
+		t.Fatal("a run fingerprint answered a per-project question")
+	}
+}
+
+// TestLegacyProjectFingerprintSurvivesFailure proves a rolled-back import leaves
+// no fingerprint, so a retry is a retry rather than a duplicate.
+func TestLegacyProjectFingerprintSurvivesFailure(t *testing.T) {
+	handle := legacyHandle(t)
+	ctx := context.Background()
+	legacyRepo := NewLegacyRepository(handle.SQL())
+
+	good := bundleFixture(t, "proj-fail", "doc-fail", "node-f-1", "edge-f", "node-f-2")
+	good.Fingerprint = strings.Repeat("c", 64)
+	broken := bundleFixture(t, "proj-fail-2", "doc-fail-2", "node-g-1", "edge-g", "node-g-2")
+	broken.Fingerprint = strings.Repeat("d", 64)
+	broken.Nodes[0].CanvasDocumentID = "doc-missing"
+
+	request := legacy.ImportRequest{
+		Fingerprint: strings.Repeat("e", 64),
+		Mode:        legacy.ModeInitial,
+		StartedAt:   time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC),
+		Bundles:     []legacy.ProjectBundle{good, broken},
+	}
+	if _, err := legacyRepo.ImportSnapshot(ctx, request); err == nil {
+		t.Fatal("a malformed import reported success")
+	}
+	for _, fingerprint := range []string{good.Fingerprint, broken.Fingerprint} {
+		done, err := legacyRepo.HasCompletedImport(ctx, fingerprint)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if done {
+			t.Fatalf("a failed import recorded fingerprint %q, so the project could never be imported", fingerprint)
+		}
 	}
 }

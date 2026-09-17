@@ -6,6 +6,7 @@ import { useTranslation } from "react-i18next";
 import { useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-store";
 import { useCanvasUiStore } from "@/stores/canvas/use-canvas-ui-store";
 import { exportCanvasProjects } from "@/lib/canvas/canvas-export";
+import { isSecureCanvasMode, resolveCanvasAdapter } from "@/services/desktop/canvas-adapter";
 
 export function CanvasProjectCard({ project }: { project: CanvasProject }) {
     const { i18n, t } = useTranslation();

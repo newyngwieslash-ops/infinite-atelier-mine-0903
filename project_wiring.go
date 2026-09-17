@@ -27,6 +27,9 @@ type projectWiring struct {
 	export      *appbackup.ExportService
 	restore     *appbackup.RestoreService
 	upload      *desktop.LegacyUploadBinding
+	backup      *desktop.BackupBinding
+	// backupStore is both the export source and the restore sink.
+	backupStore *database.BackupStore
 	binding     *desktop.ProjectsBinding
 }
 
@@ -36,7 +39,7 @@ type projectWiring struct {
 // composeProjects builds the stack. The upload binding is supplied by the
 // caller because it is declared before Wails startup; this function only
 // configures it, so the Wails surface is the same object either way.
-func composeProjects(handle *database.Handle, dirs appdirs.Dirs, store *filestore.Store, uploadBinding *desktop.LegacyUploadBinding) *projectWiring {
+func composeProjects(handle *database.Handle, dirs appdirs.Dirs, store *filestore.Store, uploadBinding *desktop.LegacyUploadBinding, backupBinding *desktop.BackupBinding) *projectWiring {
 	if handle == nil || handle.SQL() == nil {
 		return nil
 	}
@@ -81,6 +84,8 @@ func composeProjects(handle *database.Handle, dirs appdirs.Dirs, store *filestor
 		export:      exportService,
 		restore:     restoreService,
 		upload:      uploadBinding,
+		backup:      backupBinding,
+		backupStore: backupStore,
 	}
 }
 
@@ -95,6 +100,11 @@ func (w *projectWiring) attach(ctx context.Context) {
 	}
 	if w.upload != nil {
 		desktop.AttachLegacyUpload(w.upload, ctx)
+	}
+	if w.backup != nil {
+		// The store is both the export source and the restore sink: the export
+		// reads through it and a restore stages into its private temp area.
+		desktop.AttachBackup(w.backup, ctx, w.export, w.restore, w.backupStore)
 	}
 }
 
@@ -192,3 +202,15 @@ func (c resultCommitter) CommitLegacyFile(ctx context.Context, legacyKey, mimeTy
 type appprojectsClock struct{}
 
 func (appprojectsClock) Now() time.Time { return time.Now().UTC() }
+
+// cleanStaging removes any restore staging left by an interrupted attempt.
+//
+// It runs at startup: a restore that failed or was interrupted leaves a copy of
+// an archive's database and files in the private temp area, and nothing else
+// would remove it (AC-BACKUP-002's temporary-directory cleanup).
+func (w *projectWiring) cleanStaging() {
+	if w == nil || w.backupStore == nil {
+		return
+	}
+	_ = w.backupStore.CleanStaging()
+}

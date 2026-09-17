@@ -140,27 +140,27 @@ func (s *Service) prepareMedia(ctx context.Context, snapshot Snapshot) (mediaInd
 // also where an unusable envelope is refused. Import repeats the same
 // validation, so a caller that skips the precheck is still protected.
 type Precheck struct {
-	ManifestVersion int
-	Projects        []PrecheckProject
-	TotalNodes      int
-	TotalEdges      int
+	ManifestVersion int               `json:"manifestVersion"`
+	Projects        []PrecheckProject `json:"projects"`
+	TotalNodes      int               `json:"totalNodes"`
+	TotalEdges      int               `json:"totalEdges"`
 	// MissingMedia lists keys the manifest promises but no source provides.
-	MissingMedia []string
+	MissingMedia []string `json:"missingMedia"`
 	// Warnings the transform produced, which the user can review up front.
-	Warnings []Warning
+	Warnings []Warning `json:"warnings"`
 	// MediaFiles counts the blobs that are available.
-	MediaFiles int
+	MediaFiles int `json:"mediaFiles"`
 }
 
 // PrecheckProject is one project's summary.
 type PrecheckProject struct {
-	LegacyID string
-	Title    string
-	Nodes    int
-	Edges    int
+	LegacyID string `json:"legacyId"`
+	Title    string `json:"title"`
+	Nodes    int    `json:"nodes"`
+	Edges    int    `json:"edges"`
 	// AlreadyImported reports that this project's fingerprint already finished a
 	// past import, so the default action is to skip it (AC-LEGACY-002).
-	AlreadyImported bool
+	AlreadyImported bool `json:"alreadyImported"`
 }
 
 // Precheck validates a snapshot and reports its scope.
@@ -181,8 +181,15 @@ func (s *Service) Precheck(ctx context.Context, snapshot Snapshot) (Precheck, er
 		return Precheck{}, err
 	}
 
-	result := Precheck{ManifestVersion: snapshot.ManifestVersion, MediaFiles: index.stored}
-	result.MissingMedia = index.missingList
+	result := Precheck{
+		ManifestVersion: snapshot.ManifestVersion,
+		MediaFiles:      index.stored,
+		// The frontend reads these as arrays, so they are never left nil: a nil
+		// slice marshals to null and the dialog would fail on .length.
+		Projects:     make([]PrecheckProject, 0),
+		MissingMedia: index.missingList,
+		Warnings:     make([]Warning, 0),
+	}
 	for _, legacyProject := range snapshot.Projects {
 		fingerprint := Fingerprint(legacyProject, index.hashes)
 		imported, checkErr := s.store.HasCompletedImport(ctx, fingerprint)
@@ -190,7 +197,7 @@ func (s *Service) Precheck(ctx context.Context, snapshot Snapshot) (Precheck, er
 			return Precheck{}, importError("precheck", "The import history could not be read.", checkErr)
 		}
 		bundle, transformErr := TransformProject(legacyProject, TransformOptions{
-			IDs: s.ids, Now: s.now(), MediaHashes: index.hashes, MissingMedia: index.missing,
+			IDs: s.ids, Now: s.now(), MediaHashes: index.hashes, MissingMedia: index.missing, Unsupported: snapshot.Unsupported,
 		})
 		if transformErr != nil {
 			return Precheck{}, importError("transform", "The project could not be read.", transformErr)
@@ -224,21 +231,21 @@ type ImportOptions struct {
 
 // ImportResult reports what an import did.
 type ImportResult struct {
-	ImportID string
-	Mode     string
+	ImportID string `json:"importId"`
+	Mode     string `json:"mode"`
 	// Imported lists the projects that were written.
-	Imported []ImportedProject
+	Imported []ImportedProject `json:"imported"`
 	// Skipped lists projects a past import already completed.
-	Skipped  []ImportedProject
-	Warnings []Warning
-	Counts   ImportOutcome
+	Skipped  []ImportedProject `json:"skipped"`
+	Warnings []Warning         `json:"warnings"`
+	Counts   ImportOutcome     `json:"counts"`
 }
 
 // ImportedProject names one project the run touched.
 type ImportedProject struct {
-	LegacyID string
-	NewID    string
-	Title    string
+	LegacyID string `json:"legacyId"`
+	NewID    string `json:"newId"`
+	Title    string `json:"title"`
 }
 
 // Import validates, stores the media, transforms and writes one snapshot.
@@ -285,7 +292,7 @@ func (s *Service) Import(ctx context.Context, snapshot Snapshot, options ImportO
 	skipped := make([]ImportedProject, 0)
 	for _, legacyProject := range snapshot.Projects {
 		bundle, transformErr := TransformProject(legacyProject, TransformOptions{
-			IDs: s.ids, Now: startedAt, MediaHashes: index.hashes, MissingMedia: index.missing,
+			IDs: s.ids, Now: startedAt, MediaHashes: index.hashes, MissingMedia: index.missing, Unsupported: snapshot.Unsupported,
 		})
 		if transformErr != nil {
 			s.recordFailure(ctx, request, "transform", transformErr, nil)
@@ -329,6 +336,12 @@ func (s *Service) Import(ctx context.Context, snapshot Snapshot, options ImportO
 	// attached to the project whose nodes reference its bytes, and to the first
 	// imported project when nothing references it. The choice is reported.
 	if err := attachAssets(bundles, snapshot, index, s.ids); err != nil {
+		s.recordFailure(ctx, request, "transform", err, collectWarnings(bundles))
+		return ImportResult{}, err
+	}
+	// The generation history is also profile-global in the legacy store, so it is
+	// archived under the first imported project and reported as such.
+	if err := attachHistory(bundles, snapshot, startedAt, s.ids); err != nil {
 		s.recordFailure(ctx, request, "transform", err, collectWarnings(bundles))
 		return ImportResult{}, err
 	}
@@ -474,6 +487,32 @@ func attachAssets(bundles []ProjectBundle, snapshot Snapshot, index mediaIndex, 
 		bundles[target].Assets = append(bundles[target].Assets, assetBundle)
 		bundles[target].Mappings = append(bundles[target].Mappings,
 			IDMapping{Kind: MapAsset, LegacyID: legacyAsset.ID, NewID: assetBundle.Asset.ID})
+	}
+	return nil
+}
+
+// attachHistory archives the generation history under the first project.
+//
+// The legacy store keeps one history list for the whole browser profile rather
+// than per project, and the domain requires a project owner, so the entries are
+// attached to the first project the run imports. The choice is recorded in the
+// import report, because a user looking for a prompt should know where it went.
+func attachHistory(bundles []ProjectBundle, snapshot Snapshot, now time.Time, ids IDSource) error {
+	if len(bundles) == 0 || len(snapshot.History) == 0 {
+		return nil
+	}
+	records, warnings, err := TransformHistory(snapshot.History, TransformOptions{IDs: ids, Now: now})
+	if err != nil {
+		return importError("transform", "The generation history could not be converted.", err)
+	}
+	bundles[0].History = records
+	bundles[0].Warnings = append(bundles[0].Warnings, warnings...)
+	if len(records) > 0 {
+		bundles[0].Warnings = append(bundles[0].Warnings, Warning{
+			Code: WarningUnsupportedMetadata, LegacyID: bundles[0].Project.ID,
+			Detail:      "the generation history is stored per browser profile and was archived under this project",
+			Occurrences: len(records),
+		})
 	}
 	return nil
 }

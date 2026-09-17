@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { useCanvasUiStore } from "@/stores/canvas/use-canvas-ui-store";
+import { isSecureCanvasMode, resolveCanvasAdapter } from "@/services/desktop/canvas-adapter";
 
 export function CanvasDeleteProjectsDialog() {
     const { t } = useTranslation();

@@ -124,6 +124,9 @@ func (s *memoryStore) ImportSnapshot(_ context.Context, request ImportRequest) (
 		outcome.Edges += len(bundle.Edges)
 		outcome.Assets += len(bundle.Assets)
 		outcome.History += len(bundle.History)
+		// The real store records one row per imported project and answers
+		// HasCompletedImport for a single project fingerprint, so the double does
+		// the same; recording the run fingerprint here would hide a mismatch.
 		s.completed[bundle.Fingerprint] = true
 		s.bundles = append(s.bundles, bundle)
 	}
@@ -361,6 +364,30 @@ func TestImportAllNodeTypesIsComplete(t *testing.T) {
 	for _, edge := range bundle.Edges {
 		if edge.RelationType != project.RelationGeneric {
 			t.Fatalf("edge relation = %q, want generic", edge.RelationType)
+		}
+	}
+
+	// The generation history is archived: the fixture declares two records and
+	// both must arrive, with their prompts and counts.
+	if len(snapshot.History) != 2 {
+		t.Fatalf("precondition: the fixture declares %d history records", len(snapshot.History))
+	}
+	if len(bundle.History) != len(snapshot.History) {
+		t.Fatalf("history = %d records, want %d", len(bundle.History), len(snapshot.History))
+	}
+	for index, record := range bundle.History {
+		want := snapshot.History[index]
+		if record.Prompt != want.Prompt || record.Model != want.Model {
+			t.Fatalf("history %d changed: %+v", index, record)
+		}
+		if record.Success != want.SuccessCount || record.Fail != want.FailCount {
+			t.Fatalf("history %d counts changed: %+v", index, record)
+		}
+		if record.LegacyID != want.ID {
+			t.Fatalf("history %d lost its legacy id: %q", index, record.LegacyID)
+		}
+		if record.ImagesJSON == "" {
+			t.Fatalf("history %d has no image list", index)
 		}
 	}
 }

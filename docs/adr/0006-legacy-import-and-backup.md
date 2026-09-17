@@ -81,10 +81,10 @@ FinishLegacyFile(uploadID, sha256)                  -> stored: bool
 AbortLegacyFile(uploadID)                           -> cleaned up
 ```
 
-- **Chunk size is bounded** (4 MiB decoded) so one binding call cannot allocate an unbounded buffer, and the binding enforces it plus a per-file ceiling and a per-session total.
-- Go writes chunks to a **temporary file under the managed temp directory**, hashing as it goes. Only after `Finish` verifies the size and the optional declared hash does it commit the bytes through the FileStore (content-addressed, atomic rename) and delete the temporary file.
+- **Chunk size is bounded** (4 MiB decoded) so one binding call cannot allocate an unbounded buffer, and the binding enforces it plus a per-file ceiling and a cap on concurrent transfers. A per-session byte total is **not** enforced.
+- Go writes the chunk as it arrives: each chunk is decoded, bounds-checked against a per-file ceiling, and handed to the FileStore, which streams it through SHA-256 and commits it content-addressed with an atomic rename. `Finish` verifies the declared size and the optional declared hash before the object is linked to anything. No temporary file survives a failed transfer: an aborted or over-limit upload is discarded in place.
 - This is why no local HTTP server is introduced: an HTTP surface would be a new network attack surface for a desktop app that otherwise makes no inbound connections. `docs/SECURITY.md` §11 requires all file paths to go through the FileStore, and this path does.
-- An interrupted upload leaves only a temporary file; `Abort` and the startup temp cleanup remove it. `AC-LEGACY-003` is tested against exactly this window.
+- An interrupted upload leaves nothing behind: `Abort` discards it, and the over-limit path discards it too. `AC-LEGACY-003` is tested against exactly this window.
 
 ### 3. Import is one transaction over metadata, with files committed first
 
@@ -102,10 +102,10 @@ report        -> persist the report and warnings
 ```
 
 - **Files first, metadata second.** If the DB transaction fails, the worst outcome is unreferenced objects in the content-addressed store — garbage, never a broken reference, because `file_references.file_hash` has a foreign key to `file_objects` and the reference row is only written inside the transaction. The reverse order would let a project reference bytes that do not exist.
-- **The whole DB write is one transaction**, so a failure cannot leave half a project. `AC-LEGACY-003`.
-- The job scheduler is paused for the duration and resumed afterwards. The database runs with `MaxOpenConns=1`, so an import transaction holding the only connection would otherwise stall every worker; pausing makes that visible and deliberate rather than incidental.
+- **The whole DB write is one transaction**, so a failure cannot leave half a project. `AC-LEGACY-003`. Verification re-reads the row counts inside the transaction; the media hashes are verified when the bytes are committed, before the transaction opens, because a content-addressed store returns the hash of what it actually stored.
+- The database runs with `MaxOpenConns=1`, so an import transaction holds the only connection for its duration and job workers wait for it. The import writes a bounded number of rows per project and does not perform network I/O inside the transaction, so the wait is short; a scheduler pause was considered and not implemented, because pausing would require reaching across the job service and the import is not long enough to justify it. This is a deliberate, recorded choice rather than an oversight.
 - Counts and hashes are compared **inside** the transaction by re-reading the rows just written, so the verification is of persisted state, not of the in-memory plan.
-- The pre-migration snapshot (`VACUUM INTO`) that the migration runner already takes for schema migrations is taken again for a **data** import, into the same snapshot directory, so `PRD.md` §NFR-002's "任何迁移先备份" holds for data as well as schema.
+- The pre-import snapshot that `PRD.md` §NFR-002 asks for ("任何迁移先备份") is **not** taken by this path: the migration runner snapshots before a *schema* migration, and a data import applies no schema change. A user who wants a copy first can export an ordinary backup, which is the same mechanism the backup binding exposes. This is recorded as a gap against NFR-002 rather than claimed as met.
 
 ### 4. Idempotency is a fingerprint, and the default is "do not import again"
 
@@ -170,7 +170,7 @@ provider.json      -- provider metadata without secret material
 ```
 
 - Export takes the database snapshot first (`wal_checkpoint(TRUNCATE)` then `VACUUM INTO` through the existing snapshot helper), then copies exactly the objects the snapshot references. A referenced object that is missing from disk fails the export rather than producing an archive that restores into broken references.
-- **Secrets are structurally absent.** `secret_references` stores no value, and the export never reads the OS credential store, so a key cannot be in the archive. `AC-BACKUP-001`'s scan is therefore a real check that the mechanism holds, not a filter that could miss a case.
+- **Secrets are structurally absent.** `secret_references` stores no value, and the export never reads the OS credential store, so a key cannot be in the archive. `AC-BACKUP-001`'s scan is therefore a check that the mechanism holds rather than a filter that could miss a case, and it reads every entry of the archive — the manifest, the database, the provider metadata and each stored object — looking for credential shapes including the `Authorization` and `Cookie` names the criterion lists.
 - Restore validates the manifest schema, every path (no traversal, no absolute paths, no device names, no symlinks, no duplicate normalised paths), every entry size, the total size and the compression ratio, and every checksum **before** touching live data; the extraction happens in a temporary directory and the swap is atomic. `AC-BACKUP-002` (atomicity) is WP-12's full criterion, but the archive reader it needs is built here and the WP-04 acceptance is the basic round trip plus the secret scan.
 - The archive is a ZIP read and written through the hardened reader/writer in `internal/infrastructure/archive`, which enforces the limits of `docs/SECURITY.md` §9 and is tested against the corpus in §18 (`../`, absolute path, device path, symlink, duplicate normalised path, entry count, compression ratio, false manifest, wrong hash, corrupt SQLite).
 

@@ -138,8 +138,10 @@ by any acceptance item and is deliberately left alone.
 - `internal/platform/id` tests assert: the version and variant nibbles, a 36-character canonical
   form, monotonic ordering for identifiers generated in sequence, uniqueness across a large burst,
   and rejection of no input (the generator takes no caller data).
-- `internal/domain/project` and `internal/domain/asset` tests assert IDs are validated, not minted,
-  by the domain.
+- The domain never mints or validates an identifier: it stores whatever the application supplied, and
+  `internal/platform/id` is the only package that formats or parses one. The application services take
+  the generator as a dependency, so a repository that invented an identifier would fail the tests that
+  assert the supplied value is the stored one (`TestProjectRepositoryStoresTheSuppliedID`).
 - Database tests assert that a new project row's `id` is exactly the UUIDv7 the application
   supplied, and that a duplicate id is rejected by the primary key.
 - The migration test for `000004` asserts the path-free `file_objects` shape is unchanged and that

@@ -1,0 +1,20 @@
+
+Running 14 tests using 1 worker
+
+  ok  1 [chromium] › e2e\canvas-regression.spec.ts:169:3 › AC-CANVAS-004 free canvas › a new project opens an empty canvas (7.8s)
+  ok  2 [chromium] › e2e\canvas-regression.spec.ts:176:3 › AC-CANVAS-004 free canvas › add: the toolbar creates each built-in node kind (2.6s)
+  ok  3 [chromium] › e2e\canvas-regression.spec.ts:188:3 › AC-CANVAS-004 free canvas › move: dragging a node moves that node and nothing else (3.9s)
+  ok  4 [chromium] › e2e\canvas-regression.spec.ts:216:3 › AC-CANVAS-004 free canvas › delete: a selected node is removed (2.6s)
+  ok  5 [chromium] › e2e\canvas-regression.spec.ts:227:3 › AC-CANVAS-004 free canvas › multi-select: shift-click selects more than one node (3.1s)
+  ok  6 [chromium] › e2e\canvas-regression.spec.ts:250:3 › AC-CANVAS-004 free canvas › box select: a rectangle over the canvas selects what it covers (3.5s)
+  ok  7 [chromium] › e2e\canvas-regression.spec.ts:276:3 › AC-CANVAS-004 free canvas › zoom: the wheel changes the rendered scale (2.4s)
+  ok  8 [chromium] › e2e\canvas-regression.spec.ts:295:3 › AC-CANVAS-004 free canvas › pan: the pan tool moves the whole viewport (3.6s)
+  ok  9 [chromium] › e2e\canvas-regression.spec.ts:339:3 › AC-CANVAS-004 free canvas › undo and redo: a created node is reversible (3.6s)
+  ok 10 [chromium] › e2e\canvas-regression.spec.ts:356:3 › AC-CANVAS-004 free canvas › connections: two nodes can be joined (3.8s)
+  ok 11 [chromium] › e2e\canvas-regression.spec.ts:394:3 › AC-CANVAS-004 free canvas › minimap: the toggle opens the overview (2.5s)
+  ok 12 [chromium] › e2e\canvas-regression.spec.ts:411:3 › AC-CANVAS-004 free canvas › generation child node: the prompt panel accepts a prompt (3.3s)
+  -  13 [chromium] › e2e\canvas-regression.spec.ts:428:3 › AC-CANVAS-004 free canvas › image tools: the crop action opens its dialog
+  ok 14 [chromium] › e2e\canvas-regression.spec.ts:449:3 › AC-CANVAS-004 free canvas › the canvas reloads with its nodes (4.6s)
+
+  1 skipped
+  13 passed (52.4s)

@@ -11,6 +11,15 @@ import (
 	"time"
 )
 
+func legacyProjectFingerprintsSQL(t *testing.T) []byte {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("migrations", "000005_legacy_project_fingerprints.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
+
 func projectsCanvasSQL(t *testing.T) []byte {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join("migrations", "000004_projects_canvas.sql"))
@@ -20,14 +29,15 @@ func projectsCanvasSQL(t *testing.T) []byte {
 	return data
 }
 
-// wp04Migrations is the full migration set through version 4.
+// wp04Migrations is the full migration set through version 5.
 func wp04Migrations(t *testing.T) fstest.MapFS {
 	t.Helper()
 	return fstest.MapFS{
-		"000001_foundation.sql":        {Data: foundationSQL(t)},
-		"000002_provider_security.sql": {Data: providerSecuritySQL(t)},
-		"000003_jobs.sql":              {Data: jobsSQL(t)},
-		"000004_projects_canvas.sql":   {Data: projectsCanvasSQL(t)},
+		"000001_foundation.sql":                  {Data: foundationSQL(t)},
+		"000002_provider_security.sql":           {Data: providerSecuritySQL(t)},
+		"000003_jobs.sql":                        {Data: jobsSQL(t)},
+		"000004_projects_canvas.sql":             {Data: projectsCanvasSQL(t)},
+		"000005_legacy_project_fingerprints.sql": {Data: legacyProjectFingerprintsSQL(t)},
 	}
 }
 
@@ -38,7 +48,7 @@ func TestWP04MigrationFreshDatabase(t *testing.T) {
 	if err := applyMigrations(context.Background(), db, wp04Migrations(t)); err != nil {
 		t.Fatal(err)
 	}
-	assertUserVersion(t, db, 4)
+	assertUserVersion(t, db, 5)
 
 	tables := []string{
 		"workspaces", "projects", "canvas_documents", "canvas_nodes", "canvas_edges",
@@ -132,7 +142,7 @@ func TestWP04MigrationPreservesExistingRows(t *testing.T) {
 		t.Fatal("no pre-migration snapshot was taken")
 	}
 
-	assertUserVersion(t, upgraded.SQL(), 4)
+	assertUserVersion(t, upgraded.SQL(), 5)
 	if got := queryInt(t, upgraded.SQL(), "SELECT COUNT(*) FROM generation_jobs WHERE id='job-legacy-1'"); got != 1 {
 		t.Fatalf("existing job row lost in upgrade (count=%d)", got)
 	}

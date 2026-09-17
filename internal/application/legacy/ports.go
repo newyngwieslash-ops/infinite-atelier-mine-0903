@@ -122,13 +122,13 @@ type ImportRequest struct {
 
 // ImportOutcome reports what was written.
 type ImportOutcome struct {
-	ImportID string
-	Projects int
-	Nodes    int
-	Edges    int
-	Media    int
-	Assets   int
-	History  int
+	ImportID string `json:"importId"`
+	Projects int    `json:"projects"`
+	Nodes    int    `json:"nodes"`
+	Edges    int    `json:"edges"`
+	Media    int    `json:"media"`
+	Assets   int    `json:"assets"`
+	History  int    `json:"history"`
 }
 
 // ImportStore writes a whole snapshot atomically.
@@ -156,17 +156,17 @@ type ImportStore interface {
 
 // ImportRecord is one stored import run.
 type ImportRecord struct {
-	ID          string
-	Fingerprint string
-	SourceCase  string
-	Mode        string
-	Status      string
-	ReportJSON  string
-	Warnings    []Warning
-	LegacyRoot  string
-	StartedAt   time.Time
-	FinishedAt  time.Time
-	CreatedAt   time.Time
+	ID          string    `json:"id"`
+	Fingerprint string    `json:"fingerprint"`
+	SourceCase  string    `json:"sourceCase"`
+	Mode        string    `json:"mode"`
+	Status      string    `json:"status"`
+	ReportJSON  string    `json:"reportJson"`
+	Warnings    []Warning `json:"warnings"`
+	LegacyRoot  string    `json:"legacyRoot"`
+	StartedAt   time.Time `json:"startedAt"`
+	FinishedAt  time.Time `json:"finishedAt"`
+	CreatedAt   time.Time `json:"createdAt"`
 }
 
 // Import run statuses.

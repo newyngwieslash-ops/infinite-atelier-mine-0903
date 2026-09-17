@@ -33,6 +33,10 @@ type TransformOptions struct {
 	MediaHashes map[string]string
 	// MissingMedia lists legacy keys whose bytes never arrived.
 	MissingMedia map[string]bool
+	// Unsupported carries the envelope's own record of state that belongs to
+	// another tool (MONOFORM's scene data, for example). Each key becomes a
+	// warning, so what was found is reported rather than dropped.
+	Unsupported map[string]any
 }
 
 // TransformProject converts one legacy project into an importable bundle.
@@ -266,9 +270,88 @@ func TransformProject(legacyProject LegacyProject, options TransformOptions) (Pr
 		}
 	}
 
+	// Content the envelope recorded but this package does not convert is
+	// reported rather than dropped: ADR-0006 §6 names MONOFORM's scene data as a
+	// case the user must be able to see was found and left alone.
+	for kind := range options.Unsupported {
+		warnings = append(warnings, Warning{
+			Code: WarningMonofromState, LegacyID: kind,
+			Detail:      "state that belongs to another tool was found and was not imported",
+			Occurrences: 1,
+		})
+	}
+
 	bundle.Warnings = warnings
 	bundle.Fingerprint = Fingerprint(legacyProject, options.MediaHashes)
 	return bundle, nil
+}
+
+// TransformHistory archives one project's generation history.
+//
+// The history is a list of what the user generated: a prompt, the model, the
+// images it produced and how many succeeded. It is imported into its own table
+// rather than turned into provider audit rows, because the audit rows record
+// calls that actually happened and the legacy list carries no call metadata
+// (ADR-0006 §7 records that deviation).
+//
+// History is deliberately not part of a project's content fingerprint: the
+// fingerprint answers "is this project already imported", and a changed history
+// list is not a changed project.
+func TransformHistory(records []LegacyHistory, options TransformOptions) ([]HistoryRecord, []Warning, error) {
+	if options.IDs == nil {
+		return nil, nil, fmt.Errorf("legacy: transform needs an id source")
+	}
+	now := options.Now
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	out := make([]HistoryRecord, 0, len(records))
+	warnings := make([]Warning, 0, 1)
+	for _, record := range records {
+		id, err := options.IDs.New()
+		if err != nil {
+			return nil, nil, err
+		}
+		images, marshalErr := json.Marshal(record.Images)
+		if marshalErr != nil {
+			// An entry whose image list cannot be re-encoded is imported with an
+			// empty list and reported, rather than losing the prompt and the counts
+			// along with it.
+			images = []byte("[]")
+			warnings = append(warnings, Warning{
+				Code: WarningUnsupportedMetadata, LegacyID: record.ID,
+				Detail: "the history entry's image list could not be read", Occurrences: 1,
+			})
+		}
+		out = append(out, HistoryRecord{
+			ID:       id,
+			LegacyID: record.ID,
+			Prompt:   record.Prompt,
+			Model:    record.Model,
+			// The list is kept as the legacy application wrote it: the entries are
+			// storage keys, and the media mapping resolves them.
+			ImagesJSON:  string(images),
+			Success:     record.SuccessCount,
+			Fail:        record.FailCount,
+			GeneratedAt: legacyMillis(record.CreatedAt, now),
+		})
+	}
+	return out, warnings, nil
+}
+
+// legacyMillis converts the legacy millisecond timestamp, falling back when the
+// value is absent or implausible.
+func legacyMillis(value int64, fallback time.Time) time.Time {
+	if value <= 0 {
+		return fallback
+	}
+	// 2100-01-01 in milliseconds: anything beyond this is a corrupt field rather
+	// than a real date, and storing it would put a year-50000 row in the archive.
+	const maxPlausibleMillis = int64(4102444800000)
+	if value > maxPlausibleMillis {
+		return fallback
+	}
+	return time.UnixMilli(value).UTC()
 }
 
 // transformNodeMetadata separates the display state from the retained legacy

@@ -53,7 +53,7 @@ func TestBackupExportAgainstRealStorage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Export: %v", err)
 	}
-	if result.Manifest.SchemaVersion != 4 {
+	if result.Manifest.SchemaVersion != 5 {
 		t.Fatalf("schema version = %d, want the applied head", result.Manifest.SchemaVersion)
 	}
 	if result.Manifest.Projects != 1 {
@@ -115,8 +115,8 @@ func TestBackupRestoreVerifiesAgainstRealDatabase(t *testing.T) {
 	if err != nil {
 		t.Fatalf("VerifyDatabase: %v", err)
 	}
-	if version != 4 {
-		t.Fatalf("version = %d, want 4", version)
+	if version != 5 {
+		t.Fatalf("version = %d, want the applied head", version)
 	}
 
 	// A file that is not a database is refused.

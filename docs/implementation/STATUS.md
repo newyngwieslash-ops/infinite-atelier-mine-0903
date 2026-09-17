@@ -1,11 +1,134 @@
 # Implementation Status
 
-> Last updated: 2026-09-15
+> Last updated: 2026-09-17
 > Product: Infinite Atelier Core + Drama Production Pack
-> Current work package: **WP-03 — Persistent Job Manager 与多模态 Provider**
+> Current work package: **WP-04 — Legacy 项目迁移与画布后端适配**
 > Status: **COMPLETE for the WP-03 scope recorded in section 0c** (job tables and state machine, scheduler/worker/lease/retry, startup recovery, OpenAI- and Gemini-compatible image adapters, async video and audio contracts with mocks, result pipeline into the FileStore, narrow job bindings, Job Center UI, image generation routed through Go, scans). WP-01 and WP-02 remain COMPLETE for their recorded scopes.
 
 WP-03 start baseline (2026-09-15): branch `codex/wp-01-desktop-foundation`, HEAD `a243891455ec17687dd54b5ac90d3bd64478a1a1`, empty index. Freshly re-run baseline: `go test ./... -count=1` PASS (15 packages at start), `go vet ./...` PASS, `web` `npm run typecheck` PASS, `npm test` PASS (15 tests), `npm run build` PASS. Go commands require `GOTOOLCHAIN=go1.25.0 GOSUMDB=sum.golang.org` on this host because the user-level `go env` sets `GOSUMDB=off`, which blocks toolchain verification. The working tree already contained the WP-01/WP-02 tracked and untracked work plus the user's brand rename; none of it was modified outside the WP-03 scope.
+
+---
+
+# 0d. WP-04 result (2026-09-17)
+
+## Scope completed
+
+- **Status: COMPLETE (WP-04 scope)**. Every acceptance item below was executed on this host;
+  the limitations are listed explicitly and are not disguised as passes.
+- Schema: forward-only `000004_projects_canvas.sql` adds workspaces, projects, canvas documents,
+  nodes, edges, chat sessions, assets, asset versions, asset files, archived generation history
+  and the legacy import bookkeeping. `000005_legacy_project_fingerprints.sql` adds the per-project
+  fingerprint table the idempotency check needs. `000001`-`000003` were not modified.
+- Domain: `internal/domain/project` (workspaces, projects, canvas kinds, the relation registry
+  with the `generic` fallback) and `internal/domain/asset` (assets, versions, the approval
+  preconditions). Neither mints or validates an identifier (ADR-0005).
+- Application: `internal/application/projects`, `.../assets`, `.../legacy` (snapshot, fingerprint,
+  transform, import) and `.../backup` (export and restore).
+- Infrastructure: SQLite repositories with revision guards and cascades, the atomic import, the
+  hardened ZIP reader/writer, and the backup store.
+- Bindings: `ProjectsBinding` (projects, canvas, nodes, edges, chats, import),
+  `LegacyUploadBinding` (the chunked base64 channel) and `BackupBinding` (export and restore
+  preview). The upload surface was audited down to its five transfer methods: the configuration
+  entry point and the media reader are package-level functions, so neither a filesystem path nor
+  an internal port reaches the webview.
+- Frontend: the canvas persistence adapter (Go and legacy implementations behind one mode
+  decision), the migration dialog in both locales, and a Playwright regression for the canvas.
+
+## Commands executed and actual results
+
+| Command | Result |
+|---|---|
+| `go test ./... -count=1` | **PASS** (19 packages ok) |
+| `go vet ./...` | **PASS** |
+| `gofmt -l .` | **PASS** (no output) |
+| `node scripts/security-scan.mjs` | **PASS** (296 files scanned; 1 audited dynamic-execution exception, 4 audited legacy direct-call files with named owners) |
+| `web`: `npm run typecheck` | **PASS** |
+| `web`: `npm test` | **PASS** (34 tests) |
+| `web`: `npm run test:e2e` | **PASS** (13 passed, 1 skipped; the skip is the crop dialog, which needs node content a headless run cannot supply) |
+| `web`: `npm run build` | **PASS** with the pre-existing over-500 kB chunk warning |
+| `scripts/verify.sh` / `scripts/verify.ps1` | **PASS**; both now run the canvas regression, and each reports its own skip reason when Playwright is absent |
+| `wails build -s` (v2.15.0) | **PASS**; produced `build/bin/InfiniteAtelier.exe` |
+| `git diff --check` | **PASS** (exit 0; only pre-existing LF/CRLF advisory warnings) |
+| `go test -race ./... -count=1` | **ENVIRONMENT FAILURE, not a pass** — the host 32-bit MinGW GCC cannot compile amd64 CGO. |
+
+## Acceptance
+
+| ID | Result | Evidence |
+|---|---|---|
+| AC-LEGACY-001 | **PASS** | `TestImportAllNodeTypesIsComplete` (counts, text, viewport, warnings, relations), `TestLegacyImportSnapshotIsAtomic` against the real store, `TestImportMissingMediaIsReportedNotFatal`, `TestImportMalformedMetadataIsRetained`, and the media checks against the fixtures in `testdata/old-projects/`. |
+| AC-LEGACY-002 | **PASS** | `TestImportIsIdempotent` (the second import skips, copy mode makes a distinct project, media stays deduplicated) plus `TestLegacyProjectFingerprintIsPerProject` against the real store, which is the level an earlier revision failed at. |
+| AC-LEGACY-003 | **PASS** | `TestLegacyImportRollsBackCompletely`, `TestLegacyProjectFingerprintSurvivesFailure`, `TestImportFailureLeavesNoProject` (the failing stage is named) and `TestImportDatabaseFailureIsReported`; the upload tests cover temporary-file cleanup. |
+| AC-CANVAS-004 | **PASS** | `web/e2e/canvas-regression.spec.ts`: add, move (asserting a second node did not shift), delete, multi-select, box select, zoom, pan (asserting every node shifted by one delta), undo/redo, connections, the minimap toggle, the generation prompt surface, the image node's actions and a reload. Each was mutation-checked: breaking the behaviour fails its test. |
+| AC-BACKUP-001 | **PASS** | `TestBackupRoundTrip`, `TestBackupContainsNoSecrets`, `TestRestoreRefusesSecretBearingArchive`, `TestRestoreRefusesCredentialHiddenInAnObject`, `TestBackupScanCoversAuthorizationAndCookie`, `TestRestoreRefusesTamperedArchive` and `TestBackupExportAgainstRealStorage`. |
+| AC-BACKUP-002 | **PARTIAL** | Tamper detection and staged validation are tested; the atomic swap of a live database is not implemented, so a restore validates and stages and the promotion step belongs to WP-12. |
+| AC-SEC-002 | **PASS** | The corpus in `internal/infrastructure/archive/archive_test.go`: `../`, absolute paths, drive letters, UNC, device names, trailing dot and space, dot elements, symlinks, duplicate normalised paths, entry-count and ratio bombs, size ceilings, corrupt input, a false manifest and a wrong hash. |
+
+## Independent review
+
+**Spec review (independent subagent): CHANGES REQUIRED → fixed.** It found six blockers, each
+confirmed against the code and fixed:
+
+- A node the canvas created was never stored: the binding treated an empty id as "create" while the
+  adapter always sends the id it minted, so every new node took the update path and failed on a row
+  that did not exist. The binding now decides by whether the row exists.
+- The viewport was never persisted: the adapter sent revision 0 against a document whose revision
+  starts at 1, so every write conflicted. The service now writes against the revision it just read.
+- Idempotency could never fire: the store compared a per-project fingerprint, but the import
+  recorded the whole run's, so a second import duplicated the project. A new table holds one row per
+  imported project. `TestLegacyProjectFingerprintIsPerProject` pins it against the real store; the
+  in-memory double had been recording whatever it was asked about, which is how the bug hid.
+- The migration dialog read `undefined`: the Go structs carried no JSON tags, so the wire shape was
+  PascalCase while the TypeScript types expect camelCase. Every shared struct is tagged, and the
+  collections are never nil.
+- The generation history was never converted: `bundle.History` was never populated, so an entire
+  entity class was silently absent. `TransformHistory` archives it and the all-node-types test
+  asserts the two records its fixture declares.
+- The backup services were composed but unreachable: no binding exposed them. `BackupBinding` now
+  exports an archive and previews a restore.
+
+It also found majors, all fixed: the precheck committed media while the UI claimed nothing was
+written; the media-hash assertion in the import test was vacuous; ADR-0006 described a snapshot and
+a scheduler pause the code does not have, and now records both as gaps; the restore staging area was
+never cleaned; the secret scan read only the manifest and the database and looked for no header
+names; several DOMAIN_MODEL §8 fields were absent; project rename and delete bypassed the adapter;
+the save diff recorded a write as done before it had succeeded; and four of the nine AC-CANVAS-004
+tests could pass while the behaviour they named was broken.
+
+## Canvas regression
+
+The suite found a real regression while it was being written: a project reference added to a save
+effect's dependency array made the renderer loop until React aborted with "Maximum update depth
+exceeded". The page read the project through a store subscription inside an effect that also wrote
+to that store, so the effect triggered itself. It now reads the project at call time.
+
+## Known limits and deferred work
+
+- A restore validates and stages but does not swap a live database; that promotion and its
+  user-confirmation step belong to WP-12 (AC-BACKUP-002).
+- Encrypted sensitive backup is not implemented and is out of WP-04 scope.
+- `asset_relations` and `asset_usages` (DOMAIN_MODEL §8.5/§8.6) are not created, and the asset file
+  roles are narrower than §8.4 lists: the canvas image tools that would produce a mask or a first
+  frame are not migrated yet. This is a deliberate deviation, recorded here rather than claimed as
+  conformance.
+- The `assets` application service has no composition root: the import writes asset rows through the
+  repository directly. It exists for WP-05.
+- The generation history and the asset library are stored per browser profile, so both are attached
+  to the first imported project and the report says so.
+- MONOFORM's scene data, the prompt library and UI preferences are recorded and reported, not
+  imported: they belong to another tool or to frontend state.
+- The canvas regression runs in browser mode. A Wails window cannot be driven from a test runner, so
+  the Go adapter's command shapes are covered by the Go binding tests rather than end to end.
+- Real paid providers were never contacted; the import and backup evidence uses the synthetic
+  fixtures in `testdata/` and temporary databases.
+
+## Git and data safety
+
+- Existing user changes preserved: **yes**.
+- Automatic commit/push/stash/reset/clean: **none** (the commits were requested by the user).
+- Secrets found or introduced: **none**; the scanner passes over 296 files, and the only fixture
+  holding a key-shaped string is exempted by name with stale-exemption detection.
+- Migrations executed against user data: **none**; `000004` and `000005` ran only against temporary
+  test databases, and the upgrade tests assert every pre-existing row survives.
 
 ---
 
@@ -148,7 +271,7 @@ Subsequent adversarial rounds (each one run by an independent reviewer against t
 - Task 11 (2026-09-08): final `go test ./... -count=1`, `go vet ./...`, both verification scripts, POSIX syntax check, and Wails v2.15.0 production builds passed. The final isolated native smoke used owned PID `5944` and redirected `APPDATA`, `LOCALAPPDATA`, `USERPROFILE`, `HOMEDRIVE`, `HOMEPATH`, and `WEBVIEW2_USER_DATA_FOLDER` under a fresh system-temp root. It created only the owned app DB/WebView/log paths, opened a native window, closed gracefully, retained schema migration `[(1,)]`, reported WAL from a post-close read-only connection, and produced a 130-byte log with no non-printing match for authorization/bearer/api-key/SQL indicator patterns. The owned root was removed after inspection. The app enables foreign keys per managed connection; the post-close Python connection reporting `foreign_keys=0` is SQLite's default for a new unrelated connection and is not an application-contract failure.
 - `go test -race ./... -count=1` remains an **environment failure**, never a pass: the host 32-bit MinGW GCC cannot compile amd64 CGO (`cc1.exe: sorry, unimplemented: 64-bit mode not compiled in`).
 - AC-FOUND-001, AC-FOUND-002, and AC-FOUND-003 are **PASS for the WP-01 Windows foundation scope**. Native packaging was proved on Windows only; macOS/Linux native packaging, remote CI execution, frontend automated tests/lint, Secret/Provider migration, and legacy browser-data migration remain future work.
-- Active constraints: WP-01 is closed; preserve all WP-00/user changes; no commit/push/stash/reset/clean; no real Provider calls. WP-02 was implemented and closed on 2026-09-15 (section 0b); WP-03 was implemented and closed on 2026-09-15 (section 0c); WP-04 has not started.
+- Active constraints: WP-01 is closed; preserve all WP-00/user changes; no commit/push/stash/reset/clean; no real Provider calls. WP-02 was implemented and closed on 2026-09-15 (section 0b); WP-03 was implemented and closed on 2026-09-15 (section 0c); WP-04 was implemented and closed on 2026-09-17 (section 0d); WP-05 has not started.
 
 ---
 
@@ -271,7 +394,7 @@ WP-00 established an evidence-backed baseline, repository audit, requirements tr
 
 # 8. Historical next-step record
 
-The prior WP-00 recommendation to begin WP-01 was completed, and the WP-02 and WP-03 recommendations were executed on 2026-09-15 (sections 0b and 0c). The authoritative current state is: WP-01 COMPLETE (Windows foundation scope); WP-02 COMPLETE (its recorded scope); WP-03 COMPLETE (its recorded scope, with the gaps listed in section 0c); WP-04 has not started and requires separate user authorization.
+The prior WP-00 recommendation to begin WP-01 was completed, and the WP-02 and WP-03 recommendations were executed on 2026-09-15 (sections 0b and 0c). The authoritative current state is: WP-01 COMPLETE (Windows foundation scope); WP-02 COMPLETE (its recorded scope); WP-03 COMPLETE (its recorded scope, with the gaps listed in section 0c); WP-04 was implemented and closed on 2026-09-17 (section 0d); WP-05 has not started and requires separate user authorization.
 
 ---
 
