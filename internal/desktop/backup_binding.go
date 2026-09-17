@@ -102,6 +102,17 @@ func (b *BackupBinding) PreviewBackup(archiveBase64 string) (BackupPreview, erro
 	if err != nil {
 		return BackupPreview{}, err
 	}
+	// A preview answers a question rather than preparing a restore, so the
+	// staged copy is discarded here: leaving it would accumulate a full archive
+	// per preview.
+	defer func() {
+		b.mu.RLock()
+		sink := b.sink
+		b.mu.RUnlock()
+		if cleaner, ok := sink.(interface{ CleanStaging() error }); ok {
+			_ = cleaner.CleanStaging()
+		}
+	}()
 	return BackupPreview{
 		ManifestVersion: result.Manifest.ManifestVersion,
 		AppVersion:      result.Manifest.AppVersion,

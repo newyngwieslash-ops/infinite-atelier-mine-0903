@@ -135,14 +135,20 @@ export class GoCanvasAdapter implements CanvasPersistenceAdapter {
         const wantedNodes = new Set(document.nodes.map((node) => node.id));
         const removedNodes = [...storedNodeIds].filter((id) => !wantedNodes.has(id));
         if (removedNodes.length > 0) {
-            await ignoreFailure(() => DeleteNodes(removedNodes));
-            for (const id of removedNodes) storedNodeIds.delete(id);
+            // A failed delete keeps its ids in the stored set, so the next save
+            // tries again. Discarding them would leave the row in the database
+            // with nothing left to remove it.
+            if (await ignoreFailure(() => DeleteNodes(removedNodes))) {
+                for (const id of removedNodes) storedNodeIds.delete(id);
+            }
         }
         const wantedEdges = new Set(document.connections.map((connection) => connection.id));
         const removedEdges = [...storedEdgeIds].filter((id) => !wantedEdges.has(id));
         if (removedEdges.length > 0) {
-            await ignoreFailure(() => DeleteEdges(removedEdges));
-            for (const id of removedEdges) storedEdgeIds.delete(id);
+            // The same rule as the node case above.
+            if (await ignoreFailure(() => DeleteEdges(removedEdges))) {
+                for (const id of removedEdges) storedEdgeIds.delete(id);
+            }
         }
 
         const nextKnown: KnownCanvas = { nodes: new Map(), edges: new Set(storedEdgeIds), sessions: new Map() };

@@ -185,7 +185,7 @@ func (r *LegacyRepository) verifyCounts(ctx context.Context, request legacy.Impo
 	if conn == nil {
 		return storageError("LEGACY_STORE_UNAVAILABLE", "The import store is unavailable.", nil)
 	}
-	nodes, edges, assets, history := 0, 0, 0, 0
+	nodes, edges, assets, history, chats, files := 0, 0, 0, 0, 0, 0
 	for _, bundle := range request.Bundles {
 		var projectNodes, projectEdges int
 		if err := conn.QueryRowContext(ctx,
@@ -210,8 +210,36 @@ func (r *LegacyRepository) verifyCounts(ctx context.Context, request legacy.Impo
 		}
 		assets += projectAssets
 		history += projectHistory
+
+		// The chat sessions and the media links are part of what the import
+		// promised. A project whose nodes landed but whose files did not would
+		// otherwise verify as complete, which is the case AC-LEGACY-001's
+		// "media hash equality" is about.
+		var projectChats int
+		if err := conn.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM canvas_chat_sessions WHERE canvas_document_id = ?`, bundle.Document.ID).Scan(&projectChats); err != nil {
+			return storageError("LEGACY_VERIFY_FAILED", "The imported canvas could not be verified.", err)
+		}
+		chats += projectChats
+
+		for _, assetBundle := range bundle.Assets {
+			var links int
+			if err := conn.QueryRowContext(ctx,
+				`SELECT COUNT(*) FROM asset_files WHERE asset_version_id = ?`, assetBundle.Version.ID).Scan(&links); err != nil {
+				return storageError("LEGACY_VERIFY_FAILED", "The imported assets could not be verified.", err)
+			}
+			files += links
+		}
 	}
-	if nodes != outcome.Nodes || edges != outcome.Edges || assets != outcome.Assets || history != outcome.History {
+	wantChats, wantFiles := 0, 0
+	for _, bundle := range request.Bundles {
+		wantChats += len(bundle.ChatSessions)
+		for _, assetBundle := range bundle.Assets {
+			wantFiles += len(assetBundle.Files)
+		}
+	}
+	if nodes != outcome.Nodes || edges != outcome.Edges || assets != outcome.Assets ||
+		history != outcome.History || chats != wantChats || files != wantFiles {
 		// A mismatch means the write did not land as planned. Returning an error
 		// rolls the whole import back rather than reporting a partial success.
 		return &project.ImportError{
