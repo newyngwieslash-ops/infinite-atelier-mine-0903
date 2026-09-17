@@ -60,6 +60,19 @@ try {
 
     Invoke-Step "frontend production build" { npm.cmd run build }
 
+    # The canvas regression (AC-CANVAS-004) runs against the dev server and needs a
+    # browser Playwright can launch. It is skipped with an explicit reason when
+    # either is missing, never silently passed.
+    if ($Scripts.PSObject.Properties.Name -contains "test:e2e") {
+        if (Test-Path "node_modules/@playwright/test") {
+            Invoke-Step "canvas regression (AC-CANVAS-004)" { npm.cmd run test:e2e }
+        } else {
+            Write-Host "SKIP: canvas regression - @playwright/test is absent from node_modules; run npm install."
+        }
+    } else {
+        Write-Host "SKIP: canvas regression - web/package.json has no test:e2e script."
+    }
+
     $MonoformDir = Join-Path $WebDir "monoform-studio"
     if ((Test-Path (Join-Path $MonoformDir "package.json")) -and (Test-Path (Join-Path $MonoformDir "node_modules"))) {
         Invoke-Step "MONOFORM source build" { npm.cmd --prefix $MonoformDir run build }

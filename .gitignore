@@ -15,6 +15,9 @@ web/dist
 .workbuddy/
 web/.fix-tmp/
 web/.playwright-cli/
+# Playwright artifacts: traces and snapshots from a failing run.
+web/test-results/
+web/playwright-report/
 web/output/
 
 # Keep the Wails embed root present without tracking generated frontend assets.

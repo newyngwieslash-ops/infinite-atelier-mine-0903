@@ -247,6 +247,10 @@ function ToolbarButton({
     return (
         <Button
             type="text"
+            // The tool id is exposed as data-tool so the canvas regression suite
+            // can address a specific action. aria-label carries the translated
+            // name, which changes with the locale and is therefore not stable.
+            data-tool={id}
             aria-label={label}
             className="!h-8 !w-8 !min-w-8 !p-0"
             disabled={disabled}

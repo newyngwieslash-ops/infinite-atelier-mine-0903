@@ -4,6 +4,7 @@ import { persist, type PersistStorage, type StorageValue } from "zustand/middlew
 import { nanoid } from "nanoid";
 import i18n from "@/i18n";
 import { localForageStorage } from "@/lib/localforage-storage";
+import { isSecureCanvasMode } from "@/services/desktop/canvas-adapter";
 import type { CanvasBackgroundMode } from "@/lib/canvas-theme";
 import type { CanvasAssistantSession, CanvasConnection, CanvasNodeData, ViewportTransform } from "@/types/canvas";
 
@@ -39,8 +40,23 @@ type PersistedCanvasState = Pick<CanvasStore, "projects">;
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 let queuedPersistState: PersistedCanvasState | null = null;
 
+/**
+ * canvasStorage persists the store to localForage in browser mode and writes
+ * nothing in desktop mode.
+ *
+ * ADR-BASE-004 forbids new domain data in localForage once the Go core owns the
+ * facts, and ROADMAP WP-04 item 10 narrows Zustand to UI state. Disabling the
+ * writer here — rather than in each caller — is what makes that structural: the
+ * store can be updated as a projection of Go's answer without that projection
+ * becoming a second persisted truth.
+ *
+ * The reader is disabled for the same reason: in desktop mode the browser's old
+ * canvas rows are a migration source, not this store's initial state, and
+ * loading them would present stale facts.
+ */
 const canvasStorage: PersistStorage<CanvasStore> = {
     getItem: async (name) => {
+        if (isSecureCanvasMode()) return null;
         const value = await localForageStorage.getItem(name);
         if (!value) return null;
         const parsed = JSON.parse(value) as StorageValue<CanvasStore>;
@@ -48,6 +64,7 @@ const canvasStorage: PersistStorage<CanvasStore> = {
         return parsed;
     },
     setItem: (name, value) => {
+        if (isSecureCanvasMode()) return;
         const nextState = value.state as PersistedCanvasState;
         if (queuedPersistState && queuedPersistState.projects === nextState.projects) return;
         queuedPersistState = nextState;
@@ -57,7 +74,10 @@ const canvasStorage: PersistStorage<CanvasStore> = {
             void localForageStorage.setItem(name, JSON.stringify(value));
         }, 400);
     },
-    removeItem: (name) => localForageStorage.removeItem(name),
+    removeItem: (name) => {
+        if (isSecureCanvasMode()) return;
+        return localForageStorage.removeItem(name);
+    },
 };
 
 export const useCanvasStore = create<CanvasStore>()(

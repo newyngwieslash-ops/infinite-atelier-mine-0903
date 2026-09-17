@@ -57,6 +57,19 @@ fi
 
 run_step "frontend production build" "$NPM" run build
 
+# The canvas regression (AC-CANVAS-004) runs against the dev server, so it needs
+# both the Playwright package and a browser it can launch. Each absence is
+# reported with its own reason; the step is never silently passed.
+if node -e "process.exit(require('./package.json').scripts?.['test:e2e'] ? 0 : 1)"; then
+  if [ -d "$WEB_DIR/node_modules/@playwright/test" ]; then
+    run_step "canvas regression (AC-CANVAS-004)" "$NPM" run test:e2e
+  else
+    printf 'SKIP: canvas regression — @playwright/test is absent from node_modules; run npm install.\n'
+  fi
+else
+  printf 'SKIP: canvas regression — web/package.json has no test:e2e script.\n'
+fi
+
 if [ -f "$WEB_DIR/monoform-studio/package.json" ] && [ -d "$WEB_DIR/monoform-studio/node_modules" ]; then
   run_step "MONOFORM source build" "$NPM" --prefix "$WEB_DIR/monoform-studio" run build
 else

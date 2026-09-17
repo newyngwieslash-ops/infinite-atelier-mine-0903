@@ -1,24 +1,27 @@
-import { useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { App, Button } from "antd";
-import { Download, FileUp, Plus } from "lucide-react";
+import { Download, FileUp, History, Plus } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { readZip } from "@/lib/zip";
 import { setMediaBlob } from "@/services/file-storage";
 import { setImageBlob } from "@/services/image-storage";
 import { CanvasDeleteProjectsDialog } from "@/components/canvas/canvas-delete-projects-dialog";
+import { CanvasMigrateDialog } from "@/components/canvas/canvas-migrate-dialog";
 import { CanvasProjectCard } from "@/components/canvas/canvas-project-card";
 import type { CanvasExportFile } from "@/types/canvas-export";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { useCanvasUiStore } from "@/stores/canvas/use-canvas-ui-store";
 import { exportCanvasProjects } from "@/lib/canvas/canvas-export";
+import { isSecureCanvasMode, resolveCanvasAdapter } from "@/services/desktop/canvas-adapter";
 
 export default function CanvasPage() {
     const { message } = App.useApp();
     const { t } = useTranslation();
     const navigate = useNavigate();
     const inputRef = useRef<HTMLInputElement>(null);
+    const [migrateOpen, setMigrateOpen] = useState(false);
     const hydrated = useCanvasStore((state) => state.hydrated);
     const projects = useCanvasStore((state) => state.projects);
     const createProject = useCanvasStore((state) => state.createProject);
@@ -26,10 +29,47 @@ export default function CanvasPage() {
     const selectedIds = useCanvasUiStore((state) => state.selectedProjectIds);
     const setDeleteIds = useCanvasUiStore((state) => state.setDeleteProjectIds);
 
+    // In desktop mode the Go core lists the projects; the store is then a
+    // projection of that answer (ADR-BASE-004). In browser mode the store is
+    // already the source, so nothing is fetched.
+    useEffect(() => {
+        if (!isSecureCanvasMode()) return;
+        let cancelled = false;
+        void (async () => {
+            try {
+                const adapter = await resolveCanvasAdapter();
+                const listed = await adapter.listProjects();
+                if (cancelled) return;
+                useCanvasStore.getState().replaceProjects(listed);
+                useCanvasStore.setState({ hydrated: true });
+            } catch {
+                // A failed list leaves the canvas empty rather than showing stale
+                // browser rows that are no longer the truth.
+                if (!cancelled) useCanvasStore.setState({ hydrated: true });
+            }
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, []);
+
     const enterProject = (id: string) => {
         navigate(`/canvas/${id}`);
     };
-    const createAndEnter = () => enterProject(createProject(t("canvas.defaultTitle", { count: projects.length + 1 })));
+    const createAndEnter = async () => {
+        const title = t("canvas.defaultTitle", { count: projects.length + 1 });
+        if (isSecureCanvasMode()) {
+            // The Go core mints the project, then the list is refreshed from it so
+            // the new row is the one the database holds rather than a local guess.
+            const adapter = await resolveCanvasAdapter();
+            const id = await adapter.createProject(title);
+            const listed = await adapter.listProjects();
+            useCanvasStore.getState().replaceProjects(listed);
+            enterProject(id);
+            return;
+        }
+        enterProject(createProject(title));
+    };
     const importCanvas = async (file?: File) => {
         if (!file) return;
         try {
@@ -83,6 +123,11 @@ export default function CanvasPage() {
                         <Button disabled={!hydrated} icon={<FileUp className="size-4" />} onClick={() => inputRef.current?.click()}>
                             {t("canvas.import")}
                         </Button>
+                        {isSecureCanvasMode() ? (
+                            <Button disabled={!hydrated} icon={<History className="size-4" />} onClick={() => setMigrateOpen(true)}>
+                                {t("canvas.migrate.entry")}
+                            </Button>
+                        ) : null}
                         <Button disabled={!hydrated} type="primary" icon={<Plus className="size-4" />} onClick={createAndEnter}>
                             {t("canvas.create")}
                         </Button>
@@ -110,6 +155,7 @@ export default function CanvasPage() {
 
             <input ref={inputRef} type="file" accept="application/zip,.zip" className="hidden" onChange={(event) => void importCanvas(event.target.files?.[0])} />
             <CanvasDeleteProjectsDialog />
+            {isSecureCanvasMode() ? <CanvasMigrateDialog open={migrateOpen} onClose={() => setMigrateOpen(false)} /> : null}
         </main>
     );
 }

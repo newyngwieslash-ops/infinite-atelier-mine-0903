@@ -46,6 +46,7 @@ import { CanvasSidePanel } from "@/components/canvas/canvas-side-panel";
 import { CanvasZoomControls } from "@/components/canvas/canvas-zoom-controls";
 import { DirectorPanel } from "@/components/canvas/director-panel";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
+import { isSecureCanvasMode, resolveCanvasAdapter, type CanvasDocument } from "@/services/desktop/canvas-adapter";
 import { useGenerationHistoryStore, type GenerationHistoryImage } from "@/stores/canvas/use-generation-history-store";
 import { buildNodeMentionReferences, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { exportCanvasProjects } from "@/lib/canvas/canvas-export";
@@ -324,22 +325,51 @@ function AtelierCanvasPage() {
     useEffect(() => {
         if (!hydrated) return;
         setProjectLoaded(false);
-        const project = openProject(projectId);
-        if (!project) {
-            navigate("/canvas", { replace: true });
-            return;
-        }
 
         const restore = async () => {
-            const restoredNodes = await hydrateCanvasImages(resetInterruptedGeneration(project.nodes));
-            const restoredSessions = await hydrateAssistantImages(project.chatSessions || []);
+            // The adapter decides where the facts live: the Go core in desktop
+            // mode, the browser store otherwise. Both paths return the same
+            // document shape, so the restore below is mode-independent.
+            const adapter = await resolveCanvasAdapter();
+            let document: CanvasDocument | null = null;
+            try {
+                document = await adapter.loadCanvas(projectId);
+            } catch {
+                document = null;
+            }
+            if (!document) {
+                // In browser mode a project with no store row is genuinely gone,
+                // so the page returns to the list. In desktop mode the Go core is
+                // authoritative and the same reasoning holds.
+                const project = openProject(projectId);
+                if (!project) {
+                    navigate("/canvas", { replace: true });
+                    return;
+                }
+                document = {
+                    id: project.id,
+                    title: project.title,
+                    createdAt: project.createdAt,
+                    updatedAt: project.updatedAt,
+                    nodes: project.nodes,
+                    connections: project.connections,
+                    chatSessions: project.chatSessions,
+                    activeChatId: project.activeChatId,
+                    backgroundMode: project.backgroundMode,
+                    showImageInfo: project.showImageInfo,
+                    viewport: project.viewport,
+                };
+            }
+
+            const restoredNodes = await hydrateCanvasImages(resetInterruptedGeneration(document.nodes));
+            const restoredSessions = await hydrateAssistantImages(document.chatSessions || []);
             setNodes(restoredNodes);
-            setConnections(project.connections);
+            setConnections(document.connections);
             setChatSessions(restoredSessions);
-            setActiveChatId(project.activeChatId || null);
-            setBackgroundMode(project.backgroundMode);
-            setShowImageInfo(project.showImageInfo || false);
-            setViewport(project.viewport);
+            setActiveChatId(document.activeChatId || null);
+            setBackgroundMode(document.backgroundMode);
+            setShowImageInfo(document.showImageInfo || false);
+            setViewport(document.viewport);
             historyRef.current = { past: [], future: [] };
             if (historyCommitTimerRef.current) {
                 clearTimeout(historyCommitTimerRef.current);
@@ -347,11 +377,11 @@ function AtelierCanvasPage() {
             }
             lastHistoryRef.current = {
                 nodes: restoredNodes,
-                connections: project.connections,
+                connections: document.connections,
                 chatSessions: restoredSessions,
-                activeChatId: project.activeChatId || null,
-                backgroundMode: project.backgroundMode,
-                showImageInfo: project.showImageInfo || false,
+                activeChatId: document.activeChatId || null,
+                backgroundMode: document.backgroundMode,
+                showImageInfo: document.showImageInfo || false,
             };
             setHistoryState({ canUndo: false, canRedo: false });
             setProjectLoaded(true);
@@ -395,7 +425,38 @@ function AtelierCanvasPage() {
 
     useEffect(() => {
         if (!projectLoaded || historyPausedRef.current) return;
-        updateProject(projectId, { nodes, connections, chatSessions, activeChatId, backgroundMode, showImageInfo });
+        // The canvas document is written through the persistence adapter, which
+        // routes to the Go core in desktop mode and to the browser store in
+        // browser mode. The store update below keeps the in-session projection
+        // (the canvas list, the title) consistent without becoming a second
+        // persisted truth: in secure mode the store's own writer is disabled.
+        //
+        // The project is read from the store here rather than closed over: the
+        // store replaces the project object on every update, so subscribing to it
+        // in this effect would make the effect its own trigger.
+        const project = useCanvasStore.getState().projects.find((item) => item.id === projectId);
+        const document = {
+            id: projectId,
+            title: project?.title ?? "",
+            createdAt: project?.createdAt ?? "",
+            updatedAt: new Date().toISOString(),
+            nodes,
+            connections,
+            chatSessions,
+            activeChatId,
+            backgroundMode,
+            showImageInfo,
+            viewport: viewportRef.current,
+        };
+        void resolveCanvasAdapter()
+            .then((adapter) => adapter.saveCanvas(projectId, document))
+            .catch(() => {
+                // A failed save surfaces on the canvas's next load rather than
+                // unmounting the page here.
+            });
+        if (!isSecureCanvasMode()) {
+            updateProject(projectId, { nodes, connections, chatSessions, activeChatId, backgroundMode, showImageInfo });
+        }
     }, [activeChatId, backgroundMode, chatSessions, connections, nodes, projectId, projectLoaded, showImageInfo, updateProject]);
 
     useEffect(() => {
@@ -406,7 +467,16 @@ function AtelierCanvasPage() {
         if (!projectLoaded) return;
         if (viewportSaveTimerRef.current) clearTimeout(viewportSaveTimerRef.current);
         viewportSaveTimerRef.current = setTimeout(() => {
-            updateProject(projectId, { viewport: viewportRef.current });
+            const next = viewportRef.current;
+            void resolveCanvasAdapter()
+                .then((adapter) => adapter.saveViewport(projectId, next))
+                .catch(() => {
+                    // A viewport is the least important thing to persist, so a
+                    // failure here is not surfaced.
+                });
+            if (!isSecureCanvasMode()) {
+                updateProject(projectId, { viewport: next });
+            }
             viewportSaveTimerRef.current = null;
         }, 500);
         return () => {
