@@ -98,6 +98,17 @@ async function describeBlob(storeName: string, key: string): Promise<LegacyMedia
 }
 
 /**
+ * mediaKeyPattern matches a legacy storage key.
+ *
+ * The legacy application builds a key as `${prefix}:${nanoid()}` with the
+ * prefixes below, and the distinction matters: a text node's `content` is its
+ * prose, while an image node's `content` is a key. Requiring the known prefix
+ * shape is what separates the two, so a sentence is never mistaken for a file
+ * the migration should upload.
+ */
+const mediaKeyPattern = /^(image|video|audio|director|file):[A-Za-z0-9_-]+$/;
+
+/**
  * collectMediaKeys finds every storage key the given projects reference.
  *
  * The authority is the project document itself, not the blob store's contents:
@@ -110,9 +121,7 @@ export function collectMediaKeys(projects: CanvasProject[], assets: Asset[]): Se
     const consider = (value: unknown) => {
         if (typeof value !== "string") return;
         const trimmed = value.trim();
-        if (trimmed === "") return;
-        // A data URL, an object URL and a remote address are not store keys.
-        if (/^(data:|blob:|https?:)/i.test(trimmed)) return;
+        if (trimmed === "" || !mediaKeyPattern.test(trimmed)) return;
         keys.add(trimmed);
     };
     for (const project of projects) {
