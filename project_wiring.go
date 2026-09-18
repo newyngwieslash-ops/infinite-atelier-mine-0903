@@ -50,6 +50,10 @@ func composeProjects(handle *database.Handle, dirs appdirs.Dirs, store *filestor
 	projectService := appprojects.NewService(appprojects.Options{
 		Projects: database.NewProjectRepository(connection),
 		Canvas:   database.NewCanvasRepository(connection),
+		// The drama configuration tables (settings, rules, style guides, model
+		// policies) are what the studio's creation wizard writes, so the service
+		// is composed with them rather than serving projects alone.
+		Settings: database.NewDramaSettingsRepository(connection),
 		Clock:    clock,
 		IDs:      ids,
 	})

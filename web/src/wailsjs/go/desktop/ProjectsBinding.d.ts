@@ -14,9 +14,13 @@ export function DeleteProject(arg1:string):Promise<void>;
 
 export function GetProject(arg1:string):Promise<desktop.ProjectDTO>;
 
+export function GetProjectSettings(arg1:string):Promise<desktop.ProjectSettingsDTO>;
+
 export function ImportProjects(arg1:desktop.ImportProjectsRequest):Promise<string>;
 
 export function ListImports(arg1:number):Promise<string>;
+
+export function ListProjectRules(arg1:desktop.ListProjectRulesRequest):Promise<Array<desktop.ProjectRuleDTO>>;
 
 export function ListProjects(arg1:desktop.ListProjectsRequest):Promise<Array<desktop.ProjectDTO>>;
 
@@ -31,6 +35,8 @@ export function RenameProject(arg1:desktop.RenameProjectRequest):Promise<desktop
 export function SaveChatSession(arg1:desktop.SaveChatSessionRequest):Promise<desktop.CanvasChatSessionDTO>;
 
 export function SetProjectStatus(arg1:desktop.SetProjectStatusRequest):Promise<desktop.ProjectDTO>;
+
+export function UpdateProjectSettings(arg1:desktop.UpdateProjectSettingsRequest):Promise<desktop.ProjectSettingsDTO>;
 
 export function UpdateViewport(arg1:desktop.UpdateViewportRequest):Promise<desktop.CanvasSnapshotDTO>;
 

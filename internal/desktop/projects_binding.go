@@ -155,30 +155,213 @@ type CanvasSnapshotDTO struct {
 }
 
 // CreateProjectRequest is the create command.
+//
+// The drama settings of PRD FR-020 are flat fields on this struct rather than a
+// nested object. A nested pointer makes the Wails generator emit the class form
+// of the TypeScript type, which requires every caller to build it through
+// `createFrom`; keeping the fields flat leaves the generated type a plain
+// interface that an object literal satisfies, so the existing free-canvas call
+// sites did not have to change. The fields are read only when ProjectType is
+// "drama".
 type CreateProjectRequest struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	// ProjectType is "free_canvas" or "drama".
 	ProjectType string `json:"projectType"`
 	Language    string `json:"language"`
+
+	// The drama configuration a project states at creation.
+	TargetPlatform             string `json:"targetPlatform,omitempty"`
+	AspectRatio                string `json:"aspectRatio,omitempty"`
+	Resolution                 string `json:"resolution,omitempty"`
+	ExpectedEpisodeCount       int    `json:"expectedEpisodeCount,omitempty"`
+	DefaultEpisodeDurationSecs int    `json:"defaultEpisodeDurationSecs,omitempty"`
+	Audience                   string `json:"audience,omitempty"`
+	ContentRating              string `json:"contentRating,omitempty"`
+	AdaptationMode             string `json:"adaptationMode,omitempty"`
 }
 
 // CreateProject stores a project and its default canvas.
+//
+// A drama project also gets its settings row and a drama canvas, so the two
+// types take different paths through the service: the free canvas path is the
+// original WP-04 command and the drama path is the configuration-aware one the
+// studio's wizard needs.
 func (b *ProjectsBinding) CreateProject(request CreateProjectRequest) (ProjectDTO, error) {
 	service := b.projectService()
 	if service == nil {
 		return ProjectDTO{}, bindingUnavailable()
 	}
-	record, err := service.CreateProject(b.context(), appprojects.CreateProjectRequest{
-		Type:        project.ProjectType(request.ProjectType),
+	if project.ProjectType(request.ProjectType) != project.ProjectDrama {
+		record, err := service.CreateProject(b.context(), appprojects.CreateProjectRequest{
+			Type:        project.ProjectType(request.ProjectType),
+			Name:        request.Name,
+			Description: request.Description,
+			Language:    request.Language,
+		})
+		if err != nil {
+			return ProjectDTO{}, toProjectError(err)
+		}
+		return toProjectDTO(record), nil
+	}
+	record, err := service.CreateDramaProject(b.context(), appprojects.CreateDramaProjectRequest{
 		Name:        request.Name,
 		Description: request.Description,
 		Language:    request.Language,
+		Settings: appprojects.DramaSettingsInput{
+			TargetPlatform:             request.TargetPlatform,
+			AspectRatio:                request.AspectRatio,
+			Resolution:                 request.Resolution,
+			ExpectedEpisodeCount:       request.ExpectedEpisodeCount,
+			DefaultEpisodeDurationSecs: request.DefaultEpisodeDurationSecs,
+			Audience:                   request.Audience,
+			ContentRating:              request.ContentRating,
+			AdaptationMode:             project.AdaptationMode(request.AdaptationMode),
+		},
 	})
 	if err != nil {
 		return ProjectDTO{}, toProjectError(err)
 	}
 	return toProjectDTO(record), nil
+}
+
+// GetProjectSettings returns a drama project's configuration.
+func (b *ProjectsBinding) GetProjectSettings(projectID string) (ProjectSettingsDTO, error) {
+	service := b.projectService()
+	if service == nil {
+		return ProjectSettingsDTO{}, bindingUnavailable()
+	}
+	settings, err := service.GetSettings(b.context(), projectID)
+	if err != nil {
+		return ProjectSettingsDTO{}, toProjectError(err)
+	}
+	return toProjectSettingsDTO(settings), nil
+}
+
+// UpdateProjectSettingsRequest is the settings update command.
+type UpdateProjectSettingsRequest struct {
+	ProjectID                  string `json:"projectId"`
+	TargetPlatform             string `json:"targetPlatform"`
+	AspectRatio                string `json:"aspectRatio"`
+	Resolution                 string `json:"resolution"`
+	ExpectedEpisodeCount       int    `json:"expectedEpisodeCount"`
+	DefaultEpisodeDurationSecs int    `json:"defaultEpisodeDurationSecs"`
+	Audience                   string `json:"audience"`
+	ContentRating              string `json:"contentRating"`
+	AdaptationMode             string `json:"adaptationMode"`
+	Revision                   int64  `json:"revision"`
+}
+
+// UpdateProjectSettings persists a settings change.
+func (b *ProjectsBinding) UpdateProjectSettings(request UpdateProjectSettingsRequest) (ProjectSettingsDTO, error) {
+	service := b.projectService()
+	if service == nil {
+		return ProjectSettingsDTO{}, bindingUnavailable()
+	}
+	settings, err := service.UpdateSettings(b.context(), appprojects.UpdateSettingsRequest{
+		ProjectID:                  request.ProjectID,
+		TargetPlatform:             request.TargetPlatform,
+		AspectRatio:                request.AspectRatio,
+		Resolution:                 request.Resolution,
+		ExpectedEpisodeCount:       request.ExpectedEpisodeCount,
+		DefaultEpisodeDurationSecs: request.DefaultEpisodeDurationSecs,
+		Audience:                   request.Audience,
+		ContentRating:              request.ContentRating,
+		AdaptationMode:             project.AdaptationMode(request.AdaptationMode),
+		Revision:                   request.Revision,
+	})
+	if err != nil {
+		return ProjectSettingsDTO{}, toProjectError(err)
+	}
+	return toProjectSettingsDTO(settings), nil
+}
+
+// ProjectSettingsDTO is the transport view of a project's settings.
+type ProjectSettingsDTO struct {
+	ProjectID                  string `json:"projectId"`
+	TargetPlatform             string `json:"targetPlatform"`
+	AspectRatio                string `json:"aspectRatio"`
+	Resolution                 string `json:"resolution"`
+	ExpectedEpisodeCount       int    `json:"expectedEpisodeCount"`
+	DefaultEpisodeDurationSecs int    `json:"defaultEpisodeDurationSecs"`
+	Audience                   string `json:"audience"`
+	ContentRating              string `json:"contentRating"`
+	AdaptationMode             string `json:"adaptationMode"`
+	Language                   string `json:"language"`
+	Timezone                   string `json:"timezone"`
+	Revision                   int64  `json:"revision"`
+}
+
+func toProjectSettingsDTO(settings project.Settings) ProjectSettingsDTO {
+	return ProjectSettingsDTO{
+		ProjectID:                  settings.ProjectID,
+		TargetPlatform:             settings.TargetPlatform,
+		AspectRatio:                settings.AspectRatio,
+		Resolution:                 settings.Resolution,
+		ExpectedEpisodeCount:       settings.ExpectedEpisodeCount,
+		DefaultEpisodeDurationSecs: settings.DefaultEpisodeDurationSecs,
+		Audience:                   settings.Audience,
+		ContentRating:              settings.ContentRating,
+		AdaptationMode:             string(settings.AdaptationMode),
+		Language:                   settings.Language,
+		Timezone:                   settings.Timezone,
+		Revision:                   settings.Revision,
+	}
+}
+
+// ListProjectRulesRequest narrows a rule query.
+type ListProjectRulesRequest struct {
+	ProjectID      string `json:"projectId"`
+	IncludeDeleted bool   `json:"includeDeleted,omitempty"`
+}
+
+// ProjectRuleDTO is the transport view of one project rule.
+//
+// Strength and LockedByUser are both carried because §4.4 gives them separate
+// meanings: a rule can be immutable without the user having locked it, and the
+// UI has to show which protection is in force.
+type ProjectRuleDTO struct {
+	ID           string `json:"id"`
+	ProjectID    string `json:"projectId"`
+	Category     string `json:"category"`
+	Name         string `json:"name"`
+	Content      string `json:"content"`
+	Strength     string `json:"strength"`
+	Status       string `json:"status"`
+	SourceType   string `json:"sourceType"`
+	SourceID     string `json:"sourceId"`
+	LockedByUser bool   `json:"lockedByUser"`
+	Revision     int64  `json:"revision"`
+}
+
+// ListProjectRules returns a project's rules.
+func (b *ProjectsBinding) ListProjectRules(request ListProjectRulesRequest) ([]ProjectRuleDTO, error) {
+	service := b.projectService()
+	if service == nil {
+		return nil, bindingUnavailable()
+	}
+	rules, err := service.ListRules(b.context(), request.ProjectID, request.IncludeDeleted)
+	if err != nil {
+		return nil, toProjectError(err)
+	}
+	// A non-nil slice, so the caller can map over an empty answer.
+	result := make([]ProjectRuleDTO, 0, len(rules))
+	for _, rule := range rules {
+		result = append(result, ProjectRuleDTO{
+			ID:           rule.ID,
+			ProjectID:    rule.ProjectID,
+			Category:     string(rule.Category),
+			Name:         rule.Name,
+			Content:      rule.Content,
+			Strength:     string(rule.Strength),
+			Status:       string(rule.Status),
+			SourceType:   string(rule.SourceType),
+			SourceID:     rule.SourceID,
+			LockedByUser: rule.LockedByUser,
+			Revision:     rule.Revision,
+		})
+	}
+	return result, nil
 }
 
 // ListProjectsRequest narrows a project query.

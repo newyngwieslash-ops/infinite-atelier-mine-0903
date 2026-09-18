@@ -15,6 +15,7 @@ func NewService(options Options) *Service {
 		canvas:   options.Canvas,
 		clock:    options.Clock,
 		ids:      options.IDs,
+		settings: options.Settings,
 	}
 }
 

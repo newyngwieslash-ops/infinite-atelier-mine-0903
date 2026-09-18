@@ -26,12 +26,20 @@ export function GetProject(arg1) {
   return window['go']['desktop']['ProjectsBinding']['GetProject'](arg1);
 }
 
+export function GetProjectSettings(arg1) {
+  return window['go']['desktop']['ProjectsBinding']['GetProjectSettings'](arg1);
+}
+
 export function ImportProjects(arg1) {
   return window['go']['desktop']['ProjectsBinding']['ImportProjects'](arg1);
 }
 
 export function ListImports(arg1) {
   return window['go']['desktop']['ProjectsBinding']['ListImports'](arg1);
+}
+
+export function ListProjectRules(arg1) {
+  return window['go']['desktop']['ProjectsBinding']['ListProjectRules'](arg1);
 }
 
 export function ListProjects(arg1) {
@@ -60,6 +68,10 @@ export function SaveChatSession(arg1) {
 
 export function SetProjectStatus(arg1) {
   return window['go']['desktop']['ProjectsBinding']['SetProjectStatus'](arg1);
+}
+
+export function UpdateProjectSettings(arg1) {
+  return window['go']['desktop']['ProjectsBinding']['UpdateProjectSettings'](arg1);
 }
 
 export function UpdateViewport(arg1) {

@@ -92,12 +92,45 @@ type CanvasRepository interface {
 	UpdateChatSession(ctx context.Context, session project.ChatSession, expectedRevision int64) error
 }
 
+// SettingsRepository persists a drama project's configuration: the settings
+// value object of DOMAIN_MODEL §4.3, the rules of §4.4, the versioned style
+// guides of §4.5 and the model policies §3 lists.
+//
+// It is a separate port from ProjectRepository because the four tables are the
+// drama configuration rather than the project identity, and because a project
+// that never becomes a drama has no rows in any of them.
+type SettingsRepository interface {
+	CreateSettings(ctx context.Context, settings project.Settings) error
+	GetSettings(ctx context.Context, projectID string) (project.Settings, error)
+	// UpdateSettings persists a change guarded by the expected revision, which
+	// the settings value object carries like any other revisioned row.
+	UpdateSettings(ctx context.Context, settings project.Settings, expectedRevision int64) error
+
+	CreateRule(ctx context.Context, record project.Rule) error
+	GetRule(ctx context.Context, id string) (project.Rule, error)
+	ListRules(ctx context.Context, projectID string, includeDeleted bool) ([]project.Rule, error)
+	UpdateRule(ctx context.Context, record project.Rule, expectedRevision int64) error
+
+	CreateStyleGuide(ctx context.Context, guide project.StyleGuide) error
+	ListStyleGuides(ctx context.Context, projectID string) ([]project.StyleGuide, error)
+	// MaxStyleGuideVersion reports the highest version number a project's style
+	// guides reach, or zero when it has none.
+	MaxStyleGuideVersion(ctx context.Context, projectID string) (int, error)
+
+	UpsertProviderPolicy(ctx context.Context, policy project.ProviderPolicy) error
+	ListProviderPolicies(ctx context.Context, projectID string) ([]project.ProviderPolicy, error)
+}
+
 // Service holds the combined project queries the desktop layer exposes.
 type Service struct {
 	projects ProjectRepository
 	canvas   CanvasRepository
 	clock    Clock
 	ids      IDGenerator
+	// settings is optional: a Service composed without it still serves every
+	// project and canvas command, and the drama configuration commands fail
+	// closed with a storage error rather than half-working.
+	settings SettingsRepository
 }
 
 // Options configures a Service.
@@ -106,4 +139,7 @@ type Options struct {
 	Canvas   CanvasRepository
 	Clock    Clock
 	IDs      IDGenerator
+	// Settings enables the drama configuration commands. A nil value leaves
+	// them unavailable.
+	Settings SettingsRepository
 }

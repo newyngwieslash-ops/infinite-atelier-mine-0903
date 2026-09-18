@@ -639,6 +639,14 @@ export namespace desktop {
 	    description: string;
 	    projectType: string;
 	    language: string;
+	    targetPlatform?: string;
+	    aspectRatio?: string;
+	    resolution?: string;
+	    expectedEpisodeCount?: number;
+	    defaultEpisodeDurationSecs?: number;
+	    audience?: string;
+	    contentRating?: string;
+	    adaptationMode?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new CreateProjectRequest(source);
@@ -650,6 +658,14 @@ export namespace desktop {
 	        this.description = source["description"];
 	        this.projectType = source["projectType"];
 	        this.language = source["language"];
+	        this.targetPlatform = source["targetPlatform"];
+	        this.aspectRatio = source["aspectRatio"];
+	        this.resolution = source["resolution"];
+	        this.expectedEpisodeCount = source["expectedEpisodeCount"];
+	        this.defaultEpisodeDurationSecs = source["defaultEpisodeDurationSecs"];
+	        this.audience = source["audience"];
+	        this.contentRating = source["contentRating"];
+	        this.adaptationMode = source["adaptationMode"];
 	    }
 	}
 	export class CreateSceneRequest {
@@ -1255,6 +1271,20 @@ export namespace desktop {
 	        this.offset = source["offset"];
 	    }
 	}
+	export class ListProjectRulesRequest {
+	    projectId: string;
+	    includeDeleted?: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new ListProjectRulesRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.projectId = source["projectId"];
+	        this.includeDeleted = source["includeDeleted"];
+	    }
+	}
 	export class ListProjectsRequest {
 	    statuses?: string[];
 	    limit?: number;
@@ -1351,6 +1381,72 @@ export namespace desktop {
 	}
 	
 	
+	export class ProjectRuleDTO {
+	    id: string;
+	    projectId: string;
+	    category: string;
+	    name: string;
+	    content: string;
+	    strength: string;
+	    status: string;
+	    sourceType: string;
+	    sourceId: string;
+	    lockedByUser: boolean;
+	    revision: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ProjectRuleDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.projectId = source["projectId"];
+	        this.category = source["category"];
+	        this.name = source["name"];
+	        this.content = source["content"];
+	        this.strength = source["strength"];
+	        this.status = source["status"];
+	        this.sourceType = source["sourceType"];
+	        this.sourceId = source["sourceId"];
+	        this.lockedByUser = source["lockedByUser"];
+	        this.revision = source["revision"];
+	    }
+	}
+	export class ProjectSettingsDTO {
+	    projectId: string;
+	    targetPlatform: string;
+	    aspectRatio: string;
+	    resolution: string;
+	    expectedEpisodeCount: number;
+	    defaultEpisodeDurationSecs: number;
+	    audience: string;
+	    contentRating: string;
+	    adaptationMode: string;
+	    language: string;
+	    timezone: string;
+	    revision: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ProjectSettingsDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.projectId = source["projectId"];
+	        this.targetPlatform = source["targetPlatform"];
+	        this.aspectRatio = source["aspectRatio"];
+	        this.resolution = source["resolution"];
+	        this.expectedEpisodeCount = source["expectedEpisodeCount"];
+	        this.defaultEpisodeDurationSecs = source["defaultEpisodeDurationSecs"];
+	        this.audience = source["audience"];
+	        this.contentRating = source["contentRating"];
+	        this.adaptationMode = source["adaptationMode"];
+	        this.language = source["language"];
+	        this.timezone = source["timezone"];
+	        this.revision = source["revision"];
+	    }
+	}
 	export class ProviderConfigRequest {
 	    id: string;
 	    kind: string;
@@ -2361,6 +2457,36 @@ export namespace desktop {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.episodeId = source["episodeId"];
 	        this.status = source["status"];
+	        this.revision = source["revision"];
+	    }
+	}
+	export class UpdateProjectSettingsRequest {
+	    projectId: string;
+	    targetPlatform: string;
+	    aspectRatio: string;
+	    resolution: string;
+	    expectedEpisodeCount: number;
+	    defaultEpisodeDurationSecs: number;
+	    audience: string;
+	    contentRating: string;
+	    adaptationMode: string;
+	    revision: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new UpdateProjectSettingsRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.projectId = source["projectId"];
+	        this.targetPlatform = source["targetPlatform"];
+	        this.aspectRatio = source["aspectRatio"];
+	        this.resolution = source["resolution"];
+	        this.expectedEpisodeCount = source["expectedEpisodeCount"];
+	        this.defaultEpisodeDurationSecs = source["defaultEpisodeDurationSecs"];
+	        this.audience = source["audience"];
+	        this.contentRating = source["contentRating"];
+	        this.adaptationMode = source["adaptationMode"];
 	        this.revision = source["revision"];
 	    }
 	}
