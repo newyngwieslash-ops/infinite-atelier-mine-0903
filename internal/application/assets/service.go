@@ -48,6 +48,16 @@ type Repository interface {
 	AddFile(ctx context.Context, file asset.File) error
 	ListFiles(ctx context.Context, versionID string) ([]asset.File, error)
 	CountFiles(ctx context.Context, versionID string) (int, error)
+
+	// Lineage (§8.5) and usage (§8.6). They are separate from the file links
+	// because they answer different questions: an AssetFile is what a version
+	// is made of, a Relation is where it came from, and a Usage is who needs it.
+	AddRelation(ctx context.Context, relation asset.Relation) error
+	ListRelationsFrom(ctx context.Context, versionID string) ([]asset.Relation, error)
+	ListRelationsTo(ctx context.Context, versionID string) ([]asset.Relation, error)
+	AddUsage(ctx context.Context, usage asset.Usage) error
+	ListUsages(ctx context.Context, versionID string) ([]asset.Usage, error)
+	CountUsages(ctx context.Context, versionID string) (int, error)
 }
 
 // Service holds the asset commands and queries.
@@ -234,20 +244,28 @@ func (s *Service) AttachFile(ctx context.Context, versionID, fileHash string, ro
 // ApproveVersionRequest approves a version.
 type ApproveVersionRequest struct {
 	VersionID string
-	// ImpactAcknowledged records that the caller performed the impact analysis
-	// DOMAIN_MODEL §8.2 requires before an approval switch. WP-04 has no shot or
-	// scene model to compute impact from, so the caller states it explicitly
-	// rather than the service pretending it was checked.
+	// ImpactAcknowledged records that the caller acted on the impact analysis
+	// DOMAIN_MODEL §8.2 requires before an approval switch ("approved 切换需影响
+	// 分析"). The analysis itself is ApprovalImpactOf, which lists the consumers
+	// of the version being replaced; the caller states that it reviewed that
+	// list rather than the service assuming it on the caller's behalf.
 	ImpactAcknowledged bool
 }
 
 // ApproveVersion switches an asset's approved version.
 //
-// The WP-04 preconditions are that the version has a committed file, that it is
-// not superseded or stale, and that the caller acknowledged the impact step.
-// The impact analysis itself belongs to WP-05, when shots and scenes exist to
-// analyse; until then an unacknowledged approval is refused rather than
-// silently granted.
+// The preconditions are that the version has a committed file, that it is not
+// already approved or superseded (asset.Version.CanApprove), and that the caller
+// acknowledged the impact step. Superseding the previous approval is part of the
+// switch: §2.5 says "批准新版本时旧批准版本变为 superseded", and leaving two rows
+// approved would violate the schema's partial unique index.
+//
+// The statements are not wrapped in one transaction across the two status
+// writes, so a failure between them leaves the previous version approved and
+// the new one not, which is the pre-switch state and therefore retryable. The
+// order below is deliberate: the previous version is superseded BEFORE the new
+// one is approved, so the partial unique index is never asked to hold two
+// approved rows at once.
 func (s *Service) ApproveVersion(ctx context.Context, request ApproveVersionRequest) (asset.Version, error) {
 	if !s.Available() {
 		return asset.Version{}, storageFailure()
@@ -269,6 +287,13 @@ func (s *Service) ApproveVersion(ctx context.Context, request ApproveVersionRequ
 	record, err := s.repository.GetAsset(ctx, version.AssetID)
 	if err != nil {
 		return asset.Version{}, err
+	}
+	if previous := record.CurrentApprovedVersionID; previous != "" && previous != version.ID {
+		// Supersede first, approve second: the schema's partial unique index
+		// allows at most one approved row per asset, so the order matters.
+		if err := s.repository.UpdateVersionStatus(ctx, previous, asset.VersionSuperseded); err != nil {
+			return asset.Version{}, err
+		}
 	}
 	if err := s.repository.UpdateVersionStatus(ctx, version.ID, asset.VersionApproved); err != nil {
 		return asset.Version{}, err
@@ -312,4 +337,170 @@ func (s *Service) ListFiles(ctx context.Context, versionID string) ([]asset.File
 		return nil, storageFailure()
 	}
 	return s.repository.ListFiles(ctx, versionID)
+}
+
+// AddRelationRequest records where a version came from.
+type AddRelationRequest struct {
+	SourceAssetVersionID string
+	TargetAssetVersionID string
+	Type                 asset.RelationType
+}
+
+// AddRelation records a lineage edge between two asset versions.
+//
+// DOMAIN_MODEL §8.5 models the relation between versions rather than assets, so
+// a derived asset points at the exact version it came from and the reason is
+// preserved with it. PRD FR-050's "任何派生资产都能追溯父资产及变换原因" is what
+// ListRelationsTo answers from the other side.
+func (s *Service) AddRelation(ctx context.Context, request AddRelationRequest) (asset.Relation, error) {
+	if !s.Available() {
+		return asset.Relation{}, storageFailure()
+	}
+	// Both versions must exist before the edge is written, so a typo is reported
+	// as a missing version rather than as a foreign-key failure.
+	if _, err := s.repository.GetVersion(ctx, request.SourceAssetVersionID); err != nil {
+		return asset.Relation{}, err
+	}
+	if _, err := s.repository.GetVersion(ctx, request.TargetAssetVersionID); err != nil {
+		return asset.Relation{}, err
+	}
+	id, err := s.ids.New()
+	if err != nil {
+		return asset.Relation{}, storageFailure()
+	}
+	relation := asset.Relation{
+		ID:                   id,
+		SourceAssetVersionID: request.SourceAssetVersionID,
+		TargetAssetVersionID: request.TargetAssetVersionID,
+		Type:                 request.Type,
+		CreatedAt:            s.now(),
+	}
+	if err := relation.Validate(); err != nil {
+		return asset.Relation{}, err
+	}
+	if err := s.repository.AddRelation(ctx, relation); err != nil {
+		return asset.Relation{}, err
+	}
+	return relation, nil
+}
+
+// ListLineage returns a version's lineage in both directions: what it came from
+// and what came from it.
+func (s *Service) ListLineage(ctx context.Context, versionID string) (from, to []asset.Relation, err error) {
+	if !s.Available() {
+		return nil, nil, storageFailure()
+	}
+	from, err = s.repository.ListRelationsFrom(ctx, versionID)
+	if err != nil {
+		return nil, nil, err
+	}
+	to, err = s.repository.ListRelationsTo(ctx, versionID)
+	if err != nil {
+		return nil, nil, err
+	}
+	return from, to, nil
+}
+
+// AddUsageRequest records that something consumes a version.
+type AddUsageRequest struct {
+	AssetVersionID string
+	ConsumerType   asset.ConsumerType
+	ConsumerID     string
+	UsageRole      string
+	Required       bool
+}
+
+// AddUsage records a usage of an asset version.
+func (s *Service) AddUsage(ctx context.Context, request AddUsageRequest) (asset.Usage, error) {
+	if !s.Available() {
+		return asset.Usage{}, storageFailure()
+	}
+	if _, err := s.repository.GetVersion(ctx, request.AssetVersionID); err != nil {
+		return asset.Usage{}, err
+	}
+	id, err := s.ids.New()
+	if err != nil {
+		return asset.Usage{}, storageFailure()
+	}
+	usageRole := request.UsageRole
+	if usageRole == "" {
+		usageRole = "reference"
+	}
+	usage := asset.Usage{
+		ID:             id,
+		AssetVersionID: request.AssetVersionID,
+		ConsumerType:   request.ConsumerType,
+		ConsumerID:     request.ConsumerID,
+		UsageRole:      usageRole,
+		Required:       request.Required,
+		CreatedAt:      s.now(),
+	}
+	if err := usage.Validate(); err != nil {
+		return asset.Usage{}, err
+	}
+	if err := s.repository.AddUsage(ctx, usage); err != nil {
+		return asset.Usage{}, err
+	}
+	return usage, nil
+}
+
+// ListUsages returns everything consuming a version.
+func (s *Service) ListUsages(ctx context.Context, versionID string) ([]asset.Usage, error) {
+	if !s.Available() {
+		return nil, storageFailure()
+	}
+	return s.repository.ListUsages(ctx, versionID)
+}
+
+// ApprovalImpact is what an approval switch would disturb.
+type ApprovalImpact struct {
+	// VersionID is the version being approved.
+	VersionID string
+	// Replaces is the version currently approved for the same asset, or empty
+	// when nothing is approved yet.
+	Replaces string
+	// Consumers is everything using the version being replaced, which is the
+	// list PRD FR-050 requires: "替换批准版本时，系统列出受影响的分镜和镜头".
+	Consumers []asset.Usage
+	// RequiredConsumers is the subset a consumer cannot render without.
+	RequiredConsumers []asset.Usage
+}
+
+// ApprovalImpactOf reports what approving a version would disturb.
+//
+// This is the impact analysis DOMAIN_MODEL §8.2 requires before an approval
+// switch ("approved 切换需影响分析") and that WP-04 could not perform because the
+// shot and scene model did not exist yet: its ApproveVersion refused an approval
+// without an explicit acknowledgement precisely so that this check would take
+// its place. It reads only; the caller decides.
+func (s *Service) ApprovalImpactOf(ctx context.Context, versionID string) (ApprovalImpact, error) {
+	if !s.Available() {
+		return ApprovalImpact{}, storageFailure()
+	}
+	version, err := s.repository.GetVersion(ctx, versionID)
+	if err != nil {
+		return ApprovalImpact{}, err
+	}
+	impact := ApprovalImpact{VersionID: versionID, Consumers: []asset.Usage{}, RequiredConsumers: []asset.Usage{}}
+	record, err := s.repository.GetAsset(ctx, version.AssetID)
+	if err != nil {
+		return ApprovalImpact{}, err
+	}
+	// The version being replaced is the one currently approved, which the asset
+	// row names. Nothing approved means nothing to analyse.
+	if record.CurrentApprovedVersionID == "" || record.CurrentApprovedVersionID == versionID {
+		return impact, nil
+	}
+	impact.Replaces = record.CurrentApprovedVersionID
+	usages, err := s.repository.ListUsages(ctx, record.CurrentApprovedVersionID)
+	if err != nil {
+		return ApprovalImpact{}, err
+	}
+	for _, usage := range usages {
+		impact.Consumers = append(impact.Consumers, usage)
+		if usage.Required {
+			impact.RequiredConsumers = append(impact.RequiredConsumers, usage)
+		}
+	}
+	return impact, nil
 }

@@ -489,6 +489,22 @@ const MaxBatchMoves = 5000
 // Deleting a projection does not delete a domain entity (DOMAIN_MODEL §10.2):
 // only the canvas row goes away. The edges that referenced a removed node are
 // removed with it by the schema's cascade.
+// DeleteNodes removes projections and reports how many were removed.
+//
+// A node removal is a projection removal: DOMAIN_MODEL §10.2 says "删除 projection
+// 默认不删除 entity", and nothing here touches the domain rows a node points at.
+//
+// Before removing anything it refuses the whole batch when a REQUIRED semantic
+// edge depends on a node being deleted. AC-CANVAS-002 states "required ref 删除被
+// 阻止", and PRD FR-130's "删除领域实体时列出所有引用并阻止破坏性删除" is the same
+// rule seen from the entity side. The refusal names the blocking edges so the
+// caller can act on it rather than guess, and it refuses the batch rather than
+// deleting the unblocked part: a partial delete would leave the caller with a
+// canvas that no longer matches what it asked for.
+//
+// Edges that are not required are deleted with their node, which is what the
+// schema's cascade already does; the guard exists for the edges a dependency
+// analysis declared load-bearing.
 func (s *Service) DeleteNodes(ctx context.Context, ids []string) (int, error) {
 	if !s.Available() || s.canvas == nil {
 		return 0, storageFailure()
@@ -499,17 +515,54 @@ func (s *Service) DeleteNodes(ctx context.Context, ids []string) (int, error) {
 	if len(ids) > MaxBatchMoves {
 		return 0, project.InvalidError("Too many nodes in one delete.")
 	}
-	deleted := 0
+	cleaned := make([]string, 0, len(ids))
 	for _, id := range ids {
-		if strings.TrimSpace(id) == "" {
-			continue
+		if trimmed := strings.TrimSpace(id); trimmed != "" {
+			cleaned = append(cleaned, trimmed)
 		}
+	}
+	if len(cleaned) == 0 {
+		return 0, nil
+	}
+	if err := s.refuseRequiredReferences(ctx, cleaned); err != nil {
+		return 0, err
+	}
+	deleted := 0
+	for _, id := range cleaned {
 		if err := s.canvas.DeleteNode(ctx, id); err != nil {
 			continue
 		}
 		deleted++
 	}
 	return deleted, nil
+}
+
+// refuseRequiredReferences returns an error when a required edge touches any of
+// the given nodes.
+//
+// The message lists the blocking edge ids and their relation types, because
+// "this is used" without saying by what leaves the caller unable to decide
+// whether to drop the requirement or keep the node.
+func (s *Service) refuseRequiredReferences(ctx context.Context, nodeIDs []string) error {
+	edges, err := s.canvas.ListEdgesForNodes(ctx, nodeIDs)
+	if err != nil {
+		// A failed lookup must not be treated as "nothing depends on it": that
+		// would let a destructive delete through on a read error.
+		return err
+	}
+	blocking := make([]string, 0)
+	for _, edge := range edges {
+		if !edge.Required {
+			continue
+		}
+		description := string(edge.RelationType) + " (" + edge.ID + ")"
+		blocking = append(blocking, description)
+	}
+	if len(blocking) == 0 {
+		return nil
+	}
+	return project.ConflictError(
+		"Those nodes are required by " + strings.Join(blocking, ", ") + ". Remove the requirement or the connections first.")
 }
 
 // CreateEdgeRequest adds a connection.
@@ -526,9 +579,17 @@ type CreateEdgeRequest struct {
 
 // CreateEdge adds a connection to a canvas.
 //
-// The relation type is validated against the registry before the write, so a
-// semantic edge cannot be created with an unregistered meaning
-// (ARCHITECTURE §9.1: "创建语义连线：校验关系注册表后写领域关系/投影关系").
+// A generic connection is stored as-is, which is what PRD FR-130 requires for an
+// imported link that had no declared meaning. A semantic connection — anything
+// else in the registry — is checked against the registry before the write, and
+// an edge whose endpoints the relation does not allow is REFUSED rather than
+// stored as invalid: AC-CANVAS-002 states "合法 references 成功" and "非法
+// source/target 拒绝", and storing a rejected edge would leave the canvas holding
+// a relation the registry says is impossible.
+//
+// The check needs the projected entities, so the endpoints' nodes are read and
+// their entity references are what the registry sees. The verdict is written to
+// validation_status, which is what makes the edge more than a UI line.
 func (s *Service) CreateEdge(ctx context.Context, request CreateEdgeRequest) (project.Edge, error) {
 	if !s.Available() || s.canvas == nil {
 		return project.Edge{}, storageFailure()
@@ -540,8 +601,17 @@ func (s *Service) CreateEdge(ctx context.Context, request CreateEdgeRequest) (pr
 	if !project.IsValidRelationType(relation) {
 		return project.Edge{}, project.InvalidError("That connection type is not recognised.")
 	}
-	if strings.TrimSpace(request.FromNodeID) == "" || strings.TrimSpace(request.ToNodeID) == "" {
+	fromID := strings.TrimSpace(request.FromNodeID)
+	toID := strings.TrimSpace(request.ToNodeID)
+	if fromID == "" || toID == "" {
 		return project.Edge{}, project.InvalidError("A connection needs both endpoints.")
+	}
+	validation, err := s.validateEdge(ctx, relation, fromID, toID)
+	if err != nil {
+		return project.Edge{}, err
+	}
+	if validation.Status == project.EdgeInvalid {
+		return project.Edge{}, project.InvalidError(validation.Reason)
 	}
 	id, err := s.ids.New()
 	if err != nil {
@@ -551,13 +621,13 @@ func (s *Service) CreateEdge(ctx context.Context, request CreateEdgeRequest) (pr
 	edge := project.Edge{
 		ID:               id,
 		CanvasDocumentID: request.DocumentID,
-		FromNodeID:       request.FromNodeID,
-		ToNodeID:         request.ToNodeID,
+		FromNodeID:       fromID,
+		ToNodeID:         toID,
 		RelationType:     relation,
 		FromPort:         request.FromPort,
 		ToPort:           request.ToPort,
 		Required:         request.Required,
-		ValidationStatus: project.EdgeUnknown,
+		ValidationStatus: validation.Status,
 		Metadata:         request.Metadata,
 		CreatedAt:        now,
 		UpdatedAt:        now,
@@ -567,6 +637,53 @@ func (s *Service) CreateEdge(ctx context.Context, request CreateEdgeRequest) (pr
 		return project.Edge{}, err
 	}
 	return edge, nil
+}
+
+// validateEdge runs the relation registry against an edge's endpoints.
+//
+// It reads the two nodes and hands the registry what they project. A node that
+// cannot be read is reported rather than treated as a valid endpoint: a check
+// that passes because its input was missing is worse than no check.
+func (s *Service) validateEdge(ctx context.Context, relation project.RelationType, fromNodeID, toNodeID string) (project.EdgeValidationResult, error) {
+	fromNode, err := s.canvas.GetNode(ctx, fromNodeID)
+	if err != nil {
+		return project.EdgeValidationResult{}, err
+	}
+	toNode, err := s.canvas.GetNode(ctx, toNodeID)
+	if err != nil {
+		return project.EdgeValidationResult{}, err
+	}
+	return project.ValidateEdgeRelation(project.EdgeValidationRequest{
+		RelationType: relation,
+		From: project.EdgeEndpoint{
+			NodeID:          fromNode.ID,
+			EntityType:      project.EntityRefType(fromNode.EntityType),
+			EntityID:        fromNode.EntityID,
+			EntityVersionID: fromNode.EntityVersionID,
+			ProjectID:       s.projectOfDocument(ctx, fromNode.CanvasDocumentID),
+		},
+		To: project.EdgeEndpoint{
+			NodeID:          toNode.ID,
+			EntityType:      project.EntityRefType(toNode.EntityType),
+			EntityID:        toNode.EntityID,
+			EntityVersionID: toNode.EntityVersionID,
+			ProjectID:       s.projectOfDocument(ctx, toNode.CanvasDocumentID),
+		},
+	}), nil
+}
+
+// projectOfDocument resolves the project a canvas document belongs to, or "" when
+// it cannot be read.
+//
+// An unresolved project is deliberately not an error: the registry treats an
+// unknown project as "cannot check" rather than "mismatched", so a lookup that
+// misses must not reject an otherwise valid edge.
+func (s *Service) projectOfDocument(ctx context.Context, documentID string) string {
+	document, err := s.canvas.GetDocument(ctx, documentID)
+	if err != nil {
+		return ""
+	}
+	return document.ProjectID
 }
 
 // DeleteEdges removes connections and reports how many were removed.

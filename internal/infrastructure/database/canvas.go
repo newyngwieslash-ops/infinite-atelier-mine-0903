@@ -548,3 +548,47 @@ func decodeViewport(value string) project.Viewport {
 
 // Ensure the repository satisfies the application port.
 var _ projects.CanvasRepository = (*CanvasRepository)(nil)
+
+// ListEdgesForNodes returns the edges touching any of the given nodes.
+//
+// It answers the required-reference question without loading a document's whole
+// edge list: AC-CANVAS-002 requires a delete to be refused while a required
+// reference still depends on what is being removed, and the caller has to ask
+// that about a specific set of node ids.
+func (r *CanvasRepository) ListEdgesForNodes(ctx context.Context, nodeIDs []string) ([]project.Edge, error) {
+	conn := r.conn()
+	if conn == nil {
+		return nil, storageError("CANVAS_STORE_UNAVAILABLE", "The canvas store is unavailable.", nil)
+	}
+	if len(nodeIDs) == 0 {
+		return []project.Edge{}, nil
+	}
+	// One placeholder per id, bound as parameters rather than interpolated.
+	placeholders := make([]byte, 0, len(nodeIDs)*2)
+	args := make([]any, 0, len(nodeIDs)*2)
+	for index, id := range nodeIDs {
+		if index > 0 {
+			placeholders = append(placeholders, ',')
+		}
+		placeholders = append(placeholders, '?')
+		args = append(args, id, id)
+	}
+	query := edgeSelectColumns + ` WHERE from_node_id IN (` + string(placeholders) + `) OR to_node_id IN (` + string(placeholders) + `)`
+	rows, err := conn.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, storageError("CANVAS_READ_FAILED", "The connections could not be read.", err)
+	}
+	defer rows.Close()
+	var edges []project.Edge
+	for rows.Next() {
+		edge, scanErr := scanEdge(rows)
+		if scanErr != nil {
+			return nil, storageError("CANVAS_READ_FAILED", "The connections could not be read.", scanErr)
+		}
+		edges = append(edges, edge)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, storageError("CANVAS_READ_FAILED", "The connections could not be read.", err)
+	}
+	return edges, nil
+}

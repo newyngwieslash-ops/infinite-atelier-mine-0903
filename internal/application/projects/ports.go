@@ -86,6 +86,15 @@ type CanvasRepository interface {
 	DeleteEdge(ctx context.Context, id string) error
 	CountEdges(ctx context.Context, documentID string) (int, error)
 
+	// ListEdgesForNodes returns the edges that touch any of the given nodes,
+	// either as a source or as a target.
+	//
+	// It exists for the required-reference guard: AC-CANVAS-002 requires a
+	// delete to be refused when a required reference depends on what is being
+	// removed, and answering that needs the edges attached to a node without
+	// loading its whole document.
+	ListEdgesForNodes(ctx context.Context, nodeIDs []string) ([]project.Edge, error)
+
 	CreateChatSession(ctx context.Context, session project.ChatSession) error
 	GetChatSession(ctx context.Context, id string) (project.ChatSession, error)
 	ListChatSessions(ctx context.Context, documentID string) ([]project.ChatSession, error)

@@ -380,3 +380,154 @@ func scanVersion(row rowScanner) (asset.Version, error) {
 
 // Ensure the repository satisfies the application port.
 var _ assets.Repository = (*AssetRepository)(nil)
+
+const assetRelationSelectColumns = `SELECT id, source_asset_version_id, target_asset_version_id, relation_type, created_at
+	FROM asset_relations`
+
+// AddRelation records a lineage edge between two asset versions.
+//
+// DOMAIN_MODEL §8.5 is what PRD FR-050's "任何派生资产都能追溯父资产及变换原因"
+// is built on, and the edge carries the meaning as well as the link: a
+// derived_from says a version came from another, while a variant_of says they
+// are alternatives.
+func (r *AssetRepository) AddRelation(ctx context.Context, relation asset.Relation) error {
+	conn := r.conn()
+	if conn == nil {
+		return storageError("ASSET_STORE_UNAVAILABLE", "The asset store is unavailable.", nil)
+	}
+	_, err := conn.ExecContext(ctx, `INSERT INTO asset_relations
+		(id, source_asset_version_id, target_asset_version_id, relation_type, created_at)
+		VALUES (?, ?, ?, ?, ?)`,
+		relation.ID, relation.SourceAssetVersionID, relation.TargetAssetVersionID,
+		string(relation.Type), formatTime(relation.CreatedAt))
+	if err != nil {
+		if isUniqueViolation(err) {
+			return asset.ConflictError("That lineage relation already exists.")
+		}
+		if isForeignKeyViolation(err) {
+			// Either end names a version that does not exist. Reporting it as a
+			// conflict rather than a storage failure is what lets the caller see
+			// that the reference is wrong rather than the store being broken.
+			return asset.ConflictError("A lineage relation must name two existing asset versions.")
+		}
+		return storageError("ASSET_WRITE_FAILED", "The lineage relation could not be saved.", err)
+	}
+	return nil
+}
+
+// ListRelationsFrom returns the lineage edges leaving a version, which is how a
+// derived asset's parents are found.
+func (r *AssetRepository) ListRelationsFrom(ctx context.Context, versionID string) ([]asset.Relation, error) {
+	return r.listRelations(ctx, ` WHERE source_asset_version_id = ? ORDER BY created_at ASC, id ASC`, versionID)
+}
+
+// ListRelationsTo returns the lineage edges arriving at a version, which is how
+// everything derived from a version is found.
+func (r *AssetRepository) ListRelationsTo(ctx context.Context, versionID string) ([]asset.Relation, error) {
+	return r.listRelations(ctx, ` WHERE target_asset_version_id = ? ORDER BY created_at ASC, id ASC`, versionID)
+}
+
+func (r *AssetRepository) listRelations(ctx context.Context, clause string, versionID string) ([]asset.Relation, error) {
+	conn := r.conn()
+	if conn == nil {
+		return nil, storageError("ASSET_STORE_UNAVAILABLE", "The asset store is unavailable.", nil)
+	}
+	rows, err := conn.QueryContext(ctx, assetRelationSelectColumns+clause, versionID)
+	if err != nil {
+		return nil, storageError("ASSET_READ_FAILED", "The lineage could not be read.", err)
+	}
+	defer rows.Close()
+	var relations []asset.Relation
+	for rows.Next() {
+		var relation asset.Relation
+		var relationType, createdAt string
+		if scanErr := rows.Scan(&relation.ID, &relation.SourceAssetVersionID,
+			&relation.TargetAssetVersionID, &relationType, &createdAt); scanErr != nil {
+			return nil, storageError("ASSET_READ_FAILED", "The lineage could not be read.", scanErr)
+		}
+		relation.Type = asset.RelationType(relationType)
+		relation.CreatedAt = parseTime(createdAt)
+		relations = append(relations, relation)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, storageError("ASSET_READ_FAILED", "The lineage could not be read.", err)
+	}
+	return relations, nil
+}
+
+const assetUsageSelectColumns = `SELECT id, asset_version_id, consumer_type, consumer_id, usage_role, required, created_at
+	FROM asset_usages`
+
+// AddUsage records that something consumes an asset version.
+//
+// DOMAIN_MODEL §8.6 is what makes an approval switch analysable: PRD FR-050
+// requires "替换批准版本时，系统列出受影响的分镜和镜头", and that list is the set
+// of usages pointing at the version being replaced.
+func (r *AssetRepository) AddUsage(ctx context.Context, usage asset.Usage) error {
+	conn := r.conn()
+	if conn == nil {
+		return storageError("ASSET_STORE_UNAVAILABLE", "The asset store is unavailable.", nil)
+	}
+	_, err := conn.ExecContext(ctx, `INSERT INTO asset_usages
+		(id, asset_version_id, consumer_type, consumer_id, usage_role, required, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		usage.ID, usage.AssetVersionID, string(usage.ConsumerType), usage.ConsumerID,
+		usage.UsageRole, boolInt(usage.Required), formatTime(usage.CreatedAt))
+	if err != nil {
+		if isUniqueViolation(err) {
+			return asset.ConflictError("That version is already used by that consumer in that role.")
+		}
+		if isForeignKeyViolation(err) {
+			return asset.ConflictError("A usage must name an existing asset version.")
+		}
+		return storageError("ASSET_WRITE_FAILED", "The usage could not be saved.", err)
+	}
+	return nil
+}
+
+// ListUsages returns everything consuming a version.
+func (r *AssetRepository) ListUsages(ctx context.Context, versionID string) ([]asset.Usage, error) {
+	conn := r.conn()
+	if conn == nil {
+		return nil, storageError("ASSET_STORE_UNAVAILABLE", "The asset store is unavailable.", nil)
+	}
+	rows, err := conn.QueryContext(ctx,
+		assetUsageSelectColumns+` WHERE asset_version_id = ? ORDER BY created_at ASC, id ASC`, versionID)
+	if err != nil {
+		return nil, storageError("ASSET_READ_FAILED", "The usages could not be read.", err)
+	}
+	defer rows.Close()
+	var usages []asset.Usage
+	for rows.Next() {
+		var usage asset.Usage
+		var consumerType, usageRole, createdAt string
+		var required int
+		if scanErr := rows.Scan(&usage.ID, &usage.AssetVersionID, &consumerType, &usage.ConsumerID,
+			&usageRole, &required, &createdAt); scanErr != nil {
+			return nil, storageError("ASSET_READ_FAILED", "The usages could not be read.", scanErr)
+		}
+		usage.ConsumerType = asset.ConsumerType(consumerType)
+		usage.UsageRole = usageRole
+		usage.Required = required != 0
+		usage.CreatedAt = parseTime(createdAt)
+		usages = append(usages, usage)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, storageError("ASSET_READ_FAILED", "The usages could not be read.", err)
+	}
+	return usages, nil
+}
+
+// CountUsages reports how many consumers a version has.
+func (r *AssetRepository) CountUsages(ctx context.Context, versionID string) (int, error) {
+	conn := r.conn()
+	if conn == nil {
+		return 0, storageError("ASSET_STORE_UNAVAILABLE", "The asset store is unavailable.", nil)
+	}
+	var count int
+	if err := conn.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM asset_usages WHERE asset_version_id = ?`, versionID).Scan(&count); err != nil {
+		return 0, storageError("ASSET_READ_FAILED", "The usages could not be read.", err)
+	}
+	return count, nil
+}

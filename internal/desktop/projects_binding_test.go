@@ -225,6 +225,24 @@ func (r *canvasFixtureRepository) ListEdges(_ context.Context, documentID string
 	return edges, nil
 }
 
+// ListEdgesForNodes returns the edges touching any of the given nodes, which is
+// what the required-reference guard reads before a delete.
+func (r *canvasFixtureRepository) ListEdgesForNodes(_ context.Context, nodeIDs []string) ([]project.Edge, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	wanted := make(map[string]bool, len(nodeIDs))
+	for _, id := range nodeIDs {
+		wanted[id] = true
+	}
+	var edges []project.Edge
+	for _, edge := range r.edges {
+		if wanted[edge.FromNodeID] || wanted[edge.ToNodeID] {
+			edges = append(edges, edge)
+		}
+	}
+	return edges, nil
+}
+
 func (r *canvasFixtureRepository) UpdateEdge(_ context.Context, edge project.Edge, expected int64) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()

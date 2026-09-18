@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -452,25 +453,37 @@ func TestWP05ConstraintsEnforceDocumentedValues(t *testing.T) {
 	}
 }
 
-// TestWP05ApprovedVersionIsUnique proves the partial unique index does what the
-// acceptance item "approved 唯一" claims: a second approved version of one
-// parent cannot be stored, while a rejected one can.
+// TestWP05ApprovedVersionIsUnique proves the partial unique indexes do what the
+// acceptance item "approved 唯一" claims, for ALL EIGHT version families
+// DOMAIN_MODEL §2.5 defines. Covering three of them would let a future migration
+// drop the UNIQUE on the other five and ship silently, which is what an earlier
+// revision of this test allowed: mutating those five indexes to plain indexes
+// left the suite green.
 func TestWP05ApprovedVersionIsUnique(t *testing.T) {
 	db := openTempDB(t)
 	if err := applyMigrations(context.Background(), db, wp05Migrations(t)); err != nil {
 		t.Fatal(err)
 	}
 	seedWP05Parents(t, db)
+	// The storyboard families need parents the shared fixture does not carry, and
+	// they are seeded here rather than there so no other test's fixture changes.
+	// Order matters: a storyboard version names a director plan.
+	seedApprovedUniquenessParents(t, db)
 	ctx := context.Background()
 
 	families := []struct {
-		name       string
+		name string
+		// index is the partial unique index this family's rule lives in, asserted
+		// directly so a missing index is reported as such rather than as a
+		// puzzling insert failure.
+		index      string
 		insertOne  string
 		insertTwo  string
 		insertFree string
 	}{
 		{
-			name: "asset_versions",
+			name:  "asset_versions",
+			index: "idx_asset_versions_approved",
 			insertOne: `INSERT INTO asset_versions (id, asset_id, version_number, status, created_at)
 				VALUES ('av-1', 'asset-1', 1, 'approved', '2026-01-01T00:00:00Z')`,
 			insertTwo: `INSERT INTO asset_versions (id, asset_id, version_number, status, created_at)
@@ -479,9 +492,10 @@ func TestWP05ApprovedVersionIsUnique(t *testing.T) {
 				VALUES ('av-3', 'asset-1', 3, 'rejected', '2026-01-01T00:00:00Z')`,
 		},
 		{
-			name: "script_versions",
+			name:  "script_versions",
+			index: "idx_script_versions_approved",
 			// The parent fixture already holds script_version 1, so this family
-			// starts at 2. Version numbers are unique per script, not per test.
+			// starts at 2. Version numbers are unique per script.
 			insertOne: `INSERT INTO script_versions (id, script_id, version_number, status, created_at)
 				VALUES ('sv-2', 'script-1', 2, 'approved', '2026-01-01T00:00:00Z')`,
 			insertTwo: `INSERT INTO script_versions (id, script_id, version_number, status, created_at)
@@ -490,7 +504,8 @@ func TestWP05ApprovedVersionIsUnique(t *testing.T) {
 				VALUES ('sv-4', 'script-1', 4, 'superseded', '2026-01-01T00:00:00Z')`,
 		},
 		{
-			name: "story_skeleton_versions",
+			name:  "story_skeleton_versions",
+			index: "idx_story_skeleton_versions_approved",
 			insertOne: `INSERT INTO story_skeleton_versions (id, episode_id, version_number, status, created_at)
 				VALUES ('ssv-1', 'episode-1', 1, 'approved', '2026-01-01T00:00:00Z')`,
 			insertTwo: `INSERT INTO story_skeleton_versions (id, episode_id, version_number, status, created_at)
@@ -498,9 +513,79 @@ func TestWP05ApprovedVersionIsUnique(t *testing.T) {
 			insertFree: `INSERT INTO story_skeleton_versions (id, episode_id, version_number, status, created_at)
 				VALUES ('ssv-3', 'episode-1', 3, 'stale', '2026-01-01T00:00:00Z')`,
 		},
+		{
+			name:  "adaptation_strategy_versions",
+			index: "idx_adaptation_strategy_versions_approved",
+			insertOne: `INSERT INTO adaptation_strategy_versions (id, episode_id, version_number, status, created_at)
+				VALUES ('asv-1', 'episode-1', 1, 'approved', '2026-01-01T00:00:00Z')`,
+			insertTwo: `INSERT INTO adaptation_strategy_versions (id, episode_id, version_number, status, created_at)
+				VALUES ('asv-2', 'episode-1', 2, 'approved', '2026-01-01T00:00:00Z')`,
+			insertFree: `INSERT INTO adaptation_strategy_versions (id, episode_id, version_number, status, created_at)
+				VALUES ('asv-3', 'episode-1', 3, 'candidate', '2026-01-01T00:00:00Z')`,
+		},
+		{
+			name:  "project_style_guides",
+			index: "idx_project_style_guides_approved",
+			insertOne: `INSERT INTO project_style_guides (id, project_id, version_number, status, created_at)
+				VALUES ('psg-1', 'project-1', 1, 'approved', '2026-01-01T00:00:00Z')`,
+			insertTwo: `INSERT INTO project_style_guides (id, project_id, version_number, status, created_at)
+				VALUES ('psg-2', 'project-1', 2, 'approved', '2026-01-01T00:00:00Z')`,
+			insertFree: `INSERT INTO project_style_guides (id, project_id, version_number, status, created_at)
+				VALUES ('psg-3', 'project-1', 3, 'deprecated', '2026-01-01T00:00:00Z')`,
+		},
+		{
+			name:  "director_plan_versions",
+			index: "idx_director_plan_versions_approved",
+			insertOne: `INSERT INTO director_plan_versions (id, episode_id, version_number, status, script_version_id, created_at)
+				VALUES ('dpv-1', 'episode-1', 1, 'approved', 'au-script-version', '2026-01-01T00:00:00Z')`,
+			insertTwo: `INSERT INTO director_plan_versions (id, episode_id, version_number, status, script_version_id, created_at)
+				VALUES ('dpv-2', 'episode-1', 2, 'approved', 'au-script-version', '2026-01-01T00:00:00Z')`,
+			insertFree: `INSERT INTO director_plan_versions (id, episode_id, version_number, status, script_version_id, created_at)
+				VALUES ('dpv-3', 'episode-1', 3, 'under_review', 'au-script-version', '2026-01-01T00:00:00Z')`,
+		},
+		{
+			name:  "storyboard_versions",
+			index: "idx_storyboard_versions_approved",
+			insertOne: `INSERT INTO storyboard_versions (id, storyboard_id, version_number, status, script_version_id, director_plan_version_id, created_at)
+				VALUES ('sbv-2', 'au-storyboard', 2, 'approved', 'au-script-version', 'au-director-plan', '2026-01-01T00:00:00Z')`,
+			insertTwo: `INSERT INTO storyboard_versions (id, storyboard_id, version_number, status, script_version_id, director_plan_version_id, created_at)
+				VALUES ('sbv-3', 'au-storyboard', 3, 'approved', 'au-script-version', 'au-director-plan', '2026-01-01T00:00:00Z')`,
+			insertFree: `INSERT INTO storyboard_versions (id, storyboard_id, version_number, status, script_version_id, director_plan_version_id, created_at)
+				VALUES ('sbv-4', 'au-storyboard', 4, 'stale', 'au-script-version', 'au-director-plan', '2026-01-01T00:00:00Z')`,
+		},
+		{
+			name:  "storyboard_panel_versions",
+			index: "idx_storyboard_panel_versions_approved",
+			insertOne: `INSERT INTO storyboard_panel_versions (id, storyboard_item_id, version_number, status, created_at)
+				VALUES ('spv-1', 'au-storyboard-item', 1, 'approved', '2026-01-01T00:00:00Z')`,
+			insertTwo: `INSERT INTO storyboard_panel_versions (id, storyboard_item_id, version_number, status, created_at)
+				VALUES ('spv-2', 'au-storyboard-item', 2, 'approved', '2026-01-01T00:00:00Z')`,
+			insertFree: `INSERT INTO storyboard_panel_versions (id, storyboard_item_id, version_number, status, created_at)
+				VALUES ('spv-3', 'au-storyboard-item', 3, 'candidate', '2026-01-01T00:00:00Z')`,
+		},
+	}
+	// Every family §2.5 defines must appear here. The count is asserted so a
+	// family added to the vocabulary cannot be left untested by omission.
+	if len(families) != 8 {
+		t.Fatalf("the approved-uniqueness table covers %d families, but §2.5 defines 8", len(families))
 	}
 	for _, family := range families {
 		t.Run(family.name, func(t *testing.T) {
+			// The index must exist and must be UNIQUE. Checking the SQL directly
+			// means a missing or weakened index is reported as exactly that,
+			// rather than as a confusing insert behaviour.
+			var definition string
+			if err := db.QueryRowContext(ctx,
+				`SELECT sql FROM sqlite_master WHERE type='index' AND name=?`, family.index).Scan(&definition); err != nil {
+				t.Fatalf("the approved-uniqueness index %s does not exist: %v", family.index, err)
+			}
+			if !strings.Contains(strings.ToUpper(definition), "UNIQUE") {
+				t.Fatalf("%s is not a UNIQUE index: %s", family.index, definition)
+			}
+			if !strings.Contains(definition, "WHERE status = 'approved'") {
+				t.Fatalf("%s is not partial on the approved status: %s", family.index, definition)
+			}
+
 			if _, err := db.ExecContext(ctx, family.insertOne); err != nil {
 				t.Fatalf("the first approved version was rejected: %v", err)
 			}
@@ -605,6 +690,39 @@ func seedWP05Parents(t *testing.T, db *sql.DB) {
 	for _, statement := range statements {
 		if _, err := db.ExecContext(ctx, statement); err != nil {
 			t.Fatalf("seeding the WP-05 fixture failed: %v\n%s", err, statement)
+		}
+	}
+}
+
+// seedApprovedUniquenessParents writes the rows the storyboard version families
+// hang off, which the shared fixture deliberately does not carry.
+//
+// They use their own ids rather than the shared 'scene-1'/'shot-1' names,
+// because the scene and shot tables have a UNIQUE (parent, ordinal) constraint
+// and seeding a second scene at ordinal 1 of the same script version would
+// collide with what another test writes.
+func seedApprovedUniquenessParents(t *testing.T, db *sql.DB) {
+	t.Helper()
+	ctx := context.Background()
+	statements := []string{
+		`INSERT INTO script_versions (id, script_id, version_number, status, created_at)
+		 VALUES ('au-script-version', 'script-1', 90, 'draft', '2026-01-01T00:00:00Z')`,
+		`INSERT INTO director_plan_versions (id, episode_id, version_number, status, script_version_id, created_at)
+		 VALUES ('au-director-plan', 'episode-1', 90, 'draft', 'au-script-version', '2026-01-01T00:00:00Z')`,
+		`INSERT INTO storyboards (id, episode_id, created_at, updated_at)
+		 VALUES ('au-storyboard', 'episode-1', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')`,
+		`INSERT INTO scenes (id, script_version_id, ordinal, created_at, updated_at)
+		 VALUES ('au-scene', 'au-script-version', 1, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')`,
+		`INSERT INTO shots (id, scene_id, ordinal, created_at, updated_at)
+		 VALUES ('au-shot', 'au-scene', 1, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')`,
+		`INSERT INTO storyboard_versions (id, storyboard_id, version_number, status, script_version_id, director_plan_version_id, created_at)
+		 VALUES ('au-storyboard-version', 'au-storyboard', 1, 'draft', 'au-script-version', 'au-director-plan', '2026-01-01T00:00:00Z')`,
+		`INSERT INTO storyboard_items (id, storyboard_version_id, shot_id, ordinal, created_at, updated_at)
+		 VALUES ('au-storyboard-item', 'au-storyboard-version', 'au-shot', 1, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')`,
+	}
+	for _, statement := range statements {
+		if _, err := db.ExecContext(ctx, statement); err != nil {
+			t.Fatalf("seeding the approved-uniqueness parents failed: %v\n%s", err, statement)
 		}
 	}
 }

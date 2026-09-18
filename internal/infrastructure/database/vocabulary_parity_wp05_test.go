@@ -245,19 +245,42 @@ func TestWP05VocabulariesMatchTheSchema(t *testing.T) {
 	}
 }
 
-// TestWP05AssetVersionOwnerChecksMatchTheSchema checks the one foreign-key-shaped
-// vocabulary the registry depends on: canvas_nodes.entity_type must accept every
-// kind the relation registry can name, or a validated edge could not be stored.
-func TestWP05AssetVersionOwnerChecksMatchTheSchema(t *testing.T) {
+// TestWP05CanvasNodeEntityColumnsStayOpen pins the one property the relation
+// registry depends on from the canvas schema: canvas_nodes.entity_type must stay
+// an open text column with an empty default, so a free node can store no
+// reference while a projection stores one.
+//
+// It does NOT compare the column against project.EntityRefTypes, because the
+// schema does not constrain it — an earlier version of this test was named as if
+// it did. The relation vocabulary that does have a closed list is compared by
+// TestWP04CanvasEdgeRelationVocabulary below.
+func TestWP05CanvasNodeEntityColumnsStayOpen(t *testing.T) {
 	migration := migrationScript(t, "000004_projects_canvas.sql")
-	// canvas_nodes.entity_type is an open default-empty column, so assert the
-	// weaker property the schema actually guarantees: it exists and is a text
-	// column with an empty default, which is what lets a free node store no
-	// reference at all.
 	body := tableBody(t, migration, "canvas_nodes")
 	if !strings.Contains(body, "entity_type TEXT NOT NULL DEFAULT ''") {
 		t.Fatalf("canvas_nodes.entity_type is no longer an open text column, so the reference vocabulary is not what the domain expects:\n%s", body)
 	}
+	if !strings.Contains(body, "entity_id TEXT NOT NULL DEFAULT ''") {
+		t.Fatalf("canvas_nodes.entity_id is no longer an open text column:\n%s", body)
+	}
+	// The pair invariant must still be in the schema: half a reference is what
+	// the projection command refuses, and the CHECK is what makes that refusal a
+	// statement about the database rather than a habit.
+	if !strings.Contains(body, "entity_type = '' AND entity_id = ''") {
+		t.Fatalf("the canvas node reference pair is no longer enforced together:\n%s", body)
+	}
+}
+
+// TestWP04CanvasEdgeRelationVocabulary guards the one closed vocabulary the
+// parity guard cannot reach: canvas_edges.relation_type lives in the WP-04
+// migration, and project.RelationTypes is the Go list that must agree with it.
+// Adding a relation to one side and not the other is exactly the drift the guard
+// exists to prevent, and without this it would pass the whole suite.
+func TestWP04CanvasEdgeRelationVocabulary(t *testing.T) {
+	migration := migrationScript(t, "000004_projects_canvas.sql")
+	compareVocabularies(t, "canvas_edges.relation_type",
+		checkListFor(t, migration, "canvas_edges", "relation_type"),
+		goValues(project.RelationTypes))
 }
 
 // TestWP05ExtractorActuallyFindsVocabularies guards the guard. If the parser

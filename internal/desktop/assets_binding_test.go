@@ -18,10 +18,12 @@ import (
 // reproduces the real repository's revision and status handling, so the
 // binding's validation and error mapping are tested without a database.
 type assetStore struct {
-	mu       sync.Mutex
-	assets   map[string]asset.Asset
-	versions map[string]asset.Version
-	files    map[string][]asset.File
+	mu        sync.Mutex
+	assets    map[string]asset.Asset
+	versions  map[string]asset.Version
+	files     map[string][]asset.File
+	relations []asset.Relation
+	usages    []asset.Usage
 	// failNext makes the next write fail, so a storage failure is testable.
 	failNext error
 	// failList makes the next query fail, the way a repository reports a store
@@ -207,6 +209,71 @@ func (s *assetStore) CountFiles(_ context.Context, versionID string) (int, error
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return len(s.files[versionID]), nil
+}
+
+// Lineage and usage. The in-memory double keeps them in slices so a test can
+// assert the round trip without a database, mirroring how the real repository
+// stores them in their own tables.
+func (s *assetStore) AddRelation(_ context.Context, relation asset.Relation) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.relations = append(s.relations, relation)
+	return nil
+}
+
+func (s *assetStore) ListRelationsFrom(_ context.Context, versionID string) ([]asset.Relation, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var relations []asset.Relation
+	for _, relation := range s.relations {
+		if relation.SourceAssetVersionID == versionID {
+			relations = append(relations, relation)
+		}
+	}
+	return relations, nil
+}
+
+func (s *assetStore) ListRelationsTo(_ context.Context, versionID string) ([]asset.Relation, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var relations []asset.Relation
+	for _, relation := range s.relations {
+		if relation.TargetAssetVersionID == versionID {
+			relations = append(relations, relation)
+		}
+	}
+	return relations, nil
+}
+
+func (s *assetStore) AddUsage(_ context.Context, usage asset.Usage) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.usages = append(s.usages, usage)
+	return nil
+}
+
+func (s *assetStore) ListUsages(_ context.Context, versionID string) ([]asset.Usage, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var usages []asset.Usage
+	for _, usage := range s.usages {
+		if usage.AssetVersionID == versionID {
+			usages = append(usages, usage)
+		}
+	}
+	return usages, nil
+}
+
+func (s *assetStore) CountUsages(_ context.Context, versionID string) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	count := 0
+	for _, usage := range s.usages {
+		if usage.AssetVersionID == versionID {
+			count++
+		}
+	}
+	return count, nil
 }
 
 // attachAssetsFixture builds a binding over the in-memory store.
