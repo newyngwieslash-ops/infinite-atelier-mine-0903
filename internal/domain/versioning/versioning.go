@@ -64,6 +64,9 @@ const (
 	CreatedBySystem    CreatedByType = "system"
 )
 
+// CreatedByTypes lists the documented producers in the schema's order.
+var CreatedByTypes = []CreatedByType{CreatedByUser, CreatedByAgent, CreatedByMigration, CreatedBySystem}
+
 // IsValidCreatedByType reports whether a producer kind may be persisted.
 func IsValidCreatedByType(value CreatedByType) bool {
 	switch value {
