@@ -45,3 +45,5 @@
 | 0004 | Job lifecycle names, recovery semantics, outbound download policy | Accepted |
 | 0005 | Entity identifiers (UUIDv7) and the physical file table name | Accepted |
 | 0006 | Legacy import pipeline, idempotency, ordinary backup v1 | Accepted |
+| 0007 | Drama schema and vocabulary rulings | Accepted |
+| 0008 | Staleness propagation, projection commands, and version approval | Accepted |

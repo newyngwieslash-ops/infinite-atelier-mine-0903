@@ -1,11 +1,165 @@
 # Implementation Status
 
-> Last updated: 2026-09-17
+> Last updated: 2026-09-18
 > Product: Infinite Atelier Core + Drama Production Pack
-> Current work package: **WP-04 — Legacy 项目迁移与画布后端适配**
-> Status: **COMPLETE for the WP-03 scope recorded in section 0c** (job tables and state machine, scheduler/worker/lease/retry, startup recovery, OpenAI- and Gemini-compatible image adapters, async video and audio contracts with mocks, result pipeline into the FileStore, narrow job bindings, Job Center UI, image generation routed through Go, scans). WP-01 and WP-02 remain COMPLETE for their recorded scopes.
+> Current work package: **WP-05 — 短剧领域模型与工作室 UI Shell**
+> Status: **COMPLETE for the WP-05 scope recorded in section 0e** (the drama schema, domain vocabulary, relation registry, application services and repositories, the drama and assets bindings, the studio shell and creation wizard, and the projection and required-reference commands AC-CANVAS-001/002 need). WP-01 through WP-04 remain COMPLETE for their recorded scopes; section 0e states exactly which earlier gaps this package closed and which it left open.
 
 WP-03 start baseline (2026-09-15): branch `codex/wp-01-desktop-foundation`, HEAD `a243891455ec17687dd54b5ac90d3bd64478a1a1`, empty index. Freshly re-run baseline: `go test ./... -count=1` PASS (15 packages at start), `go vet ./...` PASS, `web` `npm run typecheck` PASS, `npm test` PASS (15 tests), `npm run build` PASS. Go commands require `GOTOOLCHAIN=go1.25.0 GOSUMDB=sum.golang.org` on this host because the user-level `go env` sets `GOSUMDB=off`, which blocks toolchain verification. The working tree already contained the WP-01/WP-02 tracked and untracked work plus the user's brand rename; none of it was modified outside the WP-03 scope.
+
+# 0e. WP-05 result (2026-09-18)
+
+## Scope completed
+
+- **Status: COMPLETE (WP-05 scope)**, with the limits listed below stated plainly rather than
+  presented as passes. Every acceptance item below was executed on this host.
+- Scope: drama project configuration (settings, rules, style guides, model policies); the
+  source/chapter tables; the story fact layer (entities, aliases, events, participants, relations,
+  evidence, conflicts, character state); episodes and the script pipeline (skeleton, strategy,
+  script, scene, dialogue, shot); the asset aggregate rebuilt to the documented vocabularies plus
+  lineage and usage; director plan, storyboard table and panels; workflow, review and user-gate
+  tables; the canvas entity reference and relation registry; the studio navigation with honest
+  empty states; the project creation wizard; domain commands, queries and the staleness
+  propagation; and the unit tests for revision, version, approval and staleness.
+- Schema: seven forward migrations, `000006`–`000012`. `000001`–`000005` were not modified.
+- Domain: `versioning` (the shared §2.5 vocabulary), `story`, `script`, `asset` (extended),
+  `storyboard`, `workflow`, `staleness`, and `project` (extended with the drama configuration and
+  the §10.4 relation registry).
+- Application: `story`, `script`, `projects` (extended with the drama configuration and the
+  projection commands), `assets` (extended with lineage, usage and approval impact), `storyboard`,
+  `workflow`, `staleness`.
+- Infrastructure: `database/{story,script,storyboard,workflow,staleness,drama_settings,projection}`
+  plus the canvas and asset repository extensions.
+- Bindings: `DramaBinding` (52 methods across five services) and `AssetsBinding`, with
+  `drama_wiring.go` composing them and `app.go` attaching only over a writable database.
+  `CreateProjectRequest` gained the PRD FR-020 drama fields flat, and `ProjectsBinding` gained
+  `GetProjectSettings`, `UpdateProjectSettings` and `ListProjectRules`.
+- Frontend: the `/studio` list, the 14-section shell, the creation wizard, the studio service
+  client, the UI-state store, and the section nav. The canvas persistence adapter was fixed to
+  carry entity references and edge relation types in both directions.
+- Docs: ADR-0007 (schema and vocabulary rulings), ADR-0008 (staleness, projection, approval),
+  this section, the ADR index, TRACEABILITY and the README.
+
+## Commands executed and actual results
+
+| Command | Result |
+|---|---|
+| `go test ./... -count=1` | **PASS** (35 packages ok) |
+| `go vet ./...` | **PASS** |
+| `gofmt -l .` | **PASS** (no output) |
+| `node scripts/security-scan.mjs` | **PASS** (365 files scanned; 1 audited dynamic-execution exception, 4 audited legacy direct-call files with named owners) |
+| `web`: `npm run typecheck` | **PASS** |
+| `web`: `npm test` | **PASS** (36 tests) |
+| `web`: `npm run test:e2e` | **PASS** (22 passed, 1 skipped; the skip is the pre-existing crop dialog that needs node content a headless run cannot supply) |
+| `web`: `npm run build` | **PASS** with the pre-existing over-500 kB chunk warning |
+| `wails generate module` (v2.15.0) | **PASS**; produced `DramaBinding`, `AssetsBinding` and `BackupBinding` and extended `models.ts` |
+| `git diff --check` | **PASS** |
+| `go test -race ./... -count=1` | **ENVIRONMENT FAILURE, not a pass** — the host has no 64-bit CGO compiler, which reproduces on untouched packages. |
+
+`models.ts` grew from 33 exported classes to 95. The change was checked to be purely additive by
+comparing the class-name lists against the previous revision: 62 added, zero removed or renamed.
+
+## Acceptance
+
+| ID | Result | Evidence |
+|---|---|---|
+| Domain Model MVP tables and constraints | **PASS** | `TestWP05MigrationFreshDatabase` (43 tables), `TestWP05ConstraintsEnforceDocumentedValues` (each documented value accepted, each undocumented one rejected), and the vocabulary parity guard below. |
+| approved 唯一 | **PASS** | A partial unique index in each of the eight version families plus `TestWP05ApprovedVersionIsUnique`, which asserts each index exists, is `UNIQUE` and is partial on the approved status. All eight were mutation-verified: weakening any one to a plain index fails the test. |
+| locked rule | **PASS** | `Rule.CanModify` and `CanEscalate` gate the writer, and the service applies both against the stored rule. Two tests: one for the lock-change guard, one isolating `CanModify` by editing content with the lock flag unchanged. Both were mutation-verified. |
+| stale 传播基础 | **PASS** | The §15.2 dependency graph with a schema-column justification per edge, `PropagateFrom` walking it, the waiver rules of §15.3, and an end-to-end test against a real database. Severity-against-the-original-change was mutation-verified from two directions. |
+| 创建 Drama Project/Episode/Asset | **PASS** | `TestCreateDramaProjectWritesSettingsAndDramaCanvas` (real SQLite, every wizard field round-tripped) plus the episode and asset commands in the story/script/asset suites. The E2E suite covers the browser-side refusal only, because a browser has no core (see the limits below). |
+| Canvas projection 基础 AC-CANVAS-001/002 子集 | **PASS** | `CreateCanvasProjection` (reference written and read back, idempotent, half a reference refused), `RemoveCanvasProjection` (node gone, entity untouched), `DeleteNodes` refusing a required reference, `CreateEdge` validating against the registry, and `FindEntityReferences` listing an entity's projections and blockers. Six tests, two of them mutation-verified. |
+
+The vocabulary parity guard (`vocabulary_parity_wp05_test.go`) parses each closed vocabulary out of
+the migrations per table and compares it against the Go list that must agree, in both directions. It
+checks itself: it asserts the parser finds a known value, that per-table parsing keeps two `status`
+columns apart, and that a mismatch, a duplicate and an unreadable column are each reported rather
+than silently passing.
+
+## The three documented vocabulary conflicts
+
+All three were resolved in favour of the PRD's spellings with the reasoning recorded in the
+migration headers, the package docs and ADR-0007, and each is pinned by a test that asserts the
+rejected spellings stay rejected. The quality-gate stage keys are deliberately left unpinned
+because choosing between the two documented lists belongs to WP-07.
+
+## Defects found by review and fixed before this record
+
+Two independent reviews ran. A spec review found four blockers; three were real gaps against
+WP-05's own acceptance bullets.
+
+1. **Projection had no writer.** Nodes carried entity-reference columns and nothing in the product
+   ever filled them, so AC-CANVAS-001 was untestable. `CreateCanvasProjection`,
+   `RemoveCanvasProjection` and `FindEntityReferences` were added.
+2. **A required reference did not block a delete.** `canvas_edges.required` was stored and never
+   read. `DeleteNodes` now refuses the batch and names the blocking edges.
+3. **`CreateEdge` stored any registered relation without checking endpoints.** It now runs the
+   registry, refuses an illegal edge, and writes the verdict to `validation_status`.
+4. **The approved-uniqueness test covered 3 of 8 families**, so weakening five of the eight indexes
+   left the suite green. All eight are covered now.
+
+The spec review also found a correctness bug in the registry: `requires_version` demanded a version
+on both endpoints, which made `uses_character` and `first_frame_of` unsatisfiable because a shot has
+no version column. It now requires the version only on the versioned side.
+
+A quality review then ran twelve mutation probes. Ten were caught. The two that were not:
+
+- `ApproveVersion`'s supersede step had no test at all — the application assets package had no
+  service test and there was no assets integration test. `assets_wp05_test.go` now covers it plus
+  the approval preconditions, the impact list, lineage and usage.
+- The locked-rule service test also exercised the lock-change guard, so removing `CanModify` left it
+  passing. An isolating test was added.
+
+Both reviews' remaining findings were also addressed: two dead functions were removed or their
+comments corrected to say plainly that nothing calls them yet, and two hardcoded wizard
+placeholders became i18n keys.
+
+## Known limits and deferred work
+
+- **The E2E suite cannot cover the with-core path.** A browser has no Go core, so creating a project,
+  listing episodes and reading projections are verified at the application and database layers and
+  by the binding tests, not end to end. The E2E spec says so rather than mocking the bindings, which
+  would test a fiction. A desktop-driven suite is the only way to close this.
+- **Domain events (§17) are not implemented.** The workflow service writes a `workflow_events` audit
+  row per state change, which satisfies PRD FR-100, but the §17 event stream and its envelope are
+  absent. Scope item 11 is therefore one third delivered: commands and queries are there, events are
+  not. This is the largest single gap this package leaves.
+- **Six of the eight version families have no approval command.** Only script versions, asset
+  versions and storyboard panels can be approved. Skeleton, strategy, style guide, director plan and
+  storyboard version rows can hold `approved` only if something else writes it, which nothing does.
+- **§19's integrity checks are not implemented.** The code comments in the workflow domain point at
+  a check that does not exist yet; §19 was not in WP-05's scope, but the reference is a promise the
+  next package should keep or remove.
+- **`IsContentFrozen` has no caller.** No version-edit command exists in WP-05, so §2.5's
+  "批准后不可原地编辑" is not enforced anywhere. The predicate is in place for the first edit
+  command and its comment says so.
+- **Dialogue lines, story entity aliases and fact sources have tables, domain types and validation
+  but no command.** Their writers are WP-06's extraction pipeline and WP-08's script path.
+- **`asset_usages` other than the ones the asset commands write** are populated by nothing else yet;
+  the shot and panel commands that would record a reference belong to WP-08/WP-09.
+- **The studio's story-graph section cannot list entities**: `DramaBinding` exposes creation,
+  acceptance and rejection but no list query, so the section states the gap rather than showing an
+  empty table it cannot fill.
+- `LoadCanvas` returns a project's oldest canvas document. For a wizard-created drama project that is
+  its drama canvas; for a migrated project with pre-existing documents it may be another one.
+- ADR-0002 remains **Proposed**, as WP-04 left it. WP-05 followed the migration contract it records
+  but did not change its status.
+- `docs/adr/README.md`'s index lists ADR-0002 as Accepted while the file itself says Proposed. The
+  index was extended with 0007 and 0008 but this pre-existing discrepancy was not silently changed.
+- Real paid providers were never contacted; every test uses synthetic fixtures and temporary
+  databases.
+
+## Git and data safety
+
+- Existing user changes preserved: **yes**.
+- Automatic commit/push/stash/reset/clean: **none**.
+- Secrets found or introduced: **none**; the scanner passes over 365 files.
+- Migrations executed against user data: **none**. `000006`–`000012` ran only against temporary test
+  databases. The `000009` rebuild of the asset tables is covered by an upgrade test that seeds
+  WP-04-shaped rows first and asserts every row, id and status mapping survives, that
+  `PRAGMA foreign_key_check` is clean, and that a second run is a no-op.
+- Every mutation probe run during review was restored, and the working tree was verified clean
+  afterwards.
 
 ---
 
