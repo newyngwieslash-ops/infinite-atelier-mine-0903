@@ -196,19 +196,20 @@ func TestValidateEdgeRelationRejectsIllegalEndpoints(t *testing.T) {
 			why:  "a semantic relation needs an entity at both ends",
 		},
 		{
-			name: "a relation that requires versions but names none",
+			name: "a versioned endpoint that names no version",
 			request: EdgeValidationRequest{
 				RelationType: "uses_character",
-				From: EdgeEndpoint{
-					NodeID: "node-shot", EntityType: EntityShot, EntityID: "shot-1", ProjectID: "project-1",
-				},
+				From:         valid,
 				To: EdgeEndpoint{
+					// An asset_version with no version id: the entity kind is
+					// versioned, so omitting its version leaves the relation
+					// unable to say WHICH costume the shot uses.
 					NodeID: "node-asset", EntityType: EntityAssetVersion,
-					EntityID: "av-1", EntityVersionID: "av-1", ProjectID: "project-1",
+					EntityID: "av-1", ProjectID: "project-1",
 				},
 			},
 			want: EdgeInvalid,
-			why:  "a character use must name the costume or appearance version it means",
+			why:  "an asset version must name its version",
 		},
 		{
 			name: "two entities from different projects",
@@ -234,6 +235,51 @@ func TestValidateEdgeRelationRejectsIllegalEndpoints(t *testing.T) {
 				t.Fatal("a rejected edge must explain itself")
 			}
 		})
+	}
+}
+
+// TestValidateEdgeRelationAcceptsAVersionOnTheVersionedSideOnly covers the rule
+// that the version demand applies where versions exist.
+//
+// A shot has no version column (§7.8), so demanding a version of it would make
+// `uses_character` — the relation PRD FR-130 exists for — impossible to satisfy:
+// every shot-to-costume link would be rejected. The asset side is where the
+// version lives, and it is still required there.
+func TestValidateEdgeRelationAcceptsAVersionOnTheVersionedSideOnly(t *testing.T) {
+	shot := EdgeEndpoint{
+		// No EntityVersionID: a shot is not versioned.
+		NodeID: "node-shot", EntityType: EntityShot, EntityID: "shot-1", ProjectID: "project-1",
+	}
+	costume := EdgeEndpoint{
+		NodeID: "node-costume", EntityType: EntityAssetVersion,
+		EntityID: "av-1", EntityVersionID: "av-1-v3", ProjectID: "project-1",
+	}
+	result := ValidateEdgeRelation(EdgeValidationRequest{
+		RelationType: "uses_character", From: shot, To: costume,
+	})
+	if result.Status != EdgeValid {
+		t.Fatalf("a shot using a costume version must be valid, got %q (%s)", result.Status, result.Reason)
+	}
+	// first_frame_of is the same shape: the frame carries the version, the shot
+	// does not. It was equally unusable before the rule was made per-endpoint.
+	frame := EdgeEndpoint{
+		NodeID: "node-frame", EntityType: EntityAssetVersion,
+		EntityID: "av-frame", EntityVersionID: "av-frame-v1", ProjectID: "project-1",
+	}
+	result = ValidateEdgeRelation(EdgeValidationRequest{
+		RelationType: "first_frame_of", From: frame, To: shot,
+	})
+	if result.Status != EdgeValid {
+		t.Fatalf("a first-frame version pointing at a shot must be valid, got %q (%s)", result.Status, result.Reason)
+	}
+	// A relation whose versioned side names nothing is still refused.
+	result = ValidateEdgeRelation(EdgeValidationRequest{
+		RelationType: "first_frame_of",
+		From:         EdgeEndpoint{NodeID: "node-frame", EntityType: EntityAssetVersion, EntityID: "av-frame", ProjectID: "project-1"},
+		To:           shot,
+	})
+	if result.Status != EdgeInvalid {
+		t.Fatalf("a frame version without its version must be refused, got %q", result.Status)
 	}
 }
 

@@ -99,10 +99,19 @@ func ValidateEdgeRelation(request EdgeValidationRequest) EdgeValidationResult {
 		}
 	}
 	if definition.RequiresVersion {
-		if strings.TrimSpace(request.From.EntityVersionID) == "" || strings.TrimSpace(request.To.EntityVersionID) == "" {
+		// The version is required on the side that HAS versions, not on both.
+		// §10.2's rule is "version_id 必须属于 entity": naming a version is only
+		// possible for an entity that is versioned, and requiring it of both ends
+		// would make the flagship relations unsatisfiable — a shot has no version
+		// column, so `uses_character` from a shot to a costume version could
+		// never validate, and neither could `first_frame_of` from a frame version
+		// to a shot. The entity id is still required at both ends (checked above),
+		// so the relation remains addressable; it is the *version* that is
+		// demanded only where one exists.
+		if !versionedEndpoint(request.From) && !versionedEndpoint(request.To) {
 			return EdgeValidationResult{
 				Status: EdgeInvalid,
-				Reason: "This connection must name the versions it relates.",
+				Reason: "This connection must name the version it relates.",
 			}
 		}
 	}
@@ -113,4 +122,32 @@ func ValidateEdgeRelation(request EdgeValidationRequest) EdgeValidationResult {
 		}
 	}
 	return EdgeValidationResult{Status: EdgeValid}
+}
+
+// versionedEndpoint reports whether an endpoint projects something that has
+// versions.
+//
+// The set is the versioned families of DOMAIN_MODEL §2.5 plus the free canvas's
+// versioned artifacts. A shot, a scene and a story event are not in it: §7.8 and
+// §6.3 give them no version column, so demanding a version of them would demand
+// something they cannot hold.
+//
+// The list is deliberately a whitelist rather than a blacklist. A new versioned
+// entity type that is not added here will have its version demand relaxed, which
+// shows up as a missing check in a test; the opposite mistake would make a whole
+// relation unusable, which is what this fixes.
+func versionedEndpoint(endpoint EdgeEndpoint) bool {
+	switch endpoint.EntityType {
+	case EntityAssetVersion,
+		EntityScriptVersion,
+		EntityStoryboardVersion,
+		EntityStoryboardPanel,
+		EntityStyleGuide,
+		EntityStorySkeleton,
+		EntityAdaptationStrat,
+		EntityDirectorPlan:
+		return strings.TrimSpace(endpoint.EntityVersionID) != ""
+	default:
+		return false
+	}
 }
