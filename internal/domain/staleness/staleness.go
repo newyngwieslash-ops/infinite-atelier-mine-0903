@@ -11,13 +11,17 @@
 // informational, and the regeneration workflows, belong to WP-07 and WP-10.
 // What is here is the "stale 传播基础" the roadmap asks WP-05 for.
 //
+// This package deliberately does NOT restate section 15.2's re-review rule. That
+// rule — a stale artifact cannot be approved again without going back through
+// review — is enforced once, by versioning.CanApprove, which is the function the
+// approval commands actually call. A second copy here would be a rule the
+// product never runs and a standing drift risk against the first.
+//
 // The package performs no I/O and never mints an identifier (ADR-0005).
 package staleness
 
 import (
 	"strings"
-
-	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/versioning"
 )
 
 // ArtifactType names a node of the section 15.2 chain.
@@ -318,31 +322,6 @@ func (m Mark) Validate() error {
 		if strings.TrimSpace(m.WaivedReason) == "" {
 			return InvalidError("A waiver must record why the stale artifact was kept.")
 		}
-	}
-	return nil
-}
-
-// ValidateReReview reports whether a status change on a stale artifact respects
-// section 15.2's re-review requirement.
-//
-// This is where the staleness package and the version vocabulary meet: a
-// review_required or breaking mark means the artifact cannot simply be declared
-// current again, so the only route back to approved runs through under_review.
-func ValidateReReview(mark Mark, from, to versioning.Status) error {
-	if mark.ClearedAt != "" {
-		// The mark no longer applies, so it does not constrain the transition.
-		return nil
-	}
-	if mark.Severity == SeverityInformational {
-		return nil
-	}
-	if mark.Waived {
-		// A waived mark still shows in the final review, but it does not block
-		// the artifact from being worked on.
-		return nil
-	}
-	if to == versioning.StatusApproved && from == versioning.StatusStale {
-		return ConflictError("A stale artifact must be re-reviewed before it can be approved again.")
 	}
 	return nil
 }

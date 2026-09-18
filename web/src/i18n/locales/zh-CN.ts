@@ -1282,6 +1282,8 @@ export default {
             stepBasics: "基本信息",
             stepSettings: "剧集设置",
             name: "项目名称",
+            aspectRatioPlaceholder: "例如：9:16",
+            resolutionPlaceholder: "例如：1080x1920",
             namePlaceholder: "例如：夜航星",
             nameRequired: "请填写项目名称。",
             language: "语言",

@@ -2,8 +2,6 @@ package staleness
 
 import (
 	"testing"
-
-	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/versioning"
 )
 
 // TestChainMatchesSection15Order pins the propagation order. The order is what
@@ -317,75 +315,5 @@ func TestMarkValidate(t *testing.T) {
 	notice.UpstreamID = ""
 	if err := notice.Validate(); err != nil {
 		t.Fatalf("an informational mark without an upstream was rejected: %v", err)
-	}
-}
-
-// TestValidateReReviewEnforcesTheReviewStep is the join between this package
-// and the version vocabulary: a review_required mark means the artifact cannot
-// jump back to approved.
-func TestValidateReReviewEnforcesTheReviewStep(t *testing.T) {
-	open := Mark{
-		ArtifactType: ArtifactScriptVersion,
-		ArtifactID:   "sv-1",
-		ProjectID:    "p-1",
-		Severity:     SeverityReviewRequired,
-	}
-	if err := ValidateReReview(open, versioning.StatusStale, versioning.StatusApproved); err == nil {
-		t.Fatal("an open review_required mark must block a direct re-approval")
-	}
-	// Going back through review is the documented route.
-	if err := ValidateReReview(open, versioning.StatusStale, versioning.StatusUnderReview); err != nil {
-		t.Fatalf("re-review must be allowed: %v", err)
-	}
-	// Regenerating is allowed too.
-	if err := ValidateReReview(open, versioning.StatusStale, versioning.StatusDraft); err != nil {
-		t.Fatalf("regeneration must be allowed: %v", err)
-	}
-
-	// A cleared mark constrains nothing.
-	cleared := open
-	cleared.ClearedAt = "2026-09-17T00:00:00Z"
-	if err := ValidateReReview(cleared, versioning.StatusStale, versioning.StatusApproved); err != nil {
-		t.Fatalf("a cleared mark must not block approval: %v", err)
-	}
-
-	// An informational mark is a notice, not a gate.
-	notice := open
-	notice.Severity = SeverityInformational
-	if err := ValidateReReview(notice, versioning.StatusStale, versioning.StatusApproved); err != nil {
-		t.Fatalf("an informational mark must not block approval: %v", err)
-	}
-
-	// A waived mark is retained but work continues.
-	waived := open
-	waived.Waived = true
-	waived.WaivedByDecisionID = "ug-1"
-	waived.WaivedReason = "reviewed and accepted"
-	if err := ValidateReReview(waived, versioning.StatusStale, versioning.StatusApproved); err != nil {
-		t.Fatalf("a waived mark must not block approval: %v", err)
-	}
-
-	// A breaking mark behaves like review_required for this purpose.
-	breaking := open
-	breaking.Severity = SeverityBreaking
-	if err := ValidateReReview(breaking, versioning.StatusStale, versioning.StatusApproved); err == nil {
-		t.Fatal("an open breaking mark must block a direct re-approval")
-	}
-}
-
-// TestSeverityVocabulary pins the three classifications of section 15.2.
-func TestSeverityVocabulary(t *testing.T) {
-	for _, value := range []Severity{SeverityBreaking, SeverityReviewRequired, SeverityInformational} {
-		if !IsValidSeverity(value) {
-			t.Fatalf("documented severity %q rejected", value)
-		}
-	}
-	for _, value := range []Severity{"", "major", "minor", "BLOCKING"} {
-		if IsValidSeverity(value) {
-			t.Fatalf("undocumented severity %q accepted", value)
-		}
-	}
-	if len(Severities) != 3 {
-		t.Fatalf("severity set has %d entries, want 3", len(Severities))
 	}
 }

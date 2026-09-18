@@ -85,6 +85,13 @@ func IsValidCreatedByType(value CreatedByType) bool {
 // analyses, so rewriting it would silently invalidate every reference to it.
 // Superseded content is frozen for the same reason: it stays readable as the
 // thing that was in force before.
+//
+// NO COMMAND CALLS THIS YET, and that is a known gap rather than an oversight:
+// WP-05 exposes no version-edit command at all, so every version is created once
+// and only its status moves. The predicate is here because the rule belongs to
+// this vocabulary and the first edit command must consult it; a reader should
+// not mistake its presence for enforcement. WP-08 introduces the script-edit
+// path that will call it.
 func IsContentFrozen(status Status) bool {
 	return status == StatusApproved || status == StatusSuperseded
 }

@@ -243,11 +243,11 @@ export function DramaCreateWizard({ open, onClose, onCreated }: DramaCreateWizar
                             </label>
                             <label className="block">
                                 <span className="mb-1 block text-sm">{t("studio.wizard.aspectRatio")}</span>
-                                <Input value={draft.aspectRatio} maxLength={500} placeholder="9:16" onChange={(event) => patch("aspectRatio", event.target.value)} />
+                                <Input value={draft.aspectRatio} maxLength={500} placeholder={t("studio.wizard.aspectRatioPlaceholder")} onChange={(event) => patch("aspectRatio", event.target.value)} />
                             </label>
                             <label className="block">
                                 <span className="mb-1 block text-sm">{t("studio.wizard.resolution")}</span>
-                                <Input value={draft.resolution} maxLength={500} placeholder="1080x1920" onChange={(event) => patch("resolution", event.target.value)} />
+                                <Input value={draft.resolution} maxLength={500} placeholder={t("studio.wizard.resolutionPlaceholder")} onChange={(event) => patch("resolution", event.target.value)} />
                             </label>
                             <label className="block">
                                 <span className="mb-1 block text-sm">{t("studio.wizard.expectedEpisodeCount")}</span>

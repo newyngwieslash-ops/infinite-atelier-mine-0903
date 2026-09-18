@@ -1283,6 +1283,8 @@ export default {
             stepBasics: "Basics",
             stepSettings: "Series settings",
             name: "Project name",
+            aspectRatioPlaceholder: "e.g. 9:16",
+            resolutionPlaceholder: "e.g. 1080x1920",
             namePlaceholder: "e.g. Night Flight",
             nameRequired: "A project name is required.",
             language: "Language",

@@ -439,3 +439,51 @@ func TestSettingsCommandsFailClosedWithoutTheRepository(t *testing.T) {
 		t.Fatalf("the free canvas path must keep working: %v", err)
 	}
 }
+
+// TestAgentCannotEditALockedRuleWithoutTouchingTheLock isolates the locked-rule
+// guard from the lock-change guard.
+//
+// UpdateRule has three protections that can all refuse an agent: Rule.CanModify,
+// CanEscalate, and the rule that only a user may change the lock. The broader
+// test exercises the lock change, so it would still pass if CanModify were
+// removed. Here the agent keeps the lock flag exactly as it is and only edits
+// the content, which leaves CanModify as the sole thing standing in the way —
+// so removing it fails this test and nothing else.
+func TestAgentCannotEditALockedRuleWithoutTouchingTheLock(t *testing.T) {
+	service, _, _ := openWP05SettingsService(t)
+	ctx := context.Background()
+	record, err := service.CreateDramaProject(ctx, projects.CreateDramaProjectRequest{Name: "Isolation"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rule, err := service.CreateRule(ctx, projects.CreateRuleRequest{
+		ProjectID: record.ID, Category: project.RuleCharacter, Name: "original",
+		Strength: project.RuleRequired, Writer: project.WriterUser,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	locked, err := service.UpdateRule(ctx, projects.UpdateRuleRequest{
+		RuleID: rule.ID, Name: rule.Name, Strength: rule.Strength, Status: rule.Status,
+		Writer: project.WriterUser, LockedByUser: true, Revision: rule.Revision,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The lock flag is unchanged, so only CanModify applies.
+	if _, err := service.UpdateRule(ctx, projects.UpdateRuleRequest{
+		RuleID: locked.ID, Name: "renamed by an agent", Strength: locked.Strength,
+		Status: locked.Status, Writer: project.WriterAgent,
+		LockedByUser: true, Revision: locked.Revision,
+	}); err == nil {
+		t.Fatal("an agent edited a locked rule's content")
+	}
+	// The content is untouched.
+	rules, err := service.ListRules(ctx, record.ID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rules) != 1 || rules[0].Name != "original" {
+		t.Fatalf("the refused edit changed the rule: %+v", rules)
+	}
+}
