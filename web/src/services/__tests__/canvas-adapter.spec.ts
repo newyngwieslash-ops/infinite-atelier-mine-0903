@@ -149,3 +149,95 @@ test("job identity still scopes a batch write", () => {
     assert.equal(scope.entityId, "n#3");
     assert.equal(scope.projectId, "p");
 });
+
+test("a node's entity reference survives the write and the read", async () => {
+    // AC-CANVAS-001: "Node 有 entity refs". Domain projection nodes carry the
+    // entity they project, and the schema's CHECK requires both halves together,
+    // so a write that dropped them would make a projection indistinguishable
+    // from a decorative node.
+    const { toNodeWrite, toCanvasNode } = await import("../desktop/canvas-adapter-go");
+
+    const projection = {
+        id: "node-1",
+        type: "scene" as const,
+        title: "Scene 1",
+        position: { x: 10, y: 20 },
+        width: 300,
+        height: 200,
+        entityType: "scene",
+        entityId: "scene-42",
+    };
+    const written = toNodeWrite(projection, "doc-1", 3);
+    assert.equal(written.entityType, "scene");
+    assert.equal(written.entityId, "scene-42");
+
+    // The reference comes back out of its own columns, not out of metadata.
+    const read = toCanvasNode({
+        id: "node-1",
+        nodeType: "scene",
+        title: "Scene 1",
+        entityType: "scene",
+        entityId: "scene-42",
+        positionX: 10,
+        positionY: 20,
+        width: 300,
+        height: 200,
+        zIndex: 0,
+        revision: 4,
+    } as never);
+    assert.equal(read.entityType, "scene");
+    assert.equal(read.entityId, "scene-42");
+
+    // A free canvas node projects nothing, and must not acquire a reference.
+    const free = toNodeWrite(
+        { id: "node-2", type: "text", title: "note", position: { x: 0, y: 0 }, width: 100, height: 50 },
+        "doc-1",
+    );
+    assert.equal(free.entityType, undefined);
+    assert.equal(free.entityId, undefined);
+
+    // A half reference is refused here rather than sent to fail the CHECK.
+    const half = toNodeWrite(
+        { id: "node-3", type: "scene", title: "half", position: { x: 0, y: 0 }, width: 100, height: 50, entityType: "scene" },
+        "doc-1",
+    );
+    assert.equal(half.entityType, undefined, "a reference without an id must not be sent");
+    assert.equal(half.entityId, undefined);
+});
+
+test("an edge keeps its relation type and the registry's verdict", async () => {
+    // AC-CANVAS-002: "Edge 不是仅 UI 线". The meaning and the validation status
+    // are what make it more than a line, so both must survive the round trip.
+    const { toCanvasConnection } = await import("../desktop/canvas-adapter-go");
+
+    const edge = toCanvasConnection({
+        id: "edge-1",
+        fromNodeId: "node-1",
+        toNodeId: "node-2",
+        relationType: "references",
+        fromPort: "character_reference",
+        toPort: "",
+        required: true,
+        validationStatus: "valid",
+        revision: 2,
+    } as never);
+    assert.equal(edge.relationType, "references");
+    assert.equal(edge.fromPort, "character_reference");
+    assert.equal(edge.required, true);
+    assert.equal(edge.validationStatus, "valid");
+
+    // An imported untyped link stays generic rather than being upgraded: PRD
+    // FR-130 requires it to survive as generic, and calling it valid would
+    // claim a check that never ran.
+    const legacy = toCanvasConnection({
+        id: "edge-2",
+        fromNodeId: "a",
+        toNodeId: "b",
+        relationType: "generic",
+        required: false,
+        validationStatus: "unknown",
+        revision: 1,
+    } as never);
+    assert.equal(legacy.relationType, "generic");
+    assert.equal(legacy.validationStatus, "unknown");
+});

@@ -9,6 +9,8 @@ import DirectorPage from "@/pages/director";
 import HomePage from "@/pages/home";
 import JobsPage from "@/pages/jobs";
 import NotFound from "@/pages/not-found";
+import StudioPage from "@/pages/studio";
+import StudioProjectPage from "@/pages/studio/project";
 
 export const router = createBrowserRouter([
     {
@@ -19,6 +21,8 @@ export const router = createBrowserRouter([
         ),
         children: [
             { path: "/", element: <HomePage /> },
+            { path: "/studio", element: <StudioPage /> },
+            { path: "/studio/:id", element: <StudioProjectPage /> },
             { path: "/assets", element: <AssetsPage /> },
             { path: "/canvas", element: <CanvasPage /> },
             { path: "/canvas/:id", element: <CanvasProjectPage /> },

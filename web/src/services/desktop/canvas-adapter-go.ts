@@ -68,11 +68,11 @@ export class GoCanvasAdapter implements CanvasPersistenceAdapter {
         }
         const documentId = snapshot.documentId;
         const nodes = snapshot.nodes.map(toCanvasNode);
-        const connections = snapshot.edges.map((edge) => ({
-            id: edge.id,
-            fromNodeId: edge.fromNodeId,
-            toNodeId: edge.toNodeId,
-        }));
+        // The relation type and the registry's verdict travel with the edge.
+        // PRD FR-130 requires a legacy untyped link to survive as "generic", and
+        // AC-CANVAS-002 requires an edge to be more than a UI line, which is only
+        // observable if the meaning and the validation status come back.
+        const connections = snapshot.edges.map(toCanvasConnection);
         const chatSessions = snapshot.chatSessions.map((session) => toChatSession(session, documentId));
         const background = snapshot.background ?? "";
         return {
@@ -174,6 +174,14 @@ export class GoCanvasAdapter implements CanvasPersistenceAdapter {
                     documentId,
                     fromNodeId: connection.fromNodeId,
                     toNodeId: connection.toNodeId,
+                    // The type travels with the edge. Omitting it would let the
+                    // core default every new link to "generic", which discards
+                    // the meaning the user chose and makes the relation registry
+                    // unreachable from the canvas.
+                    relationType: connection.relationType ?? "",
+                    fromPort: connection.fromPort ?? "",
+                    toPort: connection.toPort ?? "",
+                    required: connection.required ?? false,
                 }),
             );
             if (created) {
@@ -255,11 +263,17 @@ function emptyProject(id: string, title: string, createdAt: string, updatedAt: s
  * The display fields come back out of `uiState`, which is where they were put;
  * the rest of the legacy metadata is merged into `metadata` so a canvas that was
  * migrated from the browser store renders exactly as it did there.
+ *
+ * The entity reference is carried through rather than dropped. DOMAIN_MODEL
+ * §10.2 makes the entity_type/entity_id pair what a projection *is*, and
+ * PRD FR-130 makes it what a semantic edge relates, so a node that came back
+ * without it would be indistinguishable from a decorative one — which is
+ * exactly what AC-CANVAS-001's "Node 有 entity refs" checks.
  */
 export function toCanvasNode(node: desktop.CanvasNodeDTO): CanvasNodeData {
     const display = parseObject(node.uiState) ?? {};
     const legacy = parseObject(node.legacyMetadata) ?? {};
-    return {
+    const result: CanvasNodeData = {
         id: node.id,
         type: node.nodeType,
         title: node.title,
@@ -268,6 +282,9 @@ export function toCanvasNode(node: desktop.CanvasNodeDTO): CanvasNodeData {
         height: node.height,
         metadata: { ...legacy, ...display },
     };
+    if (node.entityType) result.entityType = node.entityType;
+    if (node.entityId) result.entityId = node.entityId;
+    return result;
 }
 
 /**
@@ -278,6 +295,12 @@ export function toCanvasNode(node: desktop.CanvasNodeDTO): CanvasNodeData {
  * and the second into `legacyMetadata`, which exists to be preserved. Splitting
  * them is what lets a future field be added to Go without stranding the fields
  * that only the canvas understands.
+ *
+ * The entity reference travels as its own columns rather than inside
+ * `legacyMetadata`, because the schema enforces the pair as a CHECK and the
+ * relation registry reads it: a reference buried in JSON would satisfy neither.
+ * Both halves are sent together or not at all, which is the same invariant the
+ * database states.
  */
 export function toNodeWrite(node: CanvasNodeData, documentId: string, revision?: number): desktop.UpsertNodeRequest {
     const metadata = node.metadata ?? {};
@@ -290,7 +313,7 @@ export function toNodeWrite(node: CanvasNodeData, documentId: string, revision?:
             retained[key] = value;
         }
     }
-    return {
+    const payload: desktop.UpsertNodeRequest = {
         id: node.id,
         documentId,
         nodeType: String(node.type),
@@ -304,6 +327,36 @@ export function toNodeWrite(node: CanvasNodeData, documentId: string, revision?:
         legacyMetadata: JSON.stringify(retained),
         revision: revision ?? 0,
     } as desktop.UpsertNodeRequest;
+    // A half reference would be rejected by the schema's CHECK, so it is
+    // dropped here rather than sent to fail.
+    if (node.entityType && node.entityId) {
+        payload.entityType = node.entityType;
+        payload.entityId = node.entityId;
+    }
+    return payload;
+}
+
+/**
+ * toCanvasConnection rebuilds a canvas connection from its stored edge.
+ *
+ * The relation type is reported as the core stored it, and `validationStatus`
+ * alongside it. Neither is invented here: a legacy untyped link comes back as
+ * "generic" because that is what migration 000004 wrote for it, and an edge the
+ * registry has not judged comes back as "unknown" rather than being upgraded to
+ * "valid" by the client.
+ */
+export function toCanvasConnection(edge: desktop.CanvasEdgeDTO): CanvasConnection {
+    const connection: CanvasConnection = {
+        id: edge.id,
+        fromNodeId: edge.fromNodeId,
+        toNodeId: edge.toNodeId,
+    };
+    if (edge.relationType) connection.relationType = edge.relationType;
+    if (edge.fromPort) connection.fromPort = edge.fromPort;
+    if (edge.toPort) connection.toPort = edge.toPort;
+    if (edge.required) connection.required = edge.required;
+    if (edge.validationStatus) connection.validationStatus = edge.validationStatus;
+    return connection;
 }
 
 /** toChatSession converts a stored chat session into the canvas shape. */
