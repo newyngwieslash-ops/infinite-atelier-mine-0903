@@ -7,8 +7,12 @@ import (
 )
 
 func TestTypeVocabulary(t *testing.T) {
-	if len(Types) != 9 {
-		t.Fatalf("registry has %d types, want the 9 documented in DOMAIN_MODEL §8.1", len(Types))
+	// The set is the union of DOMAIN_MODEL §8.1's nine general kinds and PRD
+	// FR-050's production kinds. Four names are in both lists, FR-050 adds four
+	// more, and §8.1 keeps its image/video/audio/doc. ADR-0007 records why
+	// 'style' and 'style_reference' are two entries rather than one.
+	if len(Types) != 13 {
+		t.Fatalf("registry has %d types, want the 13 of §8.1 plus FR-050", len(Types))
 	}
 	seen := map[Type]bool{}
 	for _, value := range Types {
@@ -20,7 +24,14 @@ func TestTypeVocabulary(t *testing.T) {
 			t.Fatalf("registry entry %q does not validate", value)
 		}
 	}
-	for _, value := range []Type{"", "sound", "Character", "image "} {
+	// Every FR-050 production type must be storable, because the asset bible
+	// cannot hold a vehicle or a derived asset otherwise.
+	for _, value := range []Type{TypeVehicle, TypeCreature, TypeStyleReference, TypeDerivedAsset} {
+		if !IsValidType(value) {
+			t.Fatalf("PRD FR-050 type %q is not storable", value)
+		}
+	}
+	for _, value := range []Type{"", "sound", "Character", "image ", "style-reference"} {
 		if IsValidType(value) {
 			t.Fatalf("undocumented asset type %q accepted", value)
 		}
@@ -51,12 +62,12 @@ func TestStatusAndProducerVocabulary(t *testing.T) {
 }
 
 func TestVersionStatusVocabulary(t *testing.T) {
-	for _, value := range []VersionStatus{VersionDraft, VersionReview, VersionApproved, VersionRejected, VersionSuperseded, VersionStale} {
+	for _, value := range []VersionStatus{VersionDraft, VersionCandidate, VersionUnderReview, VersionApproved, VersionRejected, VersionSuperseded, VersionDeprecated, VersionStale} {
 		if !IsValidVersionStatus(value) {
 			t.Fatalf("documented version status %q rejected", value)
 		}
 	}
-	for _, value := range []VersionStatus{"", "pending", "APPROVED"} {
+	for _, value := range []VersionStatus{"", "pending", "APPROVED", "review"} {
 		if IsValidVersionStatus(value) {
 			t.Fatalf("undocumented version status %q accepted", value)
 		}
@@ -118,7 +129,7 @@ func TestCanApprove(t *testing.T) {
 		t.Fatal("a version with no committed file was allowed to be approved")
 	}
 
-	base.Status = VersionReview
+	base.Status = VersionUnderReview
 	if err := base.CanApprove(2); err != nil {
 		t.Fatalf("a reviewed version with files was refused approval: %v", err)
 	}
@@ -165,10 +176,15 @@ func TestFileValidate(t *testing.T) {
 			}
 		})
 	}
-	// Every documented role is accepted.
-	for _, role := range []FileRole{RolePrimary, RoleThumbnail, RoleSource, RoleAttachment} {
+	// Every documented role is accepted, including the four WP-04 omitted.
+	for _, role := range FileRoles {
 		if !IsValidFileRole(role) {
 			t.Fatalf("documented role %q rejected", role)
+		}
+	}
+	for _, role := range []FileRole{FileRole("attachment"), FileRole(""), FileRole("Primary")} {
+		if IsValidFileRole(role) {
+			t.Fatalf("undocumented role %q accepted", role)
 		}
 	}
 }

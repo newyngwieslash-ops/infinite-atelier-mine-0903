@@ -10,25 +10,42 @@ package asset
 import (
 	"strings"
 	"time"
+
+	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/versioning"
 )
 
 // Type is the kind of asset a row describes.
+//
+// The set is the union of two specification lists that do not agree. DOMAIN_MODEL
+// section 8.1 lists the nine general kinds (including image, video, audio and
+// doc, which are what a free canvas produces), and PRD FR-050 lists eight
+// production kinds for the asset bible. Character, location, prop and costume
+// are in both. 'style' is section 8.1's generic style asset and
+// 'style_reference' is FR-050's StyleReference; they are different things and
+// both are kept. ADR-0007 records the ruling.
 type Type string
 
 const (
-	TypeCharacter Type = "character"
-	TypeLocation  Type = "location"
-	TypeProp      Type = "prop"
-	TypeCostume   Type = "costume"
-	TypeStyle     Type = "style"
-	TypeImage     Type = "image"
-	TypeVideo     Type = "video"
-	TypeAudio     Type = "audio"
-	TypeDoc       Type = "doc"
+	TypeCharacter      Type = "character"
+	TypeLocation       Type = "location"
+	TypeProp           Type = "prop"
+	TypeCostume        Type = "costume"
+	TypeVehicle        Type = "vehicle"
+	TypeCreature       Type = "creature"
+	TypeStyle          Type = "style"
+	TypeStyleReference Type = "style_reference"
+	TypeDerivedAsset   Type = "derived_asset"
+	TypeImage          Type = "image"
+	TypeVideo          Type = "video"
+	TypeAudio          Type = "audio"
+	TypeDoc            Type = "doc"
 )
 
 // Types lists the documented asset types in the schema's order.
-var Types = []Type{TypeCharacter, TypeLocation, TypeProp, TypeCostume, TypeStyle, TypeImage, TypeVideo, TypeAudio, TypeDoc}
+var Types = []Type{
+	TypeCharacter, TypeLocation, TypeProp, TypeCostume, TypeVehicle, TypeCreature,
+	TypeStyle, TypeStyleReference, TypeDerivedAsset, TypeImage, TypeVideo, TypeAudio, TypeDoc,
+}
 
 // IsValidType reports whether a type may be persisted.
 func IsValidType(value Type) bool {
@@ -95,45 +112,43 @@ func ValidateName(name string) error {
 }
 
 // VersionStatus is the review state of one asset version.
-type VersionStatus string
+//
+// It is an alias of the shared vocabulary rather than a second copy: DOMAIN_MODEL
+// section 2.5 defines one set of statuses for every versioned aggregate, and
+// eight per-family spellings would drift apart. WP-04 declared its own set with
+// 'review' where the specification says 'under_review'; the alias replaces that
+// spelling, which migration 000009 also rewrites in stored rows.
+type VersionStatus = versioning.Status
 
 const (
-	VersionDraft      VersionStatus = "draft"
-	VersionReview     VersionStatus = "review"
-	VersionApproved   VersionStatus = "approved"
-	VersionRejected   VersionStatus = "rejected"
-	VersionSuperseded VersionStatus = "superseded"
-	VersionStale      VersionStatus = "stale"
+	VersionDraft       = versioning.StatusDraft
+	VersionCandidate   = versioning.StatusCandidate
+	VersionUnderReview = versioning.StatusUnderReview
+	VersionApproved    = versioning.StatusApproved
+	VersionRejected    = versioning.StatusRejected
+	VersionSuperseded  = versioning.StatusSuperseded
+	VersionDeprecated  = versioning.StatusDeprecated
+	VersionStale       = versioning.StatusStale
 )
 
 // IsValidVersionStatus reports whether a version status may be persisted.
 func IsValidVersionStatus(value VersionStatus) bool {
-	switch value {
-	case VersionDraft, VersionReview, VersionApproved, VersionRejected, VersionSuperseded, VersionStale:
-		return true
-	default:
-		return false
-	}
+	return versioning.IsValidStatus(value)
 }
 
 // CreatedByType records who produced a version.
-type CreatedByType string
+type CreatedByType = versioning.CreatedByType
 
 const (
-	CreatedByUser      CreatedByType = "user"
-	CreatedByAgent     CreatedByType = "agent"
-	CreatedByMigration CreatedByType = "migration"
-	CreatedBySystem    CreatedByType = "system"
+	CreatedByUser      = versioning.CreatedByUser
+	CreatedByAgent     = versioning.CreatedByAgent
+	CreatedByMigration = versioning.CreatedByMigration
+	CreatedBySystem    = versioning.CreatedBySystem
 )
 
 // IsValidCreatedByType reports whether a producer kind may be persisted.
 func IsValidCreatedByType(value CreatedByType) bool {
-	switch value {
-	case CreatedByUser, CreatedByAgent, CreatedByMigration, CreatedBySystem:
-		return true
-	default:
-		return false
-	}
+	return versioning.IsValidCreatedByType(value)
 }
 
 // Version is one version of an asset.
@@ -199,23 +214,37 @@ func (v Version) CanApprove(fileCount int) error {
 }
 
 // FileRole is what a file contributes to a version.
+//
+// The set is DOMAIN_MODEL section 8.4. WP-04 declared four roles and used
+// 'attachment' where the specification has none; migration 000009 rebuilds the
+// table to this list. first_frame and last_frame are what a storyboard panel
+// needs to describe the two ends of a shot, and mask is what image editing
+// writes.
 type FileRole string
 
 const (
 	RolePrimary    FileRole = "primary"
 	RoleThumbnail  FileRole = "thumbnail"
+	RoleReference  FileRole = "reference"
+	RoleMask       FileRole = "mask"
+	RoleFirstFrame FileRole = "first_frame"
+	RoleLastFrame  FileRole = "last_frame"
 	RoleSource     FileRole = "source"
-	RoleAttachment FileRole = "attachment"
 )
+
+// FileRoles lists the documented roles in the schema's order.
+var FileRoles = []FileRole{
+	RolePrimary, RoleThumbnail, RoleReference, RoleMask, RoleFirstFrame, RoleLastFrame, RoleSource,
+}
 
 // IsValidFileRole reports whether a role may be persisted.
 func IsValidFileRole(value FileRole) bool {
-	switch value {
-	case RolePrimary, RoleThumbnail, RoleSource, RoleAttachment:
-		return true
-	default:
-		return false
+	for _, candidate := range FileRoles {
+		if candidate == value {
+			return true
+		}
 	}
+	return false
 }
 
 // File links a version to a committed object.
@@ -224,9 +253,13 @@ func IsValidFileRole(value FileRole) bool {
 // require paths to be reachable only through the FileStore, so the domain never
 // sees one.
 type File struct {
+	ID        string
 	VersionID string
 	FileHash  string
 	Role      FileRole
+	// Ordinal orders files that share a role, which is what lets a panel list
+	// several reference images in a stable sequence.
+	Ordinal   int
 	CreatedAt time.Time
 }
 
@@ -237,6 +270,9 @@ func (f File) Validate() error {
 	}
 	if !IsValidFileRole(f.Role) {
 		return InvalidError("The file role is not recognised.")
+	}
+	if f.Ordinal < 0 {
+		return InvalidError("A file position cannot be negative.")
 	}
 	// The hash is a SHA-256 hex digest; the schema's foreign key rejects an
 	// uncommitted hash, and this rejects a malformed one earlier.
@@ -250,6 +286,113 @@ func (f File) Validate() error {
 		default:
 			return InvalidError("A file reference needs a content hash.")
 		}
+	}
+	return nil
+}
+
+// RelationType is how one asset version relates to another (DOMAIN_MODEL §8.5).
+type RelationType string
+
+const (
+	// RelationDerivedFrom traces a derived asset to the version it came from,
+	// which is what PRD FR-050's "任何派生资产都能追溯父资产及变换原因" needs.
+	RelationDerivedFrom RelationType = "derived_from"
+	RelationVariantOf   RelationType = "variant_of"
+	RelationReplaces    RelationType = "replaces"
+	RelationReferences  RelationType = "references"
+	RelationSupersedes  RelationType = "supersedes"
+)
+
+// RelationTypes lists the documented lineage relations in the schema's order.
+var RelationTypes = []RelationType{
+	RelationDerivedFrom, RelationVariantOf, RelationReplaces, RelationReferences, RelationSupersedes,
+}
+
+// IsValidRelationType reports whether a lineage relation may be persisted.
+func IsValidRelationType(value RelationType) bool {
+	for _, candidate := range RelationTypes {
+		if candidate == value {
+			return true
+		}
+	}
+	return false
+}
+
+// Relation is one lineage edge between two asset versions.
+type Relation struct {
+	ID                   string
+	SourceAssetVersionID string
+	TargetAssetVersionID string
+	Type                 RelationType
+	CreatedAt            time.Time
+}
+
+// Validate checks the shape of a lineage edge.
+func (r Relation) Validate() error {
+	if strings.TrimSpace(r.SourceAssetVersionID) == "" || strings.TrimSpace(r.TargetAssetVersionID) == "" {
+		return InvalidError("A lineage relation needs both ends.")
+	}
+	if r.SourceAssetVersionID == r.TargetAssetVersionID {
+		return InvalidError("An asset version cannot derive from itself.")
+	}
+	if !IsValidRelationType(r.Type) {
+		return InvalidError("The lineage relation type is not recognised.")
+	}
+	return nil
+}
+
+// ConsumerType is what uses an asset version (DOMAIN_MODEL §8.6).
+type ConsumerType string
+
+const (
+	ConsumerProjectStyle   ConsumerType = "project_style"
+	ConsumerScene          ConsumerType = "scene"
+	ConsumerShot           ConsumerType = "shot"
+	ConsumerStoryboardPane ConsumerType = "storyboard_panel"
+	ConsumerJob            ConsumerType = "job"
+	ConsumerExport         ConsumerType = "export"
+)
+
+// ConsumerTypes lists the documented consumers in the schema's order.
+var ConsumerTypes = []ConsumerType{
+	ConsumerProjectStyle, ConsumerScene, ConsumerShot, ConsumerStoryboardPane, ConsumerJob, ConsumerExport,
+}
+
+// IsValidConsumerType reports whether a consumer kind may be persisted.
+func IsValidConsumerType(value ConsumerType) bool {
+	for _, candidate := range ConsumerTypes {
+		if candidate == value {
+			return true
+		}
+	}
+	return false
+}
+
+// Usage records that something uses an asset version.
+//
+// Required is what makes a deletion safe to refuse: a required usage is a
+// dependency the consumer cannot render without, so removing the version would
+// break it.
+type Usage struct {
+	ID             string
+	AssetVersionID string
+	ConsumerType   ConsumerType
+	ConsumerID     string
+	UsageRole      string
+	Required       bool
+	CreatedAt      time.Time
+}
+
+// Validate checks the shape of a usage row.
+func (u Usage) Validate() error {
+	if strings.TrimSpace(u.AssetVersionID) == "" {
+		return InvalidError("A usage must name an asset version.")
+	}
+	if !IsValidConsumerType(u.ConsumerType) {
+		return InvalidError("The consumer type is not recognised.")
+	}
+	if strings.TrimSpace(u.ConsumerID) == "" {
+		return InvalidError("A usage must name what consumes the asset.")
 	}
 	return nil
 }
