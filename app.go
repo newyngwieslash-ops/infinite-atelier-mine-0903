@@ -41,11 +41,17 @@ type app struct {
 	projectsBinding     *desktop.ProjectsBinding
 	legacyUploadBinding *desktop.LegacyUploadBinding
 	backupBinding       *desktop.BackupBinding
-	providerWiring      *providerWiring
-	jobWiring           *jobWiring
-	projectWiring       *projectWiring
-	emit                func(context.Context, string, ...interface{})
-	newEnvelope         func(string, any) (desktop.Envelope, error)
+	// dramaBinding and assetsBinding are the WP-05 surface: the studio reads and
+	// writes the drama aggregates through the first, and the asset bible
+	// through the second.
+	dramaBinding   *desktop.DramaBinding
+	assetsBinding  *desktop.AssetsBinding
+	providerWiring *providerWiring
+	jobWiring      *jobWiring
+	projectWiring  *projectWiring
+	dramaWiring    *dramaWiring
+	emit           func(context.Context, string, ...interface{})
+	newEnvelope    func(string, any) (desktop.Envelope, error)
 }
 
 func newApp(shutdown func(context.Context) error) *app {
@@ -157,6 +163,23 @@ func (a *app) startup(ctx context.Context) {
 				}
 				projectStack.attach(ctx)
 				a.projectWiring = projectStack
+			}
+
+			// The WP-05 drama stack shares the same database. It is composed
+			// separately from the project stack because it owns its own
+			// services, but it fails closed on the same condition: a handle in
+			// safe mode has no SQL pool, so composeDrama returns nil and every
+			// drama method reports unavailable.
+			dramaStack := composeDrama(handle)
+			if dramaStack != nil {
+				if a.dramaBinding != nil {
+					dramaStack.dramaBinding = a.dramaBinding
+				}
+				if a.assetsBinding != nil {
+					dramaStack.assetsBinding = a.assetsBinding
+				}
+				dramaStack.attach(ctx)
+				a.dramaWiring = dramaStack
 			}
 		}
 	}

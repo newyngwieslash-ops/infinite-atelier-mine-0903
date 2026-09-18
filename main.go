@@ -56,6 +56,11 @@ func run() error {
 	application.projectsBinding = &desktop.ProjectsBinding{}
 	application.legacyUploadBinding = desktop.NewLegacyUploadBinding()
 	application.backupBinding = &desktop.BackupBinding{}
+	// The WP-05 drama surface. Like the others it is declared before Wails
+	// starts so it exists on the binding surface; its services are attached
+	// only when startup composes a writable database.
+	application.dramaBinding = &desktop.DramaBinding{}
+	application.assetsBinding = &desktop.AssetsBinding{}
 	application.emit = wailsruntime.EventsEmit
 	shutdown := newShutdownSequence(application.closeDatabase, logger, logCloser.Close, reportIndependent)
 	application.shutdown = shutdown
@@ -85,6 +90,8 @@ func run() error {
 			application.projectsBinding,
 			application.legacyUploadBinding,
 			application.backupBinding,
+			application.dramaBinding,
+			application.assetsBinding,
 		},
 		SingleInstanceLock: &options.SingleInstanceLock{
 			UniqueId: singleInstanceID,
