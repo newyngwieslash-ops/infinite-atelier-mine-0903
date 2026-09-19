@@ -1,0 +1,307 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://infinite-atelier.invalid/schemas/agent/event_extraction.v1.json",
+  "title": "EventExtraction v1",
+  "description": "The result of reading one chapter and proposing story facts. Every array may be empty: a chapter with no discoverable event is a legitimate reading, and an empty result is what a chapter of pure description produces. Nothing here is a decision. Every fact is proposed at status 'candidate' and the status field is deliberately absent, so a model cannot propose its own approval. The importer writes these rows only after this document validates, and a document that fails validation writes nothing at all.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "entities",
+    "events",
+    "relations"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "description": "The contract revision. A consumer refuses a version it does not know rather than guessing, because a field whose meaning changed would otherwise be read with the old meaning.",
+      "type": "integer",
+      "const": 1
+    },
+    "summary": {
+      "description": "One or two sentences describing what happens in the chapter. Recorded for the user's review, never parsed: it is a label on the proposal, not an instruction.",
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 2000
+    },
+    "entities": {
+      "description": "People, places, things and named relations the chapter introduces or refers to.",
+      "type": "array",
+      "maxItems": 200,
+      "items": {
+        "$ref": "#/$defs/entity"
+      }
+    },
+    "events": {
+      "description": "Things that happen in the chapter, in the order they are narrated.",
+      "type": "array",
+      "maxItems": 200,
+      "items": {
+        "$ref": "#/$defs/event"
+      }
+    },
+    "relations": {
+      "description": "How the entities relate, as established by this chapter.",
+      "type": "array",
+      "maxItems": 400,
+      "items": {
+        "$ref": "#/$defs/relation"
+      }
+    }
+  },
+  "$defs": {
+    "ref": {
+      "description": "A reference to an entity proposed in the same document. It is a local key rather than a database identifier, because the model cannot know an identifier the repository has not minted yet. The service resolves each key to the id it generated and refuses a document that names a key nothing defines.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9_-]+$"
+    },
+    "entity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ref",
+        "type",
+        "canonicalName"
+      ],
+      "properties": {
+        "ref": {
+          "$ref": "#/$defs/ref"
+        },
+        "type": {
+          "description": "One of the eight kinds the schema stores. The list is the CHECK constraint in migration 000014 and the EntityTypes list in internal/domain/story, so a value accepted here is a value the database accepts.",
+          "enum": [
+            "character",
+            "location",
+            "organization",
+            "prop",
+            "concept",
+            "time",
+            "relationship",
+            "timeline_marker"
+          ]
+        },
+        "canonicalName": {
+          "description": "The name the graph should prefer.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "aliases": {
+          "description": "Other names the chapter uses for the same entity. The database stores each as a row, so the field is an array rather than a joined string.",
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          }
+        },
+        "summary": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 2000
+        }
+      }
+    },
+    "event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ref",
+        "name"
+      ],
+      "properties": {
+        "ref": {
+          "$ref": "#/$defs/ref"
+        },
+        "name": {
+          "description": "A short label for the event, such as 'Mira finds the letter'. This is story_events.name.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 4000
+        },
+        "eventType": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 100
+        },
+        "storyTimeText": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 200
+        },
+        "storyTimeOrder": {
+          "description": "The event's position in story time, which is not reading order. A flashback is narrated late and happens early. Null when the chapter does not say, and null is meaningful: it means unknown rather than zero.",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "locationRef": {
+          "description": "The ref of a location entity in this document, or null.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ref"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "causeSummary": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 2000
+        },
+        "resultSummary": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 2000
+        },
+        "importance": {
+          "description": "How much the event matters to the story. Empty is allowed and is the common case: a model asked to rate everything rates everything average.",
+          "enum": [
+            "",
+            "minor",
+            "moderate",
+            "major",
+            "critical"
+          ]
+        },
+        "confidence": {
+          "description": "The model's own confidence, 0 to 1. It is recorded for the user's review and never used to auto-accept: PRD FR-030 keeps a human or rule gate in front of every candidate.",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "participants": {
+          "type": "array",
+          "maxItems": 50,
+          "items": {
+            "$ref": "#/$defs/participant"
+          }
+        }
+      }
+    },
+    "participant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "entityRef",
+        "role"
+      ],
+      "properties": {
+        "entityRef": {
+          "$ref": "#/$defs/ref"
+        },
+        "role": {
+          "description": "The role the entity held in the event. The list is the schema's CHECK.",
+          "enum": [
+            "actor",
+            "target",
+            "witness",
+            "owner",
+            "affected",
+            "other"
+          ]
+        },
+        "stateBefore": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 500
+        },
+        "stateAfter": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 500
+        }
+      }
+    },
+    "relation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sourceRef",
+        "targetRef",
+        "relationType"
+      ],
+      "properties": {
+        "sourceRef": {
+          "$ref": "#/$defs/ref"
+        },
+        "targetRef": {
+          "$ref": "#/$defs/ref"
+        },
+        "relationType": {
+          "description": "The schema's CHECK list. 'other' is the escape hatch and is not a substitute for a value that exists.",
+          "enum": [
+            "participates_in",
+            "occurs_at",
+            "causes",
+            "precedes",
+            "reveals",
+            "conflicts_with",
+            "owns",
+            "transfers_to",
+            "changes_state",
+            "knows",
+            "related_to",
+            "located_in",
+            "contradicts",
+            "other"
+          ]
+        },
+        "validFromEventRef": {
+          "description": "The event from which the relation holds, or null when the chapter does not bound it.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ref"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "validToEventRef": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ref"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      }
+    }
+  }
+}
