@@ -1011,3 +1011,66 @@ func (s *memoryStore) ListStoryConflicts(_ context.Context, projectID string, st
 	sort.Slice(records, func(i, j int) bool { return records[i].ID > records[j].ID })
 	return records, nil
 }
+
+// SplitChapter mirrors the real repository: the surviving chapter is shortened and
+// the chapters after it shift up by one.
+func (s *memoryStore) SplitChapter(_ context.Context, first storydomain.Chapter, second storydomain.Chapter, expectedRevision int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	current, ok := s.chapters[first.ID]
+	if !ok {
+		return storydomain.NotFoundError()
+	}
+	if current.Revision != expectedRevision {
+		return storydomain.ConflictError("This item changed in another window. Reload it and try again.")
+	}
+	if _, clash := s.chapters[second.ID]; clash {
+		return storydomain.ConflictError("A story entity with that id already exists.")
+	}
+	// The shift happens before the insert, exactly as the SQL does, so a service
+	// test would see the same collision the constraint produces.
+	for id, chapter := range s.chapters {
+		if chapter.SourceDocumentVersionID != first.SourceDocumentVersionID {
+			continue
+		}
+		if chapter.Ordinal >= second.Ordinal {
+			chapter.Ordinal++
+			s.chapters[id] = chapter
+		}
+	}
+	first.Revision = expectedRevision + 1
+	s.chapters[first.ID] = first
+	s.chapters[second.ID] = second
+	return nil
+}
+
+// MergeChapters mirrors the real repository: the absorbed chapter is removed and
+// the chapters after it shift down.
+func (s *memoryStore) MergeChapters(_ context.Context, merged storydomain.Chapter, absorbedID string, expectedRevision int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	current, ok := s.chapters[merged.ID]
+	if !ok {
+		return storydomain.NotFoundError()
+	}
+	if current.Revision != expectedRevision {
+		return storydomain.ConflictError("This item changed in another window. Reload it and try again.")
+	}
+	absorbed, ok := s.chapters[absorbedID]
+	if !ok {
+		return storydomain.NotFoundError()
+	}
+	delete(s.chapters, absorbedID)
+	for id, chapter := range s.chapters {
+		if chapter.SourceDocumentVersionID != merged.SourceDocumentVersionID {
+			continue
+		}
+		if chapter.Ordinal > absorbed.Ordinal {
+			chapter.Ordinal--
+			s.chapters[id] = chapter
+		}
+	}
+	merged.Revision = expectedRevision + 1
+	s.chapters[merged.ID] = merged
+	return nil
+}

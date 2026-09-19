@@ -163,3 +163,153 @@ func TestStoryGraphListsAgainstTheDatabase(t *testing.T) {
 		}
 	}
 }
+
+// seedChapterRange writes one chapter with an explicit range, so a split or a
+// merge has something concrete to move.
+func seedChapterRange(t *testing.T, db querier, ctx context.Context, id string, ordinal, start, end int) {
+	t.Helper()
+	statement := `INSERT INTO chapters (id, source_document_version_id, ordinal, title, start_offset, end_offset,
+		source_kind, status, created_at, updated_at, revision)
+		VALUES (?, 'drama-document-version', ?, ?, ?, ?, 'regex', 'confirmed', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 1)`
+	if _, err := db.ExecContext(ctx, statement, id, ordinal, "Chapter "+itoaTest(ordinal), start, end); err != nil {
+		t.Fatalf("seeding the chapter %s: %v", id, err)
+	}
+}
+
+// readOrdinals returns a version's chapters as ordinal/range triples, which is
+// what a split and a merge are judged against.
+func readOrdinals(t *testing.T, repo *StoryRepository, ctx context.Context) []story.Chapter {
+	t.Helper()
+	chapters, err := repo.ListChapters(ctx, "drama-document-version")
+	if err != nil {
+		t.Fatalf("ListChapters: %v", err)
+	}
+	return chapters
+}
+
+// TestSplitChapterRenumbersAgainstTheDatabase covers the unique constraint the
+// renumbering has to satisfy.
+//
+// The schema's UNIQUE (source_document_version_id, ordinal) is what makes this one
+// transaction rather than three statements, and it is also what makes the ORDER of
+// the shift load-bearing: moving the chapters after the split from the highest
+// ordinal down never collides, and moving them upward collides immediately. This
+// test is the one that would catch a wrong order.
+func TestSplitChapterRenumbersAgainstTheDatabase(t *testing.T) {
+	db := dramaRepoHandle(t)
+	dramaSeedParents(t, db)
+	// The seed creates the version and a chapter at ordinal 1; both split tests
+	// need their own ranges, so the seed's chapter is replaced.
+	dramaSeedChapter(t, db, "chapter-seed")
+	ctx := context.Background()
+	repo := NewStoryRepository(db)
+	if _, err := db.ExecContext(ctx, `DELETE FROM chapters WHERE id = 'chapter-seed'`); err != nil {
+		t.Fatal(err)
+	}
+	// Three chapters including the one being split, so the shift has to move more
+	// than one row.
+	seedChapterRange(t, db, ctx, "chapter-one", 1, 0, 100)
+	seedChapterRange(t, db, ctx, "chapter-two", 2, 100, 200)
+	seedChapterRange(t, db, ctx, "chapter-three", 3, 200, 300)
+
+	first := story.Chapter{
+		ID: "chapter-one", SourceDocumentVersionID: "drama-document-version",
+		Ordinal: 1, Title: "Chapter 1", StartOffset: 0, EndOffset: 40,
+		SourceKind: story.ChapterManual, Status: story.ChapterEdited,
+		Revision: 1, UpdatedAt: time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC),
+	}
+	second := story.Chapter{
+		ID: "chapter-one-b", SourceDocumentVersionID: "drama-document-version",
+		Ordinal: 2, Title: "Second half", StartOffset: 40, EndOffset: 100,
+		SourceKind: story.ChapterManual, Status: story.ChapterEdited,
+		CreatedAt: time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC),
+		UpdatedAt: time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC), Revision: 1,
+	}
+	if err := repo.SplitChapter(ctx, first, second, 1); err != nil {
+		t.Fatalf("SplitChapter: %v", err)
+	}
+
+	chapters := readOrdinals(t, repo, ctx)
+	if len(chapters) != 4 {
+		t.Fatalf("the version has %d chapters after a split, want 4", len(chapters))
+	}
+	// The ordinals must be 1..4 with no hole and no duplicate.
+	for index, chapter := range chapters {
+		if chapter.Ordinal != index+1 {
+			t.Fatalf("position %d has ordinal %d, so the renumbering left a hole: %+v",
+				index, chapter.Ordinal, chapters)
+		}
+	}
+	// And the ranges must still tile: a split does not change what the document
+	// covers, so every chapter must begin where the previous one ended.
+	for index := 1; index < len(chapters); index++ {
+		if chapters[index].StartOffset != chapters[index-1].EndOffset {
+			t.Fatalf("the split left a gap or an overlap: chapter %d ends at %d and %d starts at %d",
+				index-1, chapters[index-1].EndOffset, index, chapters[index].StartOffset)
+		}
+	}
+	// The two halves cover exactly what the one chapter did.
+	if chapters[0].StartOffset != 0 || chapters[0].EndOffset != 40 {
+		t.Fatalf("the first half is %d..%d, want 0..40", chapters[0].StartOffset, chapters[0].EndOffset)
+	}
+	if chapters[1].StartOffset != 40 || chapters[1].EndOffset != 100 {
+		t.Fatalf("the second half is %d..%d, want 40..100", chapters[1].StartOffset, chapters[1].EndOffset)
+	}
+	// The shifted chapters kept their own ranges, so only their ordinals moved.
+	if chapters[2].EndOffset != 200 || chapters[3].EndOffset != 300 {
+		t.Fatalf("a shifted chapter's range changed: %+v", chapters[2:])
+	}
+}
+
+// TestMergeChapterClosesTheGapAgainstTheDatabase covers the other direction: the
+// absorbed row is removed and the rows after it move UP, where a wrong order
+// collides just as it does in a split.
+func TestMergeChapterClosesTheGapAgainstTheDatabase(t *testing.T) {
+	db := dramaRepoHandle(t)
+	dramaSeedParents(t, db)
+	dramaSeedChapter(t, db, "chapter-seed")
+	ctx := context.Background()
+	repo := NewStoryRepository(db)
+	if _, err := db.ExecContext(ctx, `DELETE FROM chapters WHERE id = 'chapter-seed'`); err != nil {
+		t.Fatal(err)
+	}
+	seedChapterRange(t, db, ctx, "chapter-one", 1, 0, 100)
+	seedChapterRange(t, db, ctx, "chapter-two", 2, 100, 200)
+	seedChapterRange(t, db, ctx, "chapter-three", 3, 200, 300)
+	seedChapterRange(t, db, ctx, "chapter-four", 4, 300, 400)
+
+	merged := story.Chapter{
+		ID: "chapter-one", SourceDocumentVersionID: "drama-document-version",
+		Ordinal: 1, Title: "Chapter 1", StartOffset: 0, EndOffset: 200,
+		SourceKind: story.ChapterManual, Status: story.ChapterEdited,
+		Revision: 1, UpdatedAt: time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC),
+	}
+	if err := repo.MergeChapters(ctx, merged, "chapter-two", 1); err != nil {
+		t.Fatalf("MergeChapters: %v", err)
+	}
+	chapters := readOrdinals(t, repo, ctx)
+	if len(chapters) != 3 {
+		t.Fatalf("the version has %d chapters after a merge, want 3", len(chapters))
+	}
+	for index, chapter := range chapters {
+		if chapter.Ordinal != index+1 {
+			t.Fatalf("ordinal %d at position %d, so the renumbering left a hole", chapter.Ordinal, index)
+		}
+	}
+	// The absorbed chapter is gone, and the survivor covers both ranges.
+	for _, chapter := range chapters {
+		if chapter.ID == "chapter-two" {
+			t.Fatal("the absorbed chapter is still present")
+		}
+	}
+	if chapters[0].StartOffset != 0 || chapters[0].EndOffset != 200 {
+		t.Fatalf("the merged chapter is %d..%d, want 0..200", chapters[0].StartOffset, chapters[0].EndOffset)
+	}
+	// The text still tiles after the merge.
+	for index := 1; index < len(chapters); index++ {
+		if chapters[index].StartOffset != chapters[index-1].EndOffset {
+			t.Fatalf("the merge left a gap: %d ends at %d, %d starts at %d",
+				index-1, chapters[index-1].EndOffset, index, chapters[index].StartOffset)
+		}
+	}
+}

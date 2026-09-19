@@ -67,6 +67,26 @@ type ChapterRepository interface {
 	ListChapters(ctx context.Context, sourceDocumentVersionID string) ([]storydomain.Chapter, error)
 	// UpdateChapter persists a change guarded by the expected revision.
 	UpdateChapter(ctx context.Context, chapter storydomain.Chapter, expectedRevision int64) error
+	// SplitChapter replaces one chapter with two in a transaction, renumbering
+	// the boundaries that follow it.
+	//
+	// One transaction and one repository call rather than create-then-update,
+	// because the schema's UNIQUE (source_document_version_id, ordinal) makes the
+	// intermediate state unrepresentable: inserting the second half at the
+	// following ordinal collides with the chapter already there until the rest are
+	// shifted, and a caller that did that in three steps could fail between them
+	// and leave a version whose ordinals are wrong.
+	//
+	// expectedRevision is the revision the caller READ for the surviving chapter,
+	// passed explicitly rather than derived. The first version of this method
+	// guessed it as `first.Revision - 1`, which silently matched no row when a
+	// caller supplied a chapter at its stored revision — the update was skipped
+	// and the split succeeded with the first half unchanged. A test caught it.
+	SplitChapter(ctx context.Context, first storydomain.Chapter, second storydomain.Chapter, expectedRevision int64) error
+	// MergeChapters replaces two adjacent chapters with one, removing the second
+	// and renumbering the boundaries that follow it. expectedRevision is the
+	// revision the caller read for the surviving chapter, for the same reason.
+	MergeChapters(ctx context.Context, merged storydomain.Chapter, absorbedID string, expectedRevision int64) error
 	// ConfirmChapters marks a version's boundaries confirmed and records the
 	// governance event in the same transaction.
 	//

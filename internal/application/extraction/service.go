@@ -259,36 +259,79 @@ func (s *Service) ExtractChapterEventCandidates(ctx context.Context, chapterID s
 		// category, and re-wrapping it would lose whether a retry could help.
 		return Result{}, err
 	}
-	document, err := validation.EventExtraction(raw)
-	if err == nil {
+	// One repair round, per AGENT_CONTRACTS section 14.3, and it covers BOTH kinds
+	// of refusal this package can produce.
+	//
+	// Section 14.3 says a raw output that is invalid gets "compact validation
+	// errors" sent back once. Two different checks can reject a reading: the JSON
+	// Schema, and the cross-field reference rules the schema cannot express (a ref
+	// that names nothing, or names the wrong kind of thing). An independent review
+	// found the first version of this method only repaired the first kind, so a
+	// document whose SHAPE was fine but whose references dangled failed without the
+	// model ever being asked — even though that is exactly the fixable case the
+	// round exists for.
+	//
+	// The attempt is a small loop over "validate, then repair if there is anything
+	// to say", bounded at one repair. It is not a retry loop: a model that cannot
+	// satisfy the contract given a precise list of what is wrong will not manage it
+	// on a third attempt either, and each round is a paid call.
+	raw, document, failure := s.attempt(ctx, chapter, raw)
+	if failure == nil {
 		return s.store(ctx, chapter, document)
 	}
-	// One repair round, per AGENT_CONTRACTS section 14.3: send the violations back
-	// to the SAME extractor once and validate again. Not a loop: a model that
-	// cannot satisfy the contract given a precise list of what is wrong will not
-	// manage it on a third attempt either, and each round is a paid call.
 	repairing, canRepair := repairSupport(s.extractor)
 	if !canRepair {
 		// An extractor that cannot repair is not an error, but the refusal has to
 		// say which refusal it is: "the model produced something invalid and
 		// nothing was asked to fix it" is a different situation from "the model
 		// tried twice and failed".
-		return Result{}, err
+		return Result{}, failure.err
 	}
-	raw, repairErr := repairing.Repair(ctx, request, violationsFor(err))
+	// The violations describe what was wrong with the FIRST attempt — including
+	// the reference failures, which are reported as violations with a path and a
+	// message for exactly this reason.
+	repaired, repairErr := repairing.Repair(ctx, request, failure.violations)
 	if repairErr != nil {
 		// A cancel during the repair is the caller's decision rather than a model
 		// failure, so it is reported as itself.
 		return Result{}, repairErr
 	}
-	document, err = validation.EventExtraction(raw)
-	if err != nil {
-		// The second failure is final. The caller sees the SECOND document's
-		// violations, because those describe what is still wrong after the model
-		// was told what was wrong.
-		return Result{}, err
+	_, document, failure = s.attempt(ctx, chapter, repaired)
+	if failure != nil {
+		// The second failure is final. The caller sees what is still wrong after
+		// the model was told what was wrong.
+		return Result{}, failure.err
 	}
 	return s.store(ctx, chapter, document)
+}
+
+// refusal carries a failed attempt's error together with the violations that can
+// be sent back for repair.
+type refusal struct {
+	err error
+	// violations may be empty when the failure was not a validation one — a
+	// document that was not JSON at all carries no violations, and the repair round
+	// is told nothing rather than handed an empty list it would read as "nothing is
+	// wrong".
+	violations []extractiondomain.Violation
+}
+
+// attempt turns one raw reading into either a document or a refusal.
+//
+// Both checks run here, in the order that makes the second one meaningful: the
+// schema first, because a document that does not parse cannot have its references
+// resolved, then the cross-field rules. A refusal from either is shaped the same
+// way, so the caller does not have to know which check rejected it.
+func (s *Service) attempt(ctx context.Context, chapter ChapterText, raw []byte) ([]byte, extractiondomain.Document, *refusal) {
+	document, err := validation.EventExtraction(raw)
+	if err != nil {
+		return raw, extractiondomain.Document{}, &refusal{err: err, violations: violationsFor(err)}
+	}
+	entityRefs, eventRefs := document.Refs()
+	if err := checkReferences(document, entityRefs, eventRefs); err != nil {
+		return raw, extractiondomain.Document{}, &refusal{err: err, violations: violationsFor(err)}
+	}
+	return raw, document, nil
 }
 
 // violationsFor extracts the violations an extraction error carries.

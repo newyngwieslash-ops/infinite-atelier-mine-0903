@@ -38,6 +38,11 @@ import (
 // passage would make the evidence worse than absent.
 
 // store writes a validated document as candidate facts.
+// The reference check runs in the service's attempt step rather than here, so a
+// document that reaches this function has already been checked AND has had its
+// chance at the repair round. Checking again here would be harmless but would mean
+// the check that decides whether a model is asked to fix something lives in two
+// places, and the two could disagree about which failures are repairable.
 func (s *Service) store(ctx context.Context, chapter ChapterText, document extractiondomain.Document) (Result, error) {
 	entityRefs, eventRefs := document.Refs()
 	if err := checkReferences(document, entityRefs, eventRefs); err != nil {

@@ -98,6 +98,8 @@ export function LockStoryEvent(arg1:desktop.LockStoryEntityRequest):Promise<desk
 
 export function MarkStale(arg1:desktop.MarkStaleRequest):Promise<desktop.StaleMarkDTO>;
 
+export function MergeChapter(arg1:desktop.MergeChapterRequest):Promise<desktop.ChapterDTO>;
+
 export function OpenStoryConflict(arg1:desktop.OpenStoryConflictRequest):Promise<desktop.StoryFactConflictDTO>;
 
 export function RecordReview(arg1:desktop.RecordReviewRequest):Promise<desktop.ReviewReportDTO>;
@@ -109,6 +111,8 @@ export function RejectStoryEvent(arg1:desktop.DecideStoryEventRequest):Promise<d
 export function ResolveStoryConflict(arg1:desktop.ResolveStoryConflictRequest):Promise<desktop.StoryFactConflictDTO>;
 
 export function ReviseChapter(arg1:desktop.ReviseChapterRequest):Promise<desktop.ChapterDTO>;
+
+export function SplitChapter(arg1:desktop.SplitChapterRequest):Promise<Array<desktop.ChapterDTO>>;
 
 export function SubmitGateDecision(arg1:desktop.SubmitGateDecisionRequest):Promise<desktop.UserGateDecisionDTO>;
 

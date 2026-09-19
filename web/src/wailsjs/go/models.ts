@@ -1677,6 +1677,22 @@ export namespace desktop {
 	        this.upstreamId = source["upstreamId"];
 	    }
 	}
+	export class MergeChapterRequest {
+	    firstChapterId: string;
+	    secondChapterId: string;
+	    revision: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new MergeChapterRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.firstChapterId = source["firstChapterId"];
+	        this.secondChapterId = source["secondChapterId"];
+	        this.revision = source["revision"];
+	    }
+	}
 	export class NodePositionDTO {
 	    id: string;
 	    x: number;
@@ -2374,6 +2390,24 @@ export namespace desktop {
 	}
 	
 	
+	export class SplitChapterRequest {
+	    chapterId: string;
+	    splitAtOffset: number;
+	    secondTitle?: string;
+	    revision: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new SplitChapterRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.chapterId = source["chapterId"];
+	        this.splitAtOffset = source["splitAtOffset"];
+	        this.secondTitle = source["secondTitle"];
+	        this.revision = source["revision"];
+	    }
+	}
 	export class StageRunDTO {
 	    id: string;
 	    workflowRunId: string;

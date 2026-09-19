@@ -100,8 +100,19 @@ const (
 	// document that looks like 100,000 chapters is a pattern that matched too
 	// eagerly, not a structure.
 	MaxChapters = 5000
-	// MaxTitleRunes mirrors the schema's CHECK on chapters.title and
-	// story_* names.
+	// MaxTitleRunes bounds a chapter title and the names a fact carries.
+	//
+	// It does NOT mirror a schema CHECK on chapters.title, and an earlier version
+	// of this comment said it did. Migration 000007 declares title TEXT NOT NULL
+	// with no CHECK, and 000014 does not add one; an independent review verified
+	// that the live schema accepts a 201-rune title. The bound is enforced by this
+	// package and by the story domain's name checks for story_* entities — which
+	// is where it is load-bearing — so the clip in firstLineTitle is defence in
+	// depth here rather than the thing standing between a long title and a refused
+	// INSERT.
+	//
+	// The number matches the story_* CHECKs (length <= 200), so a title and a fact
+	// name cannot disagree about what "too long" means.
 	MaxTitleRunes = 200
 	// MaxHeadingLineRunes bounds how long a line may be and still count as a
 	// heading. Without it, a paragraph that happens to start with "第一章" would

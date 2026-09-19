@@ -155,13 +155,40 @@ when what happened is that a model suggested something.
 
 Recorded here rather than left to be discovered:
 
-- **Chapter split and merge have no command.** `ReviseChapter` adjusts a
-  boundary's title and offsets under a revision guard, which is the "调整" that
-  ROADMAP item 3 and AC-STORY-001's "用户调整" ask for. Splitting one chapter into
-  two or merging two into one are specific forms the specification never names,
-  and each raises questions it does not answer (which ordinal does the new row
-  take, what happens to facts citing the old chapter, does the merge keep the
-  first title). They are a later package's work, not an oversight.
+- **Chapter split and merge ARE required, and ARE implemented.** An earlier
+  version of this section claimed the specification "never names" them. That was
+  false and an independent review caught it: PRD FR-020 says the import flow
+  **必须**提供 "手动合并/拆分", and FR-020's acceptance criteria include "章节拆分可
+  人工修正并保存". `SplitChapter` and `MergeChapter` therefore exist, with the
+  questions that section raised answered as follows.
+  - *Which ordinal does the new half take?* The following one, and every chapter
+    after it shifts up by one. `chapters` has `UNIQUE (source_document_version_id,
+    ordinal)`, so the row cannot be inserted until the shift happens; the shift and
+    the insert are one transaction, and the shift moves the HIGHEST ordinal first
+    for a split and the LOWEST first for a merge, because SQLite checks the
+    constraint per row and the reverse order collides immediately.
+  - *What happens to facts citing the old chapter?* They keep their
+    `story_fact_sources` rows. Those record where a fact was READ, and an offset
+    with no chapter to bound it is evidence that cannot be located — which the
+    reader shows as such — rather than evidence silently pointing somewhere else.
+    The staleness walk marks those facts for review, which is what FR-030 asks for
+    after a chapter changes.
+  - *Does the merge keep the first title?* Yes, and the absorbed chapter's title is
+    discarded rather than concatenated: joining two names produces a name no
+    document contained. The merged chapter covers the union of the two ranges, so
+    the text still adds up.
+  - *Can a merge cross a gap?* No. `MergeChapter` requires the two chapters to be
+    adjacent both by ordinal AND by offset, because merging across a gap would
+    silently swallow the passage between them.
+  - *Can a split produce an empty half?* No. The split point must fall strictly
+    inside the chapter's own range; at either end it would produce a boundary the
+    user did not ask for and no detector would have produced.
+- **A "modify" command beyond the boundary edit does not exist, and that one
+  stands.** ROADMAP item 8 says 接受/拒绝/修改/锁定. Accept, reject and lock exist as
+  their own commands; "modify" is served by the create and revise commands of the
+  aggregate in question, and a generic "modify a fact" would be a second way to
+  write the same row. The specification does not name a separate modify operation
+  the way it names 合并/拆分, so this is a design choice rather than a gap.
 - **A "modify" command beyond the boundary edit does not exist.** ROADMAP item 8
   says 接受/拒绝/修改/锁定. Accept, reject and lock exist as their own commands;
   "modify" is served by the create and revise commands of the aggregate in

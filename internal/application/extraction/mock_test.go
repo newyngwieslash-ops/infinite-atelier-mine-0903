@@ -168,7 +168,12 @@ func (m *Mock) Repair(_ context.Context, request Request, violations []extractio
 		// Still wrong, so a caller can prove that a failed repair writes nothing.
 		return []byte(`{"schemaVersion":1,"entities":[{"ref":"x","type":"vehicle","canonicalName":"n"}],"events":[],"relations":[]}`), nil
 	case MockDanglingReference:
-		return []byte(`{"schemaVersion":1,"entities":[],"events":[],"relations":[{"sourceRef":"ghost","targetRef":"phantom","relationType":"knows"}]}`), nil
+		// The repair defines the entities the first attempt referenced. That is
+		// what makes this mode a REPAIRABLE failure rather than a permanent one:
+		// the first attempt names refs nothing defines, and the repair answers the
+		// violations by defining them. Without this the mode would only ever
+		// exercise the refusal path, which is what a review found.
+		return []byte(`{"schemaVersion":1,"entities":[{"ref":"ghost","type":"character","canonicalName":"米拉"},{"ref":"phantom","type":"location","canonicalName":"大厅"}],"events":[],"relations":[{"sourceRef":"ghost","targetRef":"phantom","relationType":"knows"}]}`), nil
 	case MockEmpty:
 		return []byte(`{"schemaVersion":1,"summary":"Nothing happens in this chapter.","entities":[],"events":[],"relations":[]}`), nil
 	default:

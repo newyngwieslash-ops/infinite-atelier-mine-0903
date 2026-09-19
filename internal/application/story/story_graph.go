@@ -307,10 +307,23 @@ type LockStoryEntityRequest struct {
 // status that four gates refused to move a fact OUT of, and nothing could put a
 // fact INTO it. A state only the database can produce is not a feature.
 //
-// The lock is deliberately reachable from any status, including 'rejected': a
-// user may decide that a rejection is final for this project, and that is a
-// different statement from the rejection itself. What it is NOT reachable from is
-// 'locked', because re-locking would write a revision for no state change.
+// The lock is reachable from 'candidate' and 'accepted', and NOT from 'rejected'.
+//
+// The first version allowed it from any status, reasoning that pinning a rejection
+// is a stronger statement than the rejection. That was wrong, and an independent
+// review traced the consequence: because unlock returns a fact to 'accepted', the
+// sequence reject → lock → unlock turned a rejection into a confirmation. That
+// reverses a decision the user made, which acceptGate elsewhere in this package
+// refuses to do ("A rejected fact keeps its decision until a new candidate is
+// recorded"), and it was reachable from the UI in two clicks.
+//
+// A schema with no memory of the pre-lock state cannot restore it, so the honest
+// fix is to refuse the transition rather than to guess at one. Pinning a rejection
+// needs a column that records what was pinned, which is a schema change and a
+// later package's decision — recorded in ADR-0010 rather than approximated here.
+//
+// It is also not reachable from 'locked', because re-locking would write a
+// revision for no state change.
 func (s *Service) LockStoryEntity(ctx context.Context, request LockStoryEntityRequest) (storydomain.StoryEntity, error) {
 	if !s.Available() {
 		return storydomain.StoryEntity{}, storageFailure()
@@ -319,8 +332,8 @@ func (s *Service) LockStoryEntity(ctx context.Context, request LockStoryEntityRe
 	if err != nil {
 		return storydomain.StoryEntity{}, err
 	}
-	if record.Status == storydomain.FactLocked {
-		return storydomain.StoryEntity{}, storydomain.ConflictError("This fact is already locked.")
+	if err := lockableGate(record.Status); err != nil {
+		return storydomain.StoryEntity{}, err
 	}
 	record.Status = storydomain.FactLocked
 	record.UpdatedAt = s.now()
@@ -334,7 +347,7 @@ func (s *Service) LockStoryEntity(ctx context.Context, request LockStoryEntityRe
 	return record, nil
 }
 
-// LockStoryEvent pins an event.
+// LockStoryEvent pins an event, on the same terms as LockStoryEntity.
 func (s *Service) LockStoryEvent(ctx context.Context, request LockStoryEntityRequest) (storydomain.StoryEvent, error) {
 	if !s.Available() {
 		return storydomain.StoryEvent{}, storageFailure()
@@ -343,8 +356,8 @@ func (s *Service) LockStoryEvent(ctx context.Context, request LockStoryEntityReq
 	if err != nil {
 		return storydomain.StoryEvent{}, err
 	}
-	if record.Status == storydomain.FactLocked {
-		return storydomain.StoryEvent{}, storydomain.ConflictError("This fact is already locked.")
+	if err := lockableGate(record.Status); err != nil {
+		return storydomain.StoryEvent{}, err
 	}
 	record.Status = storydomain.FactLocked
 	record.UpdatedAt = s.now()
@@ -413,4 +426,159 @@ func (s *Service) UnlockStoryEvent(ctx context.Context, request LockStoryEntityR
 	}
 	record.Revision = request.Revision + 1
 	return record, nil
+}
+
+// lockableGate refuses a lock on a fact whose pre-lock state unlock could not
+// restore.
+//
+// The status vocabulary has no place to record what a fact was before it was
+// pinned, so unlock always returns 'accepted'. That is correct for a candidate or
+// an accepted fact and WRONG for a rejected one: it would turn a user's rejection
+// into a confirmation through two individually-legal commands. Until a column
+// records the pinned state, the transition is refused.
+func lockableGate(current storydomain.FactStatus) error {
+	switch current {
+	case storydomain.FactLocked:
+		return storydomain.ConflictError("This fact is already locked.")
+	case storydomain.FactRejected:
+		return storydomain.ConflictError("A rejected fact cannot be locked, because unlocking it would confirm it. Record a new candidate instead.")
+	}
+	return nil
+}
+
+// SplitChapterRequest divides one chapter into two at a rune offset.
+type SplitChapterRequest struct {
+	ChapterID string
+	// SplitAtOffset is where the second chapter begins, in the VERSION's
+	// coordinates. It must fall strictly inside the chapter: at either end would
+	// produce an empty half, which is a boundary the user did not ask for.
+	SplitAtOffset int
+	// SecondTitle names the new second half. An empty value gives it "" — the
+	// schema's title default — rather than inventing one, because a generated name
+	// would look like something the document said.
+	SecondTitle string
+	// Revision is the revision the caller last read for the first chapter.
+	Revision int64
+}
+
+// SplitChapter divides a chapter in two.
+//
+// PRD FR-020 lists 手动合并/拆分 among the import flow's MUST items and
+// AC-STORY-001's acceptance names 章节拆分可人工修正并保存, so this and MergeChapter
+// below are required rather than optional. The first draft of this package
+// deferred them and described them as unspecified; an independent review showed
+// the specification names them explicitly, and that description is corrected in
+// ADR-0010.
+//
+// The offsets are the hard part. The text a chapter covers does not change when it
+// is split — the two halves must tile exactly what the one chapter covered — or
+// the document's chapters would no longer add up to the document. So the second
+// half begins where the split point is and runs to the first half's old end, and
+// the first half ends where the second begins.
+func (s *Service) SplitChapter(ctx context.Context, request SplitChapterRequest) ([]storydomain.Chapter, error) {
+	if !s.Available() {
+		return nil, storageFailure()
+	}
+	first, err := s.repository.GetChapter(ctx, request.ChapterID)
+	if err != nil {
+		return nil, err
+	}
+	if request.SplitAtOffset <= first.StartOffset || request.SplitAtOffset >= first.EndOffset {
+		// A split at either end produces an empty chapter, which is a boundary the
+		// user did not ask for and which no detector would have produced.
+		return nil, storydomain.InvalidError("A chapter can only be split inside its own range.")
+	}
+	id, err := s.ids.New()
+	if err != nil {
+		return nil, storageFailure()
+	}
+	now := s.now()
+	second := storydomain.Chapter{
+		ID:                      id,
+		SourceDocumentVersionID: first.SourceDocumentVersionID,
+		Ordinal:                 first.Ordinal + 1,
+		Title:                   strings.TrimSpace(request.SecondTitle),
+		StartOffset:             request.SplitAtOffset,
+		EndOffset:               first.EndOffset,
+		// The new boundary is the user's, and so is the shortened one: both halves
+		// carry 'manual', which is what tells the import report a person made them.
+		SourceKind: storydomain.ChapterManual,
+		// A split chapter is 'edited' rather than 'detected': a person decided it.
+		Status:    storydomain.ChapterEdited,
+		CreatedAt: now,
+		UpdatedAt: now,
+		Revision:  1,
+	}
+	if err := second.Validate(); err != nil {
+		return nil, err
+	}
+	shortened := first
+	shortened.EndOffset = request.SplitAtOffset
+	shortened.SourceKind = storydomain.ChapterManual
+	shortened.Status = storydomain.ChapterEdited
+	shortened.UpdatedAt = now
+	if err := shortened.Validate(); err != nil {
+		return nil, err
+	}
+	if err := s.repository.SplitChapter(ctx, shortened, second, request.Revision); err != nil {
+		return nil, err
+	}
+	shortened.Revision = request.Revision + 1
+	return []storydomain.Chapter{shortened, second}, nil
+}
+
+// MergeChapterRequest absorbs one chapter into the one before it.
+type MergeChapterRequest struct {
+	// FirstChapterID is the chapter that survives.
+	FirstChapterID string
+	// SecondChapterID is the adjacent chapter it absorbs. It must be the NEXT one
+	// by ordinal: merging non-adjacent chapters would leave a gap the ordinals
+	// cannot express.
+	SecondChapterID string
+	// Revision is the revision the caller last read for the first chapter.
+	Revision int64
+}
+
+// MergeChapter absorbs the chapter after the given one.
+//
+// The title of the survivor is kept, because it is the one the user named when
+// they chose which chapter to merge into; the absorbed chapter's title is
+// discarded rather than concatenated, since joining two names produces a name no
+// document contained. What the merged chapter covers is the union of the two
+// ranges, so the text still adds up.
+func (s *Service) MergeChapter(ctx context.Context, request MergeChapterRequest) (storydomain.Chapter, error) {
+	if !s.Available() {
+		return storydomain.Chapter{}, storageFailure()
+	}
+	first, err := s.repository.GetChapter(ctx, request.FirstChapterID)
+	if err != nil {
+		return storydomain.Chapter{}, err
+	}
+	second, err := s.repository.GetChapter(ctx, request.SecondChapterID)
+	if err != nil {
+		return storydomain.Chapter{}, err
+	}
+	if second.Ordinal != first.Ordinal+1 {
+		return storydomain.Chapter{}, storydomain.InvalidError("Only the chapter immediately after this one can be merged into it.")
+	}
+	// The ranges must be adjacent as well as the ordinals. A gap between them is a
+	// boundary a user moved earlier, and merging across it would silently swallow
+	// the text in between.
+	if second.StartOffset != first.EndOffset {
+		return storydomain.Chapter{}, storydomain.InvalidError("Those chapters are not adjacent in the text, so merging them would skip a passage.")
+	}
+	now := s.now()
+	merged := first
+	merged.EndOffset = second.EndOffset
+	merged.SourceKind = storydomain.ChapterManual
+	merged.Status = storydomain.ChapterEdited
+	merged.UpdatedAt = now
+	if err := merged.Validate(); err != nil {
+		return storydomain.Chapter{}, err
+	}
+	if err := s.repository.MergeChapters(ctx, merged, second.ID, request.Revision); err != nil {
+		return storydomain.Chapter{}, err
+	}
+	merged.Revision = request.Revision + 1
+	return merged, nil
 }

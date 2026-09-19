@@ -2,10 +2,12 @@ package story
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
 	storydomain "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/story"
+	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/versioning"
 )
 
 // These tests cover the story-graph commands and queries WP-06 added: the
@@ -678,5 +680,241 @@ func TestReviseChapterMarksTheBoundaryManual(t *testing.T) {
 	}
 	if stored.SourceKind != storydomain.ChapterManual {
 		t.Fatalf("the stored boundary reads %q, want manual", stored.SourceKind)
+	}
+}
+
+// TestLockIsRefusedOnARejectedFact stops the lock from reversing a rejection.
+//
+// An independent review found this: lock was allowed from any status, and unlock
+// returns a fact to 'accepted', so reject → lock → unlock turned a rejection into
+// a confirmation through two individually-legal commands — reachable from the UI
+// in two clicks. acceptGate refuses that outcome everywhere else ("A rejected fact
+// keeps its decision until a new candidate is recorded").
+func TestLockIsRefusedOnARejectedFact(t *testing.T) {
+	store := newMemoryStore()
+	service := newTestService(store)
+	// The CANDIDATE from the seed, not the accepted one: rejecting a confirmed
+	// fact is refused by design, which is a different rule.
+	_, candidate := seedGraphProject(t, service, store)
+	ctx := context.Background()
+
+	rejected, err := service.RejectStoryEntity(ctx, FactDecisionRequest{ID: candidate.ID, Revision: candidate.Revision})
+	if err != nil {
+		t.Fatalf("RejectStoryEntity: %v", err)
+	}
+	if rejected.Status != storydomain.FactRejected {
+		t.Fatalf("the entity is %q after rejecting", rejected.Status)
+	}
+	if _, err := service.LockStoryEntity(ctx, LockStoryEntityRequest{ID: candidate.ID, Revision: rejected.Revision}); err == nil {
+		t.Fatal("a rejected entity was locked, so unlocking it would confirm it")
+	}
+	// The refusal changed nothing: the rejection still stands.
+	stored, err := store.GetStoryEntity(ctx, candidate.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != storydomain.FactRejected || stored.Revision != rejected.Revision {
+		t.Fatalf("the refused lock modified the row: %+v", stored)
+	}
+
+	// The same rule for events, which is a separate command.
+	event, err := service.CreateStoryEvent(ctx, CreateStoryEventRequest{
+		ProjectID: "project-1", ChapterID: "chapter-1", Name: "n",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rejectedEvent, err := service.RejectStoryEvent(ctx, FactDecisionRequest{ID: event.ID, Revision: event.Revision})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.LockStoryEvent(ctx, LockStoryEntityRequest{ID: event.ID, Revision: rejectedEvent.Revision}); err == nil {
+		t.Fatal("a rejected event was locked")
+	}
+}
+
+// TestLockFromCandidateAndAcceptedBothUnlockToAccepted pins the states the lock IS
+// reachable from, so the refusal above is not over-broad.
+func TestLockFromCandidateAndAcceptedBothUnlockToAccepted(t *testing.T) {
+	store := newMemoryStore()
+	service := newTestService(store)
+	ctx := context.Background()
+	// A candidate: never confirmed, but pinning it is legitimate because unlocking
+	// returns it to accepted, which is a state it could have reached anyway.
+	candidate, err := service.CreateStoryEntity(ctx, CreateStoryEntityRequest{
+		ProjectID: "project-1", Type: storydomain.EntityCharacter, CanonicalName: "Mira",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	locked, err := service.LockStoryEntity(ctx, LockStoryEntityRequest{ID: candidate.ID, Revision: candidate.Revision})
+	if err != nil {
+		t.Fatalf("a candidate must be lockable: %v", err)
+	}
+	unlocked, err := service.UnlockStoryEntity(ctx, LockStoryEntityRequest{ID: candidate.ID, Revision: locked.Revision})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unlocked.Status != storydomain.FactAccepted {
+		t.Fatalf("unlocking a locked candidate gave %q", unlocked.Status)
+	}
+}
+
+// TestSplitChapterCoversTheSameText is the invariant that makes a split safe: the
+// two halves must tile exactly what the one chapter covered, or the version's
+// chapters would no longer add up to the document.
+func TestSplitChapterCoversTheSameText(t *testing.T) {
+	store := newMemoryStore()
+	service := newTestService(store)
+	ctx := context.Background()
+	store.versions["version-1"] = storydomain.SourceDocumentVersion{
+		ID: "version-1", SourceDocumentID: "doc-1", VersionNumber: 1,
+		NormalizedTextFileID: strings.Repeat("a", 64), CharCount: 300,
+		CreatedByType: versioning.CreatedByUser,
+	}
+	store.chapters["chapter-1"] = storydomain.Chapter{
+		ID: "chapter-1", SourceDocumentVersionID: "version-1", Ordinal: 1, Title: "One",
+		StartOffset: 0, EndOffset: 300, SourceKind: storydomain.ChapterFromPattern,
+		Status: storydomain.ChapterConfirmed, Revision: 1,
+	}
+	store.chapters["chapter-2"] = storydomain.Chapter{
+		ID: "chapter-2", SourceDocumentVersionID: "version-1", Ordinal: 2, Title: "Two",
+		StartOffset: 300, EndOffset: 400, SourceKind: storydomain.ChapterFromPattern,
+		Status: storydomain.ChapterConfirmed, Revision: 1,
+	}
+
+	halves, err := service.SplitChapter(ctx, SplitChapterRequest{
+		ChapterID: "chapter-1", SplitAtOffset: 120, SecondTitle: "One (continued)", Revision: 1,
+	})
+	if err != nil {
+		t.Fatalf("SplitChapter: %v", err)
+	}
+	if len(halves) != 2 {
+		t.Fatalf("a split returned %d chapters", len(halves))
+	}
+	first, second := halves[0], halves[1]
+	// The two halves cover exactly the original range.
+	if first.StartOffset != 0 || first.EndOffset != 120 {
+		t.Fatalf("the first half is %d..%d, want 0..120", first.StartOffset, first.EndOffset)
+	}
+	if second.StartOffset != 120 || second.EndOffset != 300 {
+		t.Fatalf("the second half is %d..%d, want 120..300", second.StartOffset, second.EndOffset)
+	}
+	if first.EndOffset != second.StartOffset {
+		t.Fatal("the halves do not meet, so the split lost or duplicated text")
+	}
+	if second.Ordinal != first.Ordinal+1 {
+		t.Fatalf("the second half is ordinal %d, want %d", second.Ordinal, first.Ordinal+1)
+	}
+	// Both halves are the user's, and both are marked edited: a person made them.
+	for _, chapter := range halves {
+		if chapter.SourceKind != storydomain.ChapterManual {
+			t.Fatalf("a split half reads source kind %q, want manual", chapter.SourceKind)
+		}
+		if chapter.Status != storydomain.ChapterEdited {
+			t.Fatalf("a split half reads status %q, want edited", chapter.Status)
+		}
+	}
+	// The chapter that followed moved up, so the ordinals have no duplicate.
+	moved, err := store.GetChapter(ctx, "chapter-2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if moved.Ordinal != 3 {
+		t.Fatalf("the following chapter is ordinal %d, want 3", moved.Ordinal)
+	}
+	// And it kept its own range, so only its position changed.
+	if moved.StartOffset != 300 || moved.EndOffset != 400 {
+		t.Fatalf("the following chapter's range changed: %d..%d", moved.StartOffset, moved.EndOffset)
+	}
+	// A split at either end produces an empty half, which no detector would
+	// produce and no user asked for.
+	for _, offset := range []int{0, 300, -5, 1000} {
+		if _, err := service.SplitChapter(ctx, SplitChapterRequest{
+			ChapterID: "chapter-1", SplitAtOffset: offset, Revision: 2,
+		}); err == nil {
+			t.Fatalf("a split at offset %d was accepted", offset)
+		}
+	}
+}
+
+// TestMergeChapterRequiresAdjacency covers the two ways a merge could swallow text
+// the user did not intend: a gap in the ranges, and a chapter that is not the next
+// one by ordinal.
+func TestMergeChapterRequiresAdjacency(t *testing.T) {
+	store := newMemoryStore()
+	service := newTestService(store)
+	ctx := context.Background()
+	store.versions["version-1"] = storydomain.SourceDocumentVersion{
+		ID: "version-1", SourceDocumentID: "doc-1", VersionNumber: 1,
+		NormalizedTextFileID: strings.Repeat("a", 64), CharCount: 400,
+		CreatedByType: versioning.CreatedByUser,
+	}
+	store.chapters["chapter-1"] = storydomain.Chapter{
+		ID: "chapter-1", SourceDocumentVersionID: "version-1", Ordinal: 1, Title: "One",
+		StartOffset: 0, EndOffset: 100, SourceKind: storydomain.ChapterFromPattern,
+		Status: storydomain.ChapterConfirmed, Revision: 1,
+	}
+	// A gap: chapter two starts at 120 rather than where chapter one ends.
+	store.chapters["chapter-2"] = storydomain.Chapter{
+		ID: "chapter-2", SourceDocumentVersionID: "version-1", Ordinal: 2, Title: "Two",
+		StartOffset: 120, EndOffset: 200, SourceKind: storydomain.ChapterFromPattern,
+		Status: storydomain.ChapterConfirmed, Revision: 1,
+	}
+	if _, err := service.MergeChapter(ctx, MergeChapterRequest{
+		FirstChapterID: "chapter-1", SecondChapterID: "chapter-2", Revision: 1,
+	}); err == nil {
+		t.Fatal("chapters with a gap between them were merged, which would hide the passage in between")
+	}
+
+	// Make them adjacent and the merge succeeds, covering the union.
+	adjacent := store.chapters["chapter-2"]
+	adjacent.StartOffset = 100
+	store.chapters["chapter-2"] = adjacent
+	merged, err := service.MergeChapter(ctx, MergeChapterRequest{
+		FirstChapterID: "chapter-1", SecondChapterID: "chapter-2", Revision: 1,
+	})
+	if err != nil {
+		t.Fatalf("MergeChapter: %v", err)
+	}
+	if merged.StartOffset != 0 || merged.EndOffset != 200 {
+		t.Fatalf("the merged chapter is %d..%d, want 0..200", merged.StartOffset, merged.EndOffset)
+	}
+	if merged.Status != storydomain.ChapterEdited || merged.SourceKind != storydomain.ChapterManual {
+		t.Fatalf("the merged chapter is %q/%q, want edited/manual", merged.Status, merged.SourceKind)
+	}
+	// The absorbed chapter is gone from the version.
+	stored, err := store.ListChapters(ctx, "version-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stored) != 1 || stored[0].ID != "chapter-1" {
+		t.Fatalf("the version holds %+v after the merge", stored)
+	}
+
+	// A chapter that is not the immediate successor cannot be merged, because the
+	// ordinals could not express the result.
+	store.chapters["chapter-3"] = storydomain.Chapter{
+		ID: "chapter-3", SourceDocumentVersionID: "version-1", Ordinal: 3, Title: "Three",
+		StartOffset: 200, EndOffset: 300, SourceKind: storydomain.ChapterFromPattern,
+		Status: storydomain.ChapterConfirmed, Revision: 1,
+	}
+	if _, err := service.MergeChapter(ctx, MergeChapterRequest{
+		FirstChapterID: "chapter-1", SecondChapterID: "chapter-3", Revision: 2,
+	}); err == nil {
+		t.Fatal("a non-adjacent chapter was merged")
+	}
+}
+
+// TestSplitAndMergeFailClosed proves the two commands refuse on an unattached
+// service rather than panicking.
+func TestSplitAndMergeFailClosed(t *testing.T) {
+	service := NewService(Options{})
+	ctx := context.Background()
+	if _, err := service.SplitChapter(ctx, SplitChapterRequest{ChapterID: "c", SplitAtOffset: 1, Revision: 1}); err == nil {
+		t.Fatal("an unattached service split a chapter")
+	}
+	if _, err := service.MergeChapter(ctx, MergeChapterRequest{FirstChapterID: "a", SecondChapterID: "b", Revision: 1}); err == nil {
+		t.Fatal("an unattached service merged chapters")
 	}
 }

@@ -302,3 +302,172 @@ func (r *StoryRepository) ListStoryConflicts(ctx context.Context, projectID stri
 	}
 	return records, rows.Err()
 }
+
+// SplitChapter replaces one chapter with two, renumbering what follows.
+//
+// The renumbering is why this is one call rather than two:
+// UNIQUE (source_document_version_id, ordinal) means the row that takes the
+// following ordinal cannot exist until the rows after it have moved, so a caller
+// performing steps 1-3 could fail between them and leave a version whose ordinals
+// have a hole or a duplicate. SQLite cannot defer that constraint inside a
+// transaction, so the shift happens in one statement that cannot observe the
+// intermediate state.
+//
+// The order inside the transaction matters and is the reverse of the obvious one:
+// the chapters AFTER the split move first, from the highest ordinal down, so no
+// UPDATE ever collides with a row that has not moved yet. Renumbering upward
+// would collide immediately.
+func (r *StoryRepository) SplitChapter(ctx context.Context, first story.Chapter, second story.Chapter, expectedRevision int64) error {
+	if r == nil || r.db == nil {
+		return storageError("STORY_STORE_UNAVAILABLE", "The story store is unavailable.", nil)
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return storageError("STORY_TX_FAILED", "The split could not be started.", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+	conn := connection(r.db, tx)
+	if err := shiftOrdinals(ctx, conn, first.SourceDocumentVersionID, first.Ordinal+1, 1); err != nil {
+		return err
+	}
+	// The first half keeps its ordinal and gains the shortened range. RowsAffected
+	// is checked because a stale revision matches no row: without this the command
+	// would report a successful split having changed nothing, which is the defect a
+	// test caught when the guard was guessed rather than passed.
+	result, err := conn.ExecContext(ctx, `UPDATE chapters
+		SET title = ?, start_offset = ?, end_offset = ?, content_hash = ?, source_kind = ?, status = ?,
+		    updated_at = ?, revision = revision + 1
+		WHERE id = ? AND revision = ?`,
+		first.Title, first.StartOffset, first.EndOffset, first.ContentHash, string(first.SourceKind),
+		string(first.Status), formatTime(first.UpdatedAt), first.ID, expectedRevision)
+	if err != nil {
+		return storageError("STORY_WRITE_FAILED", "The chapter could not be split.", err)
+	}
+	if affected, err := result.RowsAffected(); err != nil {
+		return storageError("STORY_WRITE_FAILED", "The chapter could not be split.", err)
+	} else if affected == 0 {
+		return story.ConflictError("This item changed in another window. Reload it and try again.")
+	}
+	// The second half takes the freed ordinal.
+	if _, err := conn.ExecContext(ctx, `INSERT INTO chapters
+		(id, source_document_version_id, ordinal, title, start_offset, end_offset, content_hash,
+		 source_kind, status, created_at, updated_at, revision)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		second.ID, second.SourceDocumentVersionID, second.Ordinal, second.Title,
+		second.StartOffset, second.EndOffset, second.ContentHash, string(second.SourceKind),
+		string(second.Status), formatTime(second.CreatedAt), formatTime(second.UpdatedAt),
+		second.Revision); err != nil {
+		if isUniqueViolation(err) {
+			return story.ConflictError("That chapter position is already used for this version.")
+		}
+		return storageError("STORY_WRITE_FAILED", "The new chapter could not be stored.", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return storageError("STORY_TX_FAILED", "The split could not be committed.", err)
+	}
+	committed = true
+	return nil
+}
+
+// MergeChapters replaces two adjacent chapters with one.
+//
+// The absorbed chapter is DELETED rather than soft-deleted, because ordinals are
+// the version's structure and a tombstone would leave the sequence with a hole
+// that the next renumber would have to work around. Facts citing it keep their
+// story_fact_sources rows: those record where a fact was READ, and the reader
+// re-resolves the chapter, so a removed chapter surfaces as evidence that cannot
+// be located rather than as evidence that silently points somewhere else. The
+// staleness walk marks those facts for review.
+func (r *StoryRepository) MergeChapters(ctx context.Context, merged story.Chapter, absorbedID string, expectedRevision int64) error {
+	if r == nil || r.db == nil {
+		return storageError("STORY_STORE_UNAVAILABLE", "The story store is unavailable.", nil)
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return storageError("STORY_TX_FAILED", "The merge could not be started.", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+	conn := connection(r.db, tx)
+	if _, err := conn.ExecContext(ctx, `DELETE FROM chapters WHERE id = ?`, absorbedID); err != nil {
+		return storageError("STORY_WRITE_FAILED", "The absorbed chapter could not be removed.", err)
+	}
+	result, err := conn.ExecContext(ctx, `UPDATE chapters
+		SET title = ?, start_offset = ?, end_offset = ?, content_hash = ?, source_kind = ?, status = ?,
+		    updated_at = ?, revision = revision + 1
+		WHERE id = ? AND revision = ?`,
+		merged.Title, merged.StartOffset, merged.EndOffset, merged.ContentHash, string(merged.SourceKind),
+		string(merged.Status), formatTime(merged.UpdatedAt), merged.ID, expectedRevision)
+	if err != nil {
+		return storageError("STORY_WRITE_FAILED", "The merged chapter could not be updated.", err)
+	}
+	if affected, err := result.RowsAffected(); err != nil {
+		return storageError("STORY_WRITE_FAILED", "The merged chapter could not be updated.", err)
+	} else if affected == 0 {
+		return story.ConflictError("This item changed in another window. Reload it and try again.")
+	}
+	// The rows after the absorbed one close the gap, lowest first: a hole is legal
+	// at every step, so moving upward never collides.
+	if err := shiftOrdinals(ctx, conn, merged.SourceDocumentVersionID, merged.Ordinal+1, -1); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return storageError("STORY_TX_FAILED", "The merge could not be committed.", err)
+	}
+	committed = true
+	return nil
+}
+
+// shiftOrdinals moves every chapter at or after from by delta.
+//
+// The direction decides the order, and getting it wrong is a unique-constraint
+// failure rather than a subtle bug: SQLite checks the constraint per row, so a
+// shift of +1 must move the HIGHEST ordinal first (descending) and a shift of -1
+// the lowest first (ascending), or the row being moved lands on one that has not
+// moved yet.
+func shiftOrdinals(ctx context.Context, conn querier, versionID string, from, delta int) error {
+	order := "ASC"
+	if delta > 0 {
+		order = "DESC"
+	}
+	// The ordinal arithmetic is done in one statement rather than row by row: the
+	// order column is not updatable in a way SQLite can guarantee without the row
+	// being visited individually, so the ids are read first and then updated in the
+	// safe order inside the same transaction.
+	rows, err := conn.QueryContext(ctx,
+		`SELECT id FROM chapters WHERE source_document_version_id = ? AND ordinal >= ? ORDER BY ordinal `+order,
+		versionID, from)
+	if err != nil {
+		return storageError("STORY_READ_FAILED", "The chapters could not be renumbered.", err)
+	}
+	ids := make([]string, 0, 8)
+	for rows.Next() {
+		var id string
+		if scanErr := rows.Scan(&id); scanErr != nil {
+			rows.Close()
+			return storageError("STORY_READ_FAILED", "The chapters could not be renumbered.", scanErr)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return storageError("STORY_READ_FAILED", "The chapters could not be renumbered.", err)
+	}
+	rows.Close()
+	for _, id := range ids {
+		if _, err := conn.ExecContext(ctx,
+			`UPDATE chapters SET ordinal = ordinal + ? WHERE id = ?`, delta, id); err != nil {
+			return storageError("STORY_WRITE_FAILED", "The chapters could not be renumbered.", err)
+		}
+	}
+	return nil
+}

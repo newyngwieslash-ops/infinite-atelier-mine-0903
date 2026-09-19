@@ -105,10 +105,22 @@ func EventExtraction(raw []byte) (extraction.Document, error) {
 // closed set the schema author controls, it names exactly what to fix, and it
 // cannot carry a byte of the document.
 //
-// The library's basic message is kept only where it is already value-free, which
-// is the `required` and `additionalProperties` families. `additionalProperties`
-// DOES name the offending property, so its list is dropped here — a property name
-// is attacker-chosen text and has no business in a prompt.
+// Two things are known here by measurement rather than by assumption, both
+// established when an independent review questioned them:
+//
+//   - `required` names the missing property, which comes from the SCHEMA. That is
+//     why it is kept: a model told only "does not satisfy required" cannot act.
+//   - `additionalProperties` is rendered by the library as the bare keyword, with
+//     no property name, so nothing attacker-chosen reaches the message. An earlier
+//     version of this file carried a special case that stripped a name the library
+//     does not emit; the review found the branch unreachable and a probe confirmed
+//     that removing it changes no message, so it was deleted rather than kept with
+//     a test that could not fail.
+//
+// The fallback below (`sanitiseMessage`) therefore guards a path this schema does
+// not currently reach. It stays because the schema can change and because a message
+// built from a model's output must not be trusted by default — but the honest
+// statement is that its guard is not exercised today, not that it is load-bearing.
 func violationsOf(err error) []Violation {
 	validationErr, ok := err.(*jsonschema.ValidationError)
 	if !ok {
@@ -157,14 +169,7 @@ func ruleName(node *jsonschema.ValidationError) string {
 			return "does not satisfy " + strings.Join(path, "/")
 		}
 	}
-	message := node.Error()
-	// `additional properties 'x' not allowed` names a property the INSTANCE chose,
-	// so the name is dropped and only the rule is kept. This is the case the
-	// sanitising exists for: that name is attacker-chosen text.
-	if strings.HasPrefix(message, "additional propert") {
-		return "has a property the contract does not define"
-	}
-	return truncate(sanitiseMessage(message))
+	return truncate(sanitiseMessage(node.Error()))
 }
 
 // sanitiseMessage drops a quoted instance value from a library message.

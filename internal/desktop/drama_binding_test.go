@@ -2754,3 +2754,59 @@ func (s *dramaStore) ListStoryConflicts(_ context.Context, projectID string, sta
 	}
 	return records, nil
 }
+
+// SplitChapter mirrors the real repository's renumbering.
+func (s *dramaStore) SplitChapter(_ context.Context, first storydomain.Chapter, second storydomain.Chapter, expectedRevision int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.failNext != nil {
+		return s.failNext
+	}
+	current, ok := s.chapters[first.ID]
+	if !ok {
+		return storydomain.NotFoundError()
+	}
+	if current.Revision != expectedRevision {
+		return storydomain.ConflictError("This item changed in another window. Reload it and try again.")
+	}
+	for id, chapter := range s.chapters {
+		if chapter.SourceDocumentVersionID == first.SourceDocumentVersionID && chapter.Ordinal >= second.Ordinal {
+			chapter.Ordinal++
+			s.chapters[id] = chapter
+		}
+	}
+	first.Revision = expectedRevision + 1
+	s.chapters[first.ID] = first
+	s.chapters[second.ID] = second
+	return nil
+}
+
+// MergeChapters mirrors the real repository.
+func (s *dramaStore) MergeChapters(_ context.Context, merged storydomain.Chapter, absorbedID string, expectedRevision int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.failNext != nil {
+		return s.failNext
+	}
+	current, ok := s.chapters[merged.ID]
+	if !ok {
+		return storydomain.NotFoundError()
+	}
+	if current.Revision != expectedRevision {
+		return storydomain.ConflictError("This item changed in another window. Reload it and try again.")
+	}
+	absorbed, ok := s.chapters[absorbedID]
+	if !ok {
+		return storydomain.NotFoundError()
+	}
+	delete(s.chapters, absorbedID)
+	for id, chapter := range s.chapters {
+		if chapter.SourceDocumentVersionID == merged.SourceDocumentVersionID && chapter.Ordinal > absorbed.Ordinal {
+			chapter.Ordinal--
+			s.chapters[id] = chapter
+		}
+	}
+	merged.Revision = expectedRevision + 1
+	s.chapters[merged.ID] = merged
+	return nil
+}

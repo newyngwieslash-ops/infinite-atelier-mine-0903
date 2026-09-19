@@ -555,11 +555,61 @@ func (e *singleShotExtractor) Extract(_ context.Context, _ Request) ([]byte, err
 	return e.raw, nil
 }
 
-// TestExtractionRefusesADanglingReference covers the rule the schema cannot
-// express: a relation whose endpoint names nothing must be refused rather than
-// written with a missing edge.
-func TestExtractionRefusesADanglingReference(t *testing.T) {
+// TestExtractionRepairsADanglingReference covers the rule the schema cannot
+// express, at the point an independent review found it missing.
+//
+// A document whose SHAPE is valid but which names a ref nothing defines is the
+// clearest case of a repairable failure, and the first version of the repair round
+// did not run for it: the cross-field check happened after validation, so a
+// dangling reference failed without the model ever being asked. The round now
+// covers both checks, and this test asserts the model IS asked.
+func TestExtractionRepairsADanglingReference(t *testing.T) {
 	harness := newHarness(t, MockDanglingReference)
+	result, err := harness.service.ExtractChapterEventCandidates(context.Background(), testChapter)
+	if err != nil {
+		t.Fatalf("a repairable dangling reference should have been repaired: %v", err)
+	}
+	if harness.mock.RepairCalls() != 1 {
+		t.Fatalf("the extractor was asked to repair %d times, want exactly one", harness.mock.RepairCalls())
+	}
+	// The violations must describe the DANGLING REFERENCE, not the shape: that is
+	// what tells the model which keys it has to define.
+	violations := harness.mock.LastViolations()
+	if len(violations) == 0 {
+		t.Fatal("the repair round carried no violations")
+	}
+	namedRef := false
+	for _, violation := range violations {
+		if strings.Contains(violation.Path, "Ref") {
+			namedRef = true
+		}
+	}
+	if !namedRef {
+		t.Fatalf("the violations do not name a reference field, so the model could not know what to define: %+v", violations)
+	}
+	// The repaired reading wrote candidates, and the relation's endpoints resolve
+	// to entities this run minted.
+	if result.Entities == 0 || result.Relations == 0 {
+		t.Fatalf("the repaired reading wrote %+v", result)
+	}
+	minted := map[string]bool{}
+	for _, entity := range harness.story.entities {
+		minted[entity.ID] = true
+	}
+	for _, relation := range harness.story.relations {
+		if !minted[relation.SourceEntityID] || !minted[relation.TargetEntityID] {
+			t.Fatalf("a written relation names an entity this run did not mint: %+v", relation)
+		}
+	}
+}
+
+// TestExtractionRefusesADanglingReferenceWhenTheRepairAlsoFails is the other side:
+// a model that stays dangling is refused, and nothing is written.
+func TestExtractionRefusesADanglingReferenceWhenTheRepairAlsoFails(t *testing.T) {
+	harness := newHarness(t, MockDanglingReference)
+	// A single-shot extractor cannot repair, so the dangling document is final.
+	harness.service.extractor = &singleShotExtractor{raw: []byte(
+		`{"schemaVersion":1,"entities":[],"events":[],"relations":[{"sourceRef":"ghost","targetRef":"phantom","relationType":"knows"}]}`)}
 	_, err := harness.service.ExtractChapterEventCandidates(context.Background(), testChapter)
 	if err == nil {
 		t.Fatal("a document naming an undefined entity was accepted")

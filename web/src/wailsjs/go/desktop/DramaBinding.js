@@ -194,6 +194,10 @@ export function MarkStale(arg1) {
   return window['go']['desktop']['DramaBinding']['MarkStale'](arg1);
 }
 
+export function MergeChapter(arg1) {
+  return window['go']['desktop']['DramaBinding']['MergeChapter'](arg1);
+}
+
 export function OpenStoryConflict(arg1) {
   return window['go']['desktop']['DramaBinding']['OpenStoryConflict'](arg1);
 }
@@ -216,6 +220,10 @@ export function ResolveStoryConflict(arg1) {
 
 export function ReviseChapter(arg1) {
   return window['go']['desktop']['DramaBinding']['ReviseChapter'](arg1);
+}
+
+export function SplitChapter(arg1) {
+  return window['go']['desktop']['DramaBinding']['SplitChapter'](arg1);
 }
 
 export function SubmitGateDecision(arg1) {

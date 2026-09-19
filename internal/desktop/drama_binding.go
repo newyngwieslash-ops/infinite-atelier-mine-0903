@@ -897,6 +897,65 @@ func (b *DramaBinding) ListStoryEventParticipants(storyEventID string) ([]StoryE
 	return participants, nil
 }
 
+// SplitChapterRequest divides one chapter into two.
+type SplitChapterRequest struct {
+	ChapterID string `json:"chapterId"`
+	// SplitAtOffset is where the second chapter begins, in the version's
+	// coordinates.
+	SplitAtOffset int    `json:"splitAtOffset"`
+	SecondTitle   string `json:"secondTitle,omitempty"`
+	Revision      int64  `json:"revision"`
+}
+
+// SplitChapter divides a chapter in two.
+//
+// PRD FR-020 lists 手动合并/拆分 among the import flow's MUST items and
+// AC-STORY-001's acceptance names 章节拆分可人工修正并保存.
+func (b *DramaBinding) SplitChapter(request SplitChapterRequest) ([]ChapterDTO, error) {
+	service := b.storyService()
+	if service == nil {
+		return nil, bindingUnavailable()
+	}
+	records, err := service.SplitChapter(b.context(), appstory.SplitChapterRequest{
+		ChapterID:     request.ChapterID,
+		SplitAtOffset: request.SplitAtOffset,
+		SecondTitle:   request.SecondTitle,
+		Revision:      request.Revision,
+	})
+	if err != nil {
+		return nil, toDramaError(err)
+	}
+	chapters := make([]ChapterDTO, 0, len(records))
+	for _, record := range records {
+		chapters = append(chapters, toChapterDTO(record))
+	}
+	return chapters, nil
+}
+
+// MergeChapterRequest absorbs one chapter into the one before it.
+type MergeChapterRequest struct {
+	FirstChapterID  string `json:"firstChapterId"`
+	SecondChapterID string `json:"secondChapterId"`
+	Revision        int64  `json:"revision"`
+}
+
+// MergeChapter absorbs the chapter immediately after the given one.
+func (b *DramaBinding) MergeChapter(request MergeChapterRequest) (ChapterDTO, error) {
+	service := b.storyService()
+	if service == nil {
+		return ChapterDTO{}, bindingUnavailable()
+	}
+	record, err := service.MergeChapter(b.context(), appstory.MergeChapterRequest{
+		FirstChapterID:  request.FirstChapterID,
+		SecondChapterID: request.SecondChapterID,
+		Revision:        request.Revision,
+	})
+	if err != nil {
+		return ChapterDTO{}, toDramaError(err)
+	}
+	return toChapterDTO(record), nil
+}
+
 // LockStoryEntityRequest pins or releases a fact under a revision guard.
 type LockStoryEntityRequest struct {
 	ID       string `json:"id"`

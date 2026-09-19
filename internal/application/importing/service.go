@@ -506,6 +506,22 @@ func (s *Service) ConfirmChapters(ctx context.Context, request ConfirmChaptersRe
 	if len(chapters) == 0 {
 		return nil, importdomain.InvalidError("There are no chapter boundaries to confirm.")
 	}
+	// The confirmation must have something to confirm. A version whose boundaries
+	// are all 'edited' already carries a stronger statement than 'confirmed' — the
+	// repository's UPDATE is guarded on 'detected' for that reason — so confirming
+	// it would change nothing while still recording ChapterBoundariesConfirmed in
+	// the event stream. An independent review traced that: a user could correct
+	// every boundary and then press Confirm, and the audit trail would claim a
+	// confirmation that did not happen.
+	detected := 0
+	for _, chapter := range chapters {
+		if chapter.Status == story.ChapterDetected {
+			detected++
+		}
+	}
+	if detected == 0 {
+		return nil, importdomain.ConflictError("Every boundary of this version is already confirmed or edited, so there is nothing to confirm.")
+	}
 	version, err := s.story.GetSourceDocumentVersion(ctx, versionID)
 	if err != nil {
 		return nil, err
@@ -515,7 +531,9 @@ func (s *Service) ConfirmChapters(ctx context.Context, request ConfirmChaptersRe
 		return nil, err
 	}
 	// The governance event, built before the writes so a service without a
-	// recorder refuses rather than confirming unrecorded.
+	// recorder refuses rather than confirming unrecorded. The guard above is what
+	// makes "built before" safe: the event is only assembled once there is a
+	// change for it to describe.
 	record, err := s.buildEvent(ctx, event.ChapterBoundariesConfirmed, event.AggregateChapter,
 		versionID, document.ProjectID, request.TraceID)
 	if err != nil {

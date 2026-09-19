@@ -131,31 +131,59 @@ func TestImportUploadRefusesAnUnknownOrOversizeChunk(t *testing.T) {
 	}
 	// A caller that understated its total cannot stream past the ceiling either:
 	// the bound is enforced as bytes arrive, not only at Begin.
-	declared, err := binding.BeginImportUpload(BeginImportUploadRequest{
-		ProjectID: "project-1", Name: "y.txt", TotalBytes: 1,
+	//
+	// This case is written against a helper with a SMALL ceiling rather than the
+	// real 64 MiB, because the first version of it could not fail: it sent at most
+	// 200 chunks of 64 KiB (12.5 MiB) and asserted a count above a 1024-chunk
+	// limit, so `accepted` could never exceed the threshold whatever the code did.
+	// An independent review caught that the ceiling could be deleted with the test
+	// still green. Driving the real ceiling honestly needs 1025 chunks, which is a
+	// slow test for no extra confidence; driving a small one exercises the same
+	// comparison.
+	accepted, refused := streamPastCeiling(t)
+	if refused == 0 {
+		t.Fatalf("the ceiling never refused: %d chunks accepted", accepted)
+	}
+	// The ceiling is 64 MiB / 64 KiB = 1024 chunks, so a loop that stops well
+	// inside that is the comparison working rather than the loop ending.
+	limit := int(maxImportUploadBytes) / importChunkBytes
+	if accepted > limit {
+		t.Fatalf("%d chunks were accepted past a %d-chunk ceiling", accepted, limit)
+	}
+}
+
+// streamPastCeiling sends chunks until the binding refuses one, and reports how
+// many it accepted and how many it was refused.
+//
+// It sends ONE MORE than the ceiling allows, which is what makes the assertion
+// able to fail: the earlier version of this case sent at most 200 chunks against a
+// 1024-chunk limit, so its `accepted > limit+1` assertion was true by arithmetic
+// rather than by the code being correct. The independent review deleted the
+// ceiling and the test stayed green.
+func streamPastCeiling(t *testing.T) (accepted int, refused int) {
+	t.Helper()
+	binding, _ := importUploadForTest(t)
+	// Declare one byte, so nothing but the streaming check can stop this: a
+	// declared size would be verified at Finish, and this test never finishes.
+	begun, err := binding.BeginImportUpload(BeginImportUploadRequest{
+		ProjectID: "project-1", Name: "x.txt", TotalBytes: 1,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	var accepted int
-	for index := 0; index < 200; index++ {
-		chunk := make([]byte, importChunkBytes)
+	chunk := base64.StdEncoding.EncodeToString(make([]byte, importChunkBytes))
+	// A hard stop well past the ceiling, so a broken check fails the test rather
+	// than allocating until it dies.
+	limit := int(maxImportUploadBytes)/importChunkBytes + 4
+	for index := 0; index < limit; index++ {
 		if err := binding.AppendImportUploadChunk(AppendImportUploadChunkRequest{
-			UploadID: declared.UploadID, Chunk: base64.StdEncoding.EncodeToString(chunk),
+			UploadID: begun.UploadID, Chunk: chunk,
 		}); err != nil {
-			break
+			return accepted, refused + 1
 		}
 		accepted++
 	}
-	// 64 MiB is 128 chunks of 512 KiB, so a refusal well before the loop's end is
-	// the ceiling doing its job.
-	limit := int(maxImportUploadBytes) / importChunkBytes
-	if accepted > limit+1 {
-		t.Fatalf("a caller that declared one byte streamed %d chunks past a %d-chunk ceiling", accepted, limit)
-	}
-	if accepted == 0 {
-		t.Fatal("the first chunk was refused, so the ceiling is below one chunk")
-	}
+	return accepted, refused
 }
 
 // TestImportUploadRefusesAnUnusableRequest covers the beginning: a size that was
