@@ -440,6 +440,19 @@ func (s *Service) CreateScriptVersion(ctx context.Context, request CreateScriptV
 	if err := s.repository.CreateScriptVersion(ctx, version); err != nil {
 		return scriptdomain.ScriptVersion{}, err
 	}
+	// Section 17's ScriptVersionCreated. Best effort: the version is committed,
+	// so the caller must not be told the command failed because the announcement
+	// did not land. The project comes from the episode the script belongs to,
+	// which the version itself does not name; a failed lookup means the
+	// announcement is skipped, not that the command failed.
+	if episode, episodeErr := s.repository.GetEpisode(ctx, script.EpisodeID); episodeErr == nil {
+		s.recordEvent(ctx, eventsapp.Draft{
+			Type:          event.ScriptVersionCreated,
+			AggregateType: event.AggregateScript,
+			AggregateID:   version.ID,
+			ProjectID:     episode.ProjectID,
+		})
+	}
 	return version, nil
 }
 
@@ -452,6 +465,9 @@ func (s *Service) CreateScriptVersion(ctx context.Context, request CreateScriptV
 // matches, plus the schema's partial unique index on the approved row.
 type ApproveScriptVersionRequest struct {
 	ScriptVersionID string
+	// TraceID correlates the approval's event with the action that caused it.
+	// Optional: a manual approval has no run to correlate with.
+	TraceID string
 }
 
 // ApproveScriptVersion makes one version the script's approved version.
@@ -462,16 +478,15 @@ type ApproveScriptVersionRequest struct {
 // approved at all, so an already-approved version, a superseded one and a
 // stale one are all refused with the domain's own message.
 //
-// The two writes go through one repository call because the schema's partial
-// unique index (script_id WHERE status = 'approved') is what makes them
-// order-dependent: the supersede must land before the approval, and a failure
-// between the two would leave the script with no approved version. One
-// transaction is the only way to have both or neither.
+// The switch goes through one repository call because the schema's partial
+// unique index makes its two writes order-dependent: the previous approval must
+// leave 'approved' before the target enters it. The shared implementation in
+// version_approval.go owns that order for all eight families, so this command
+// cannot disagree with the others about it.
 //
-// The repository's write is guarded by the status this call read. It is not a
-// revision compare-and-swap, because the row has no revision to compare; what
-// it protects is that a version edited or re-reviewed under the caller is not
-// approved silently on the strength of a stale read.
+// The section 17 event is recorded in the same transaction, so an approval
+// nobody can audit does not happen. A service composed without a recorder
+// therefore refuses rather than approving silently.
 func (s *Service) ApproveScriptVersion(ctx context.Context, request ApproveScriptVersionRequest) (scriptdomain.ScriptVersion, error) {
 	if !s.Available() {
 		return scriptdomain.ScriptVersion{}, storageFailure()
@@ -483,15 +498,22 @@ func (s *Service) ApproveScriptVersion(ctx context.Context, request ApproveScrip
 	if err := versioning.CanApprove(version.Status, versioning.StatusApproved); err != nil {
 		return scriptdomain.ScriptVersion{}, err
 	}
-	current, approved, err := s.repository.CurrentApprovedScriptVersion(ctx, version.ScriptID)
+	// The governance event, built before the switch so a service without a
+	// recorder refuses rather than approving unrecorded.
+	scriptRecord, err := s.repository.GetScript(ctx, version.ScriptID)
 	if err != nil {
 		return scriptdomain.ScriptVersion{}, err
 	}
-	supersededID := ""
-	if approved && versioning.SupersedePrevious(current.Status) {
-		supersededID = current.ID
+	episode, err := s.repository.GetEpisode(ctx, scriptRecord.EpisodeID)
+	if err != nil {
+		return scriptdomain.ScriptVersion{}, err
 	}
-	if err := s.repository.ApproveScriptVersion(ctx, version, supersededID); err != nil {
+	record, err := s.approveEvent(ctx, event.ScriptVersionApproved, event.AggregateScript,
+		version.ID, episode.ProjectID, request.TraceID, "")
+	if err != nil {
+		return scriptdomain.ScriptVersion{}, err
+	}
+	if err := s.repository.ApproveScriptVersion(ctx, version.ID, version.ScriptID, version.Status, record); err != nil {
 		return scriptdomain.ScriptVersion{}, err
 	}
 	version.Status = versioning.StatusApproved

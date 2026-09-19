@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	eventsapp "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/events"
 	"reflect"
 	"strings"
 	"sync"
@@ -524,27 +525,28 @@ func (s *dramaStore) CurrentApprovedScriptVersion(_ context.Context, scriptID st
 	return scriptdomain.ScriptVersion{}, false, nil
 }
 
-func (s *dramaStore) ApproveScriptVersion(_ context.Context, target scriptdomain.ScriptVersion, supersededVersionID string) error {
+func (s *dramaStore) ApproveScriptVersion(_ context.Context, versionID, scriptID string, expectedStatus versioning.Status, record event.Event) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	current, ok := s.scriptVers[target.ID]
+	target, ok := s.scriptVers[versionID]
 	if !ok {
 		return scriptdomain.NotFoundError()
 	}
 	// The row has no revision, so the status the caller read is the guard.
-	if current.Status != target.Status {
+	if target.Status != expectedStatus {
 		return scriptdomain.ConflictError("This script version changed in another window. Reload it and try again.")
 	}
-	if supersededVersionID != "" {
-		previous, ok := s.scriptVers[supersededVersionID]
-		if !ok {
-			return scriptdomain.NotFoundError()
+	// The shared switch's two writes: retire the current approval, then approve
+	// the target, with the governance event landing alongside them.
+	for id, version := range s.scriptVers {
+		if version.ScriptID == scriptID && version.Status == versioning.StatusApproved && id != versionID {
+			version.Status = versioning.StatusSuperseded
+			s.scriptVers[id] = version
 		}
-		previous.Status = "superseded"
-		s.scriptVers[previous.ID] = previous
 	}
-	target.Status = "approved"
-	s.scriptVers[target.ID] = target
+	target.Status = versioning.StatusApproved
+	s.scriptVers[versionID] = target
+	s.recorded = append(s.recorded, record)
 	return nil
 }
 
@@ -1138,12 +1140,16 @@ func attachDramaFixture() *dramaFixture {
 	AttachStory(binding, context.Background(), appstory.NewService(appstory.Options{
 		Repository: store, Clock: fixedDramaClock{}, IDs: fixedIDs(),
 	}))
+	// The approval commands refuse without a recorder, so every service that
+	// owns one is composed with the same test recorder the production wiring
+	// supplies.
+	recorder := dramaTestRecorder{}
 	AttachScript(binding, context.Background(), appscript.NewService(appscript.Options{
-		Repository: store, Clock: fixedDramaClock{}, IDs: fixedIDs(),
+		Repository: store, Clock: fixedDramaClock{}, IDs: fixedIDs(), Events: recorder,
 	}))
 	AttachStoryboard(binding, context.Background(), appstoryboard.NewService(appstoryboard.Options{
 		DirectorPlans: store, Storyboards: store, Items: store, Panels: store,
-		Clock: fixedDramaClock{}, IDs: fixedIDs(),
+		Clock: fixedDramaClock{}, IDs: fixedIDs(), Events: recorder,
 	}))
 	AttachWorkflow(binding, context.Background(), appworkflow.NewService(appworkflow.Options{
 		Runs: store, Stages: store, Reviews: store, Decisions: store, Events: store,
@@ -2408,3 +2414,17 @@ func (s *dramaStore) ProjectOfStoryboard(_ context.Context, storyboardID string)
 	}
 	return projectID, nil
 }
+
+// dramaTestRecorder builds events for the binding tests without a database, so
+// the approval commands have the recorder they require.
+type dramaTestRecorder struct{}
+
+func (dramaTestRecorder) Build(_ context.Context, draft eventsapp.Draft) (event.Event, error) {
+	return event.New(
+		"event-"+string(draft.Type),
+		draft.Type, draft.AggregateType, draft.AggregateID, draft.ProjectID,
+		time.Date(2026, 9, 18, 10, 0, 0, 0, time.UTC), draft.TraceID, draft.Payload,
+	)
+}
+
+func (dramaTestRecorder) RecordBestEffort(_ context.Context, _ eventsapp.Draft) {}

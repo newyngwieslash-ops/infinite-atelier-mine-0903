@@ -396,79 +396,22 @@ func (r *ScriptRepository) CurrentApprovedScriptVersion(ctx context.Context, scr
 	return version, true, nil
 }
 
-// ApproveScriptVersion makes one version approved and supersedes the previous
-// approval, in one transaction.
+// ApproveScriptVersion switches a script's approval, recording the governance
+// event in the same transaction.
 //
-// DOMAIN_MODEL §2.5 allows at most one approved version of a script, which
-// migration 000008 enforces with the partial unique index
-// idx_script_versions_approved (script_id WHERE status = 'approved'). Because
-// the index is partial and immediate, the two writes are order-dependent: the
-// previous approval has to leave 'approved' before the target enters it, and
-// running only the second would be rejected by the index. One transaction is
-// what makes the pair atomic, so a failure between them cannot leave the script
-// with no approved version at all.
-//
-// The guard on the target write is the status the caller read, because
-// script_versions has no revision column to compare. A version whose status
-// moved under the caller matches no row here and is reported as a conflict.
-func (r *ScriptRepository) ApproveScriptVersion(ctx context.Context, target script.ScriptVersion, supersededVersionID string) error {
-	if r == nil || r.db == nil {
-		return storageError("SCRIPT_STORE_UNAVAILABLE", "The episode and script store is unavailable.", nil)
-	}
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return storageError("SCRIPT_TX_FAILED", "The approval could not be started.", err)
-	}
-	committed := false
-	defer func() {
-		if !committed {
-			// A rollback after a successful commit is a no-op, so this is safe
-			// on every path and is what keeps the two writes atomic.
-			_ = tx.Rollback()
-		}
-	}()
-
-	conn := connection(r.db, tx)
-	if supersededVersionID != "" {
-		// The previous approval becomes history first. Matching on the status it
-		// held is what makes this the same compare-and-swap the target write uses.
-		result, err := conn.ExecContext(ctx, `UPDATE script_versions SET status = 'superseded'
-			WHERE id = ? AND status = 'approved'`, supersededVersionID)
-		if err != nil {
-			return storageError("SCRIPT_WRITE_FAILED", "The previous approval could not be superseded.", err)
-		}
-		affected, err := result.RowsAffected()
-		if err != nil {
-			return storageError("SCRIPT_WRITE_FAILED", "The previous approval could not be superseded.", err)
-		}
-		if affected == 0 {
-			return script.ConflictError("The version this approval would replace is no longer approved. Reload and try again.")
-		}
-	}
-
-	result, err := conn.ExecContext(ctx, `UPDATE script_versions SET status = 'approved'
-		WHERE id = ? AND status = ?`, target.ID, string(target.Status))
-	if err != nil {
-		if isUniqueViolation(err) {
-			// The index refuses a second approved row, which is what makes this
-			// decision safe without holding a lock on the script.
-			return script.ConflictError("This script already has an approved version.")
-		}
-		return storageError("SCRIPT_WRITE_FAILED", "The script version could not be approved.", err)
-	}
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return storageError("SCRIPT_WRITE_FAILED", "The script version could not be approved.", err)
-	}
-	if affected == 0 {
-		return script.ConflictError("This version changed in another window. Reload it and try again.")
-	}
-
-	if err := tx.Commit(); err != nil {
-		return storageError("SCRIPT_TX_FAILED", "The approval could not be committed.", err)
-	}
-	committed = true
-	return nil
+// The mechanism is the shared switch every version family uses; what this
+// method supplies is the family it belongs to. The guard on the target write is
+// the status the caller read, because script_versions has no revision column to
+// compare -- a version whose status moved under the caller matches no row and is
+// reported as a conflict. One transaction is what makes the pair atomic, so a
+// failure cannot leave the script with no approved version at all.
+func (r *ScriptRepository) ApproveScriptVersion(ctx context.Context, versionID, scriptID string, expectedStatus versioning.Status, record event.Event) error {
+	// The same shared switch the other seven families use. An earlier revision
+	// carried its own copy of the two writes here, which is the drift risk the
+	// shared helper exists to remove: two implementations of one section 2.5
+	// rule can disagree about the order, and the order is what keeps the
+	// partial unique index satisfiable.
+	return approveVersionWithEvent(ctx, r.db, familyScriptVersions, versionID, scriptID, expectedStatus, record)
 }
 
 const sceneSelectColumns = `SELECT id, script_version_id, ordinal, scene_number, slugline, interior_exterior,

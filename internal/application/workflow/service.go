@@ -357,6 +357,19 @@ func (s *Service) TransitionStage(ctx context.Context, request TransitionStageRe
 		return workflow.StageRun{}, err
 	}
 	record.Revision = request.Revision + 1
+	// Section 17's WorkflowStageChanged. Best effort: the transition and its
+	// workflow audit row are committed, so the caller must not be told the
+	// command failed because the stream's copy did not land. A stage run names
+	// its workflow run rather than a project, so the project is resolved through
+	// it; a failed lookup skips the announcement rather than failing the command.
+	if run, runErr := s.runs.GetRun(ctx, record.WorkflowRunID); runErr == nil {
+		s.recordEvent(ctx, eventsapp.Draft{
+			Type:          domainevent.WorkflowStageChanged,
+			AggregateType: domainevent.AggregateWorkflow,
+			AggregateID:   record.ID,
+			ProjectID:     run.ProjectID,
+		})
+	}
 	return record, nil
 }
 
@@ -459,7 +472,37 @@ func (s *Service) RecordReview(ctx context.Context, request RecordReviewRequest)
 	if err := s.reviews.CreateReport(ctx, report, issues); err != nil {
 		return workflow.ReviewReport{}, nil, err
 	}
+	// Section 17's ReviewReportCreated. The report names its stage run, and the
+	// project comes from that run's workflow; a failed lookup skips the
+	// announcement rather than failing a report that is already stored.
+	projectID := s.projectOfStage(ctx, report.StageRunID)
+	if projectID != "" {
+		s.recordEvent(ctx, eventsapp.Draft{
+			Type:          domainevent.ReviewReportCreated,
+			AggregateType: domainevent.AggregateReview,
+			AggregateID:   report.ID,
+			ProjectID:     projectID,
+		})
+	}
 	return report, issues, nil
+}
+
+// projectOfStage resolves the project a stage run belongs to, through its
+// workflow run. It returns "" when either lookup misses, which the callers treat
+// as "skip the announcement" rather than as a failure.
+func (s *Service) projectOfStage(ctx context.Context, stageRunID string) string {
+	if stageRunID == "" {
+		return ""
+	}
+	stage, err := s.stages.GetStage(ctx, stageRunID)
+	if err != nil {
+		return ""
+	}
+	run, err := s.runs.GetRun(ctx, stage.WorkflowRunID)
+	if err != nil {
+		return ""
+	}
+	return run.ProjectID
 }
 
 // SubmitGateDecisionRequest records what the user chose at a quality gate.
@@ -512,6 +555,17 @@ func (s *Service) SubmitGateDecision(ctx context.Context, request SubmitGateDeci
 	}
 	if err := s.decisions.CreateDecision(ctx, record); err != nil {
 		return workflow.UserGateDecision{}, err
+	}
+	// Section 17's UserGateDecided. The decision names its workflow run, which
+	// carries the project; a failed lookup skips the announcement rather than
+	// failing a decision that is already stored.
+	if run, runErr := s.runs.GetRun(ctx, record.WorkflowRunID); runErr == nil {
+		s.recordEvent(ctx, eventsapp.Draft{
+			Type:          domainevent.UserGateDecided,
+			AggregateType: domainevent.AggregateWorkflow,
+			AggregateID:   record.ID,
+			ProjectID:     run.ProjectID,
+		})
 	}
 	return record, nil
 }

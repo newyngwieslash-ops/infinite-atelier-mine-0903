@@ -348,6 +348,16 @@ func (s *Service) ApproveVersion(ctx context.Context, request ApproveVersionRequ
 	if err := s.repository.UpdateAsset(ctx, record, record.Revision); err != nil {
 		return asset.Version{}, err
 	}
+	// Section 17's AssetVersionApproved. Best effort: the switch is committed,
+	// so the caller must not be told the command failed because the announcement
+	// did not land. Unlike the eight version-family approvals this one writes
+	// three statements rather than a transaction, which its own comment records.
+	s.recordEvent(ctx, eventsapp.Draft{
+		Type:          event.AssetVersionApproved,
+		AggregateType: event.AggregateAsset,
+		AggregateID:   record.ID,
+		ProjectID:     record.ProjectID,
+	})
 	version.Status = asset.VersionApproved
 	return version, nil
 }

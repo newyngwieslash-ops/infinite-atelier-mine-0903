@@ -2,6 +2,7 @@ package script
 
 import (
 	"context"
+	eventsapp "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/events"
 	"sync"
 	"testing"
 	"time"
@@ -294,36 +295,29 @@ func (s *memoryStore) CurrentApprovedScriptVersion(_ context.Context, scriptID s
 // on the status the caller read, supersedes the previous approval first, and
 // refuses an approval that would leave two approved rows — the schema's partial
 // unique index makes exactly that write fail, so the double refuses it too.
-func (s *memoryStore) ApproveScriptVersion(_ context.Context, target scriptdomain.ScriptVersion, supersededVersionID string) error {
+func (s *memoryStore) ApproveScriptVersion(_ context.Context, versionID, scriptID string, expectedStatus versioning.Status, record event.Event) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.approveCalls++
-	current, ok := s.versions[target.ID]
+	target, ok := s.versions[versionID]
 	if !ok {
 		return scriptdomain.NotFoundError()
 	}
-	if current.Status != target.Status {
+	if target.Status != expectedStatus {
 		return scriptdomain.ConflictError("This item changed in another window. Reload it and try again.")
 	}
-	if supersededVersionID == "" {
-		for _, version := range s.versions {
-			if version.ScriptID == target.ScriptID && version.Status == versioning.StatusApproved {
-				return scriptdomain.ConflictError("This script already has an approved version.")
-			}
+	// The switch the real implementation performs in one transaction: the
+	// previous approval becomes history first, then the target is approved, and
+	// the governance event lands with them.
+	for id, version := range s.versions {
+		if version.ScriptID == scriptID && version.Status == versioning.StatusApproved && id != versionID {
+			version.Status = versioning.StatusSuperseded
+			s.versions[id] = version
 		}
-	}
-	// The two writes the real repository performs in one transaction: the
-	// previous approval becomes history first, then the target is approved.
-	if supersededVersionID != "" {
-		previous, ok := s.versions[supersededVersionID]
-		if !ok {
-			return scriptdomain.NotFoundError()
-		}
-		previous.Status = versioning.StatusSuperseded
-		s.versions[previous.ID] = previous
 	}
 	target.Status = versioning.StatusApproved
-	s.versions[target.ID] = target
+	s.versions[versionID] = target
+	s.events = append(s.events, record)
 	return nil
 }
 
@@ -440,7 +434,51 @@ func (s *memoryStore) approvedStatuses(scriptID string) []versioning.Status {
 }
 
 func newTestService(store Repository) *Service {
-	return NewService(Options{Repository: store, Clock: fixedClock{}, IDs: newCounterIDs("script")})
+	// The recorder is supplied because the approval commands refuse without one:
+	// an approval whose governance event cannot be written is not applied, which
+	// is the rule TestApproveScriptVersionRefusesWithoutARecorder covers.
+	return NewService(Options{
+		Repository: store,
+		Clock:      fixedClock{},
+		IDs:        newCounterIDs("script"),
+		Events:     testRecorder{},
+	})
+}
+
+// testRecorder builds events for the tests that assert on them, without a
+// database.
+type testRecorder struct{}
+
+func (testRecorder) Build(_ context.Context, draft eventsapp.Draft) (event.Event, error) {
+	return event.New(
+		"event-"+sanitizeForID(draft.AggregateID),
+		draft.Type, draft.AggregateType, draft.AggregateID, draft.ProjectID,
+		time.Date(2026, 9, 18, 10, 0, 0, 0, time.UTC), draft.TraceID, draft.Payload,
+	)
+}
+
+func (testRecorder) RecordBestEffort(_ context.Context, _ eventsapp.Draft) {}
+
+// sanitizeForID keeps a generated test identifier free of characters the event
+// domain rejects, so a fixture id can be used as one.
+func sanitizeForID(value string) string {
+	cleaned := make([]byte, 0, len(value))
+	for index := 0; index < len(value); index++ {
+		character := value[index]
+		switch {
+		case character >= 'a' && character <= 'z':
+		case character >= 'A' && character <= 'Z':
+		case character >= '0' && character <= '9':
+		case character == '-' || character == '_':
+		default:
+			character = '-'
+		}
+		cleaned = append(cleaned, character)
+	}
+	if len(cleaned) == 0 {
+		return "anonymous"
+	}
+	return string(cleaned)
 }
 
 // sampleEpisode creates one episode through the service.

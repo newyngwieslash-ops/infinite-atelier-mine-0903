@@ -105,19 +105,12 @@ type ScriptRepository interface {
 	// boolean is false rather than an error when none is approved yet, because
 	// "no approval" is the ordinary state of a new script.
 	CurrentApprovedScriptVersion(ctx context.Context, scriptID string) (scriptdomain.ScriptVersion, bool, error)
-	// ApproveScriptVersion switches a script's approval in one transaction:
-	// supersededVersionID (empty when nothing was approved) becomes
-	// 'superseded' and target becomes 'approved'.
-	//
-	// The target write is guarded by the status the caller read, which is the
-	// only concurrency token this row has: migration 000008 gives script_versions
-	// no revision column, so the guard matches status. Both writes are one
-	// transaction because the schema's partial unique index
-	// (script_id WHERE status = 'approved') admits one approved row per script,
-	// so the supersede has to land before the approval: without that order the
-	// index would reject the approval, and without the transaction a failure
-	// between the two would leave the script with no approved version.
-	ApproveScriptVersion(ctx context.Context, target scriptdomain.ScriptVersion, supersededVersionID string) error
+	// ApproveScriptVersion switches a script's approval in one transaction and
+	// records the governance event with it: supersede the previous approval,
+	// then approve the target, then write the section 17 event, or none of the
+	// three. It is the same switch the other seven version families use, with
+	// the same guarantee that an approval nobody can audit does not happen.
+	ApproveScriptVersion(ctx context.Context, versionID, scriptID string, expectedStatus versioning.Status, record event.Event) error
 }
 
 // SceneRepository persists scenes of a script version.

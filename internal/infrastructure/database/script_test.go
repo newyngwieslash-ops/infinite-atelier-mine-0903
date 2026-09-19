@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/event"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/script"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/versioning"
 )
@@ -370,7 +371,7 @@ func TestScriptRepositoryApproveAndSupersedeIsAtomic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := repo.ApproveScriptVersion(ctx, first, ""); err != nil {
+	if err := repo.ApproveScriptVersion(ctx, first.ID, scriptID, first.Status, testDomainEvent(t, "approve-first")); err != nil {
 		t.Fatalf("approving the first version: %v", err)
 	}
 	if got := approvedCount(t, db, scriptID); got != 1 {
@@ -393,7 +394,7 @@ func TestScriptRepositoryApproveAndSupersedeIsAtomic(t *testing.T) {
 	if err := repo.CreateScriptVersion(ctx, second); err != nil {
 		t.Fatal(err)
 	}
-	if err := repo.ApproveScriptVersion(ctx, second, first.ID); err != nil {
+	if err := repo.ApproveScriptVersion(ctx, second.ID, scriptID, second.Status, testDomainEvent(t, "approve-second")); err != nil {
 		t.Fatalf("approving the second version: %v", err)
 	}
 	// Exactly one approved row, and it is the new one.
@@ -417,11 +418,13 @@ func TestScriptRepositoryApproveAndSupersedeIsAtomic(t *testing.T) {
 
 	// A second approval of the same row against the status it no longer holds is
 	// refused, and it changes nothing: the guard is the compare-and-swap.
-	staleSecond := second
-	staleSecond.Status = versioning.StatusUnderReview
-	if err := repo.ApproveScriptVersion(ctx, staleSecond, first.ID); err == nil {
+	staleStatus := versioning.StatusUnderReview
+	if err := repo.ApproveScriptVersion(ctx, second.ID, scriptID, staleStatus, testDomainEvent(t, "approve-stale")); err == nil {
 		t.Fatal("a version whose status moved was approved anyway")
-	} else if domainErr, ok := script.AsError(err); !ok || domainErr.Category != script.CategoryConflict {
+	} else if domainErr, ok := versioning.AsError(err); !ok || domainErr.Category != versioning.CategoryConflict {
+		// The conflict comes from the shared switch, so its error type is the
+		// version vocabulary's rather than the script domain's. The category is
+		// what a caller acts on, and the binding maps either one.
 		t.Fatalf("expected a conflict, got %v", err)
 	}
 	if got := approvedCount(t, db, scriptID); got != 1 {
@@ -437,8 +440,13 @@ func TestScriptRepositoryApproveAndSupersedeIsAtomic(t *testing.T) {
 		t.Fatalf("a refused approval rewrote the previous version: %q", reRead.Status)
 	}
 
-	// A supersede that names a version that is not approved is refused before
-	// the approval lands, so the pair really is one transaction.
+	// A third version approves on top of the second, and the second is retired
+	// in the same transaction. An earlier revision of this test asserted a
+	// conflict here, because the old implementation took the supersede target as
+	// a caller-supplied id and rejected one that was not the current approval.
+	// The shared switch derives the target itself, so this is now an ordinary
+	// approval -- and the count assertion below is what proves the pair stayed
+	// atomic through it.
 	third := script.ScriptVersion{
 		ID: "script-version-3", ScriptID: scriptID, VersionNumber: 3,
 		Status: versioning.StatusDraft, StorySkeletonVersionID: "skeleton-1",
@@ -448,18 +456,25 @@ func TestScriptRepositoryApproveAndSupersedeIsAtomic(t *testing.T) {
 	if err := repo.CreateScriptVersion(ctx, third); err != nil {
 		t.Fatal(err)
 	}
-	if err := repo.ApproveScriptVersion(ctx, third, first.ID); err == nil {
-		t.Fatal("a version that is not the current approval was superseded")
-	} else if domainErr, ok := script.AsError(err); !ok || domainErr.Category != script.CategoryConflict {
-		t.Fatalf("expected a conflict, got %v", err)
+	if err := repo.ApproveScriptVersion(ctx, third.ID, scriptID, third.Status, testDomainEvent(t, "approve-third")); err != nil {
+		t.Fatalf("approving the third version: %v", err)
 	}
+	retired, err := repo.GetScriptVersion(ctx, second.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retired.Status != versioning.StatusSuperseded {
+		t.Fatalf("the version the third approval replaced is %q, want superseded", retired.Status)
+	}
+	// Exactly one approved row after three approvals, and it is the newest: the
+	// index allows at most one and the switch leaves exactly one.
 	if got := approvedCount(t, db, scriptID); got != 1 {
-		t.Fatalf("the failed transaction left %d approved rows", got)
+		t.Fatalf("three approvals left %d approved rows, want 1", got)
 	}
 	if current, _, err := repo.CurrentApprovedScriptVersion(ctx, scriptID); err != nil {
 		t.Fatal(err)
-	} else if current.ID != second.ID {
-		t.Fatalf("the failed transaction changed the approval to %q", current.ID)
+	} else if current.ID != third.ID {
+		t.Fatalf("the approved version is %q, want %s", current.ID, third.ID)
 	}
 
 	foreignKeysClean(t, db)
@@ -659,7 +674,7 @@ func TestScriptRepositoryUnattachedFailsClosed(t *testing.T) {
 	if err := repo.CreateEpisode(ctx, sampleEpisode(t)); err == nil {
 		t.Fatal("an unattached repository wrote an episode")
 	}
-	if err := repo.ApproveScriptVersion(ctx, script.ScriptVersion{ID: "script-version-1"}, ""); err == nil {
+	if err := repo.ApproveScriptVersion(ctx, "script-version-1", "script-1", versioning.StatusDraft, testDomainEvent(t, "approve-unattached")); err == nil {
 		t.Fatal("an unattached repository ran an approval")
 	}
 	// A copy bound to a transaction keeps the handle it was given.
@@ -677,4 +692,17 @@ func TestScriptRepositoryUnattachedFailsClosed(t *testing.T) {
 	if bound.conn() == nil {
 		t.Fatal("WithinTx produced a repository with no connection")
 	}
+}
+
+// testDomainEvent builds a domain event for a repository test that needs one to
+// satisfy the approval switch's signature. Its content is not what these tests
+// assert; the event's own behaviour is covered in events_test.go.
+func testDomainEvent(t *testing.T, id string) event.Event {
+	t.Helper()
+	record, err := event.New(id, event.ScriptVersionApproved, event.AggregateScript,
+		"script-version-1", "project-1", fixedClock()(), "", "")
+	if err != nil {
+		t.Fatalf("building the test event: %v", err)
+	}
+	return record
 }
