@@ -1,2 +1,7 @@
 web/public/monoform/assets/*.js -whitespace
 * linguist-detectable=false
+# Fixtures are read byte-for-byte by the import tests: a line-ending
+# translation would change a ZIP's structure and invalidate the hashes the
+# tests assert on.
+testdata/malicious-imports/* -text
+testdata/canary-drama/* -text
