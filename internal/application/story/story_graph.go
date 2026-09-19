@@ -293,3 +293,124 @@ func (s *Service) ListStoryConflicts(ctx context.Context, projectID string, stat
 	}
 	return s.repository.ListStoryConflicts(ctx, projectID, status)
 }
+
+// LockStoryEntityRequest pins or releases a fact.
+type LockStoryEntityRequest struct {
+	ID       string
+	Revision int64
+}
+
+// LockStoryEntity pins a fact so a later pass cannot revise it.
+//
+// AC-STORY-002 lists 接受/拒绝/锁定 as the three decisions a candidate must be
+// able to receive, and the lock was the one with no command: 'locked' existed as a
+// status that four gates refused to move a fact OUT of, and nothing could put a
+// fact INTO it. A state only the database can produce is not a feature.
+//
+// The lock is deliberately reachable from any status, including 'rejected': a
+// user may decide that a rejection is final for this project, and that is a
+// different statement from the rejection itself. What it is NOT reachable from is
+// 'locked', because re-locking would write a revision for no state change.
+func (s *Service) LockStoryEntity(ctx context.Context, request LockStoryEntityRequest) (storydomain.StoryEntity, error) {
+	if !s.Available() {
+		return storydomain.StoryEntity{}, storageFailure()
+	}
+	record, err := s.repository.GetStoryEntity(ctx, request.ID)
+	if err != nil {
+		return storydomain.StoryEntity{}, err
+	}
+	if record.Status == storydomain.FactLocked {
+		return storydomain.StoryEntity{}, storydomain.ConflictError("This fact is already locked.")
+	}
+	record.Status = storydomain.FactLocked
+	record.UpdatedAt = s.now()
+	if err := record.Validate(); err != nil {
+		return storydomain.StoryEntity{}, err
+	}
+	if err := s.repository.UpdateStoryEntity(ctx, record, request.Revision); err != nil {
+		return storydomain.StoryEntity{}, err
+	}
+	record.Revision = request.Revision + 1
+	return record, nil
+}
+
+// LockStoryEvent pins an event.
+func (s *Service) LockStoryEvent(ctx context.Context, request LockStoryEntityRequest) (storydomain.StoryEvent, error) {
+	if !s.Available() {
+		return storydomain.StoryEvent{}, storageFailure()
+	}
+	record, err := s.repository.GetStoryEvent(ctx, request.ID)
+	if err != nil {
+		return storydomain.StoryEvent{}, err
+	}
+	if record.Status == storydomain.FactLocked {
+		return storydomain.StoryEvent{}, storydomain.ConflictError("This fact is already locked.")
+	}
+	record.Status = storydomain.FactLocked
+	record.UpdatedAt = s.now()
+	if err := record.Validate(); err != nil {
+		return storydomain.StoryEvent{}, err
+	}
+	if err := s.repository.UpdateStoryEvent(ctx, record, request.Revision); err != nil {
+		return storydomain.StoryEvent{}, err
+	}
+	record.Revision = request.Revision + 1
+	return record, nil
+}
+
+// UnlockStoryEntity releases a lock.
+//
+// It is a separate command rather than an argument on Lock because the two are
+// different decisions with different consequences, and an argument is one
+// keystroke away from the wrong one. Only 'locked' can be released: unlocking a
+// fact that was never locked would silently move it to 'accepted', which is a
+// confirmation the user did not make.
+func (s *Service) UnlockStoryEntity(ctx context.Context, request LockStoryEntityRequest) (storydomain.StoryEntity, error) {
+	if !s.Available() {
+		return storydomain.StoryEntity{}, storageFailure()
+	}
+	record, err := s.repository.GetStoryEntity(ctx, request.ID)
+	if err != nil {
+		return storydomain.StoryEntity{}, err
+	}
+	if record.Status != storydomain.FactLocked {
+		return storydomain.StoryEntity{}, storydomain.ConflictError("This fact is not locked.")
+	}
+	// Releasing returns the fact to 'accepted', which is the state a locked fact
+	// was in before it was pinned: the lock protects a decision, and releasing it
+	// leaves the decision standing rather than undoing it.
+	record.Status = storydomain.FactAccepted
+	record.UpdatedAt = s.now()
+	if err := record.Validate(); err != nil {
+		return storydomain.StoryEntity{}, err
+	}
+	if err := s.repository.UpdateStoryEntity(ctx, record, request.Revision); err != nil {
+		return storydomain.StoryEntity{}, err
+	}
+	record.Revision = request.Revision + 1
+	return record, nil
+}
+
+// UnlockStoryEvent releases an event's lock.
+func (s *Service) UnlockStoryEvent(ctx context.Context, request LockStoryEntityRequest) (storydomain.StoryEvent, error) {
+	if !s.Available() {
+		return storydomain.StoryEvent{}, storageFailure()
+	}
+	record, err := s.repository.GetStoryEvent(ctx, request.ID)
+	if err != nil {
+		return storydomain.StoryEvent{}, err
+	}
+	if record.Status != storydomain.FactLocked {
+		return storydomain.StoryEvent{}, storydomain.ConflictError("This fact is not locked.")
+	}
+	record.Status = storydomain.FactAccepted
+	record.UpdatedAt = s.now()
+	if err := record.Validate(); err != nil {
+		return storydomain.StoryEvent{}, err
+	}
+	if err := s.repository.UpdateStoryEvent(ctx, record, request.Revision); err != nil {
+		return storydomain.StoryEvent{}, err
+	}
+	record.Revision = request.Revision + 1
+	return record, nil
+}

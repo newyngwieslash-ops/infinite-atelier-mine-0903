@@ -14,8 +14,12 @@ import {
     listStoryEvents,
     listStoryFactSources,
     listStoryRelations,
+    lockStoryEntity,
+    lockStoryEvent,
     rejectStoryEntity,
     resolveStoryConflict,
+    unlockStoryEntity,
+    unlockStoryEvent,
 } from "@/services/desktop/drama";
 import { ENTITY_TYPES } from "@/services/desktop/drama";
 import type { desktop } from "@/wailsjs/go/models";
@@ -143,6 +147,53 @@ export function StoryGraphSection({ projectId }: StoryGraphSectionProps) {
         }
     };
 
+    /**
+     * toggleLock pins or releases a fact.
+     *
+     * AC-STORY-002 lists 接受/拒绝/锁定 as the three decisions a candidate may
+     * receive, and this is the third. The lock protects a decision rather than
+     * making one: releasing it returns the fact to 'accepted', which is the state
+     * it was in before it was pinned.
+     */
+    const toggleLock = async (id: string, revision: number, locked: boolean) => {
+        setBusy(id);
+        try {
+            const request = { id, revision } as desktop.LockStoryEntityRequest;
+            if (locked) {
+                await unlockStoryEntity(request);
+            } else {
+                await lockStoryEntity(request);
+            }
+            await load();
+        } catch (caught) {
+            // A refusal is usually a conflict: the row moved. The reload shows
+            // the state that actually exists.
+            message.error(caught instanceof Error ? caught.message : t("studio.storyGraph.lockFailed"));
+            await load();
+        } finally {
+            setBusy(null);
+        }
+    };
+
+    /** toggleEventLock is the same decision for an event, which is a separate command. */
+    const toggleEventLock = async (id: string, revision: number, locked: boolean) => {
+        setBusy(id);
+        try {
+            const request = { id, revision } as desktop.LockStoryEntityRequest;
+            if (locked) {
+                await unlockStoryEvent(request);
+            } else {
+                await lockStoryEvent(request);
+            }
+            await load();
+        } catch (caught) {
+            message.error(caught instanceof Error ? caught.message : t("studio.storyGraph.lockFailed"));
+            await load();
+        } finally {
+            setBusy(null);
+        }
+    };
+
     const showEvidence = async (factType: string, factId: string) => {
         try {
             setEvidence({ factId, rows: await listStoryFactSources(factType, factId) });
@@ -201,6 +252,14 @@ export function StoryGraphSection({ projectId }: StoryGraphSectionProps) {
                     >
                         {t("studio.storyGraph.reject")}
                     </Button>
+                    <Button
+                        size="small"
+                        loading={busy === record.id}
+                        data-testid={`studio-entity-lock-${record.id}`}
+                        onClick={() => void toggleLock(record.id, record.revision, record.status === "locked")}
+                    >
+                        {record.status === "locked" ? t("studio.storyGraph.unlock") : t("studio.storyGraph.lock")}
+                    </Button>
                     <Button size="small" type="text" onClick={() => void showEvidence("entity", record.id)}>
                         {t("studio.storyGraph.evidence")}
                     </Button>
@@ -232,6 +291,14 @@ export function StoryGraphSection({ projectId }: StoryGraphSectionProps) {
             width: 150,
             render: (_, record) => (
                 <Space size="small">
+                    <Button
+                        size="small"
+                        loading={busy === record.id}
+                        data-testid={`studio-event-lock-${record.id}`}
+                        onClick={() => void toggleEventLock(record.id, record.revision, record.status === "locked")}
+                    >
+                        {record.status === "locked" ? t("studio.storyGraph.unlock") : t("studio.storyGraph.lock")}
+                    </Button>
                     <Button size="small" type="text" onClick={() => void showParticipants(record.id)}>
                         {t("studio.storyGraph.participants")}
                     </Button>

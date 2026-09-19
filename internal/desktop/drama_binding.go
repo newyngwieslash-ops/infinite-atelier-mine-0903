@@ -897,6 +897,76 @@ func (b *DramaBinding) ListStoryEventParticipants(storyEventID string) ([]StoryE
 	return participants, nil
 }
 
+// LockStoryEntityRequest pins or releases a fact under a revision guard.
+type LockStoryEntityRequest struct {
+	ID       string `json:"id"`
+	Revision int64  `json:"revision"`
+}
+
+// LockStoryEntity pins a fact so a later pass cannot revise it.
+//
+// AC-STORY-002 lists 接受/拒绝/锁定 as the three decisions a candidate may
+// receive. The lock had no command at all: 'locked' was a status several gates
+// refused to move a fact out of, and nothing could put a fact into it.
+func (b *DramaBinding) LockStoryEntity(request LockStoryEntityRequest) (StoryEntityDTO, error) {
+	service := b.storyService()
+	if service == nil {
+		return StoryEntityDTO{}, bindingUnavailable()
+	}
+	record, err := service.LockStoryEntity(b.context(), appstory.LockStoryEntityRequest{
+		ID: request.ID, Revision: request.Revision,
+	})
+	if err != nil {
+		return StoryEntityDTO{}, toDramaError(err)
+	}
+	return toStoryEntityDTO(record), nil
+}
+
+// UnlockStoryEntity releases a lock, leaving the decision it protected standing.
+func (b *DramaBinding) UnlockStoryEntity(request LockStoryEntityRequest) (StoryEntityDTO, error) {
+	service := b.storyService()
+	if service == nil {
+		return StoryEntityDTO{}, bindingUnavailable()
+	}
+	record, err := service.UnlockStoryEntity(b.context(), appstory.LockStoryEntityRequest{
+		ID: request.ID, Revision: request.Revision,
+	})
+	if err != nil {
+		return StoryEntityDTO{}, toDramaError(err)
+	}
+	return toStoryEntityDTO(record), nil
+}
+
+// LockStoryEvent pins an event.
+func (b *DramaBinding) LockStoryEvent(request LockStoryEntityRequest) (StoryEventDTO, error) {
+	service := b.storyService()
+	if service == nil {
+		return StoryEventDTO{}, bindingUnavailable()
+	}
+	record, err := service.LockStoryEvent(b.context(), appstory.LockStoryEntityRequest{
+		ID: request.ID, Revision: request.Revision,
+	})
+	if err != nil {
+		return StoryEventDTO{}, toDramaError(err)
+	}
+	return toStoryEventDTO(record), nil
+}
+
+// UnlockStoryEvent releases an event's lock.
+func (b *DramaBinding) UnlockStoryEvent(request LockStoryEntityRequest) (StoryEventDTO, error) {
+	service := b.storyService()
+	if service == nil {
+		return StoryEventDTO{}, bindingUnavailable()
+	}
+	record, err := service.UnlockStoryEvent(b.context(), appstory.LockStoryEntityRequest{
+		ID: request.ID, Revision: request.Revision,
+	})
+	if err != nil {
+		return StoryEventDTO{}, toDramaError(err)
+	}
+	return toStoryEventDTO(record), nil
+}
+
 // StoryFactConflictDTO is the transport view of a recorded disagreement.
 //
 // Both sides are named by fact type and id rather than by a rendered sentence,

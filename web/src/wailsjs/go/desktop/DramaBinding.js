@@ -182,6 +182,14 @@ export function ListWorkflowRuns(arg1) {
   return window['go']['desktop']['DramaBinding']['ListWorkflowRuns'](arg1);
 }
 
+export function LockStoryEntity(arg1) {
+  return window['go']['desktop']['DramaBinding']['LockStoryEntity'](arg1);
+}
+
+export function LockStoryEvent(arg1) {
+  return window['go']['desktop']['DramaBinding']['LockStoryEvent'](arg1);
+}
+
 export function MarkStale(arg1) {
   return window['go']['desktop']['DramaBinding']['MarkStale'](arg1);
 }
@@ -220,6 +228,14 @@ export function TransitionStageRun(arg1) {
 
 export function TransitionWorkflowRun(arg1) {
   return window['go']['desktop']['DramaBinding']['TransitionWorkflowRun'](arg1);
+}
+
+export function UnlockStoryEntity(arg1) {
+  return window['go']['desktop']['DramaBinding']['UnlockStoryEntity'](arg1);
+}
+
+export function UnlockStoryEvent(arg1) {
+  return window['go']['desktop']['DramaBinding']['UnlockStoryEvent'](arg1);
 }
 
 export function UpdateEpisodeStatus(arg1) {

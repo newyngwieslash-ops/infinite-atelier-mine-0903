@@ -1639,6 +1639,20 @@ export namespace desktop {
 	        this.includeTrashed = source["includeTrashed"];
 	    }
 	}
+	export class LockStoryEntityRequest {
+	    id: string;
+	    revision: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new LockStoryEntityRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.revision = source["revision"];
+	    }
+	}
 	export class MarkStaleRequest {
 	    artifactType: string;
 	    artifactId: string;

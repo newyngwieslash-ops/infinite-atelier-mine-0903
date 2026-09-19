@@ -475,6 +475,34 @@ export async function acceptStoryEntity(request: desktop.DecideStoryEntityReques
     return AcceptStoryEntity(request);
 }
 
+/** lockStoryEntity pins a fact so a later pass cannot revise it. */
+export async function lockStoryEntity(request: desktop.LockStoryEntityRequest): Promise<desktop.StoryEntityDTO> {
+    if (!isDramaBindingsAvailable()) throw unavailableError();
+    const { LockStoryEntity } = await loadDramaBinding();
+    return LockStoryEntity(request);
+}
+
+/** unlockStoryEntity releases a lock, leaving the decision it protected standing. */
+export async function unlockStoryEntity(request: desktop.LockStoryEntityRequest): Promise<desktop.StoryEntityDTO> {
+    if (!isDramaBindingsAvailable()) throw unavailableError();
+    const { UnlockStoryEntity } = await loadDramaBinding();
+    return UnlockStoryEntity(request);
+}
+
+/** lockStoryEvent pins an event. */
+export async function lockStoryEvent(request: desktop.LockStoryEntityRequest): Promise<desktop.StoryEventDTO> {
+    if (!isDramaBindingsAvailable()) throw unavailableError();
+    const { LockStoryEvent } = await loadDramaBinding();
+    return LockStoryEvent(request);
+}
+
+/** unlockStoryEvent releases an event's lock. */
+export async function unlockStoryEvent(request: desktop.LockStoryEntityRequest): Promise<desktop.StoryEventDTO> {
+    if (!isDramaBindingsAvailable()) throw unavailableError();
+    const { UnlockStoryEvent } = await loadDramaBinding();
+    return UnlockStoryEvent(request);
+}
+
 /** rejectStoryEntity refuses a candidate entity. */
 export async function rejectStoryEntity(request: desktop.DecideStoryEntityRequest): Promise<desktop.StoryEntityDTO> {
     if (!isDramaBindingsAvailable()) throw unavailableError();

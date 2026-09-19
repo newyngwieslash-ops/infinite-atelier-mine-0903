@@ -92,6 +92,10 @@ export function ListWorkflowEvents(arg1:string):Promise<Array<desktop.WorkflowEv
 
 export function ListWorkflowRuns(arg1:string):Promise<Array<desktop.WorkflowRunDTO>>;
 
+export function LockStoryEntity(arg1:desktop.LockStoryEntityRequest):Promise<desktop.StoryEntityDTO>;
+
+export function LockStoryEvent(arg1:desktop.LockStoryEntityRequest):Promise<desktop.StoryEventDTO>;
+
 export function MarkStale(arg1:desktop.MarkStaleRequest):Promise<desktop.StaleMarkDTO>;
 
 export function OpenStoryConflict(arg1:desktop.OpenStoryConflictRequest):Promise<desktop.StoryFactConflictDTO>;
@@ -111,6 +115,10 @@ export function SubmitGateDecision(arg1:desktop.SubmitGateDecisionRequest):Promi
 export function TransitionStageRun(arg1:desktop.TransitionStageRunRequest):Promise<desktop.StageRunDTO>;
 
 export function TransitionWorkflowRun(arg1:desktop.TransitionWorkflowRunRequest):Promise<desktop.WorkflowRunDTO>;
+
+export function UnlockStoryEntity(arg1:desktop.LockStoryEntityRequest):Promise<desktop.StoryEntityDTO>;
+
+export function UnlockStoryEvent(arg1:desktop.LockStoryEntityRequest):Promise<desktop.StoryEventDTO>;
 
 export function UpdateEpisodeStatus(arg1:desktop.UpdateEpisodeStatusRequest):Promise<desktop.EpisodeDTO>;
 

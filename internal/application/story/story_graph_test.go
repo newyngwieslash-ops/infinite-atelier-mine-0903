@@ -523,3 +523,124 @@ func TestListStoryConflictsRejectsAnUnknownStatus(t *testing.T) {
 		t.Fatal("an empty project id was accepted")
 	}
 }
+
+// TestLockAndUnlock cover AC-STORY-002's third decision.
+//
+// The status existed and four gates refused to move a fact OUT of it, while
+// nothing could put a fact INTO it: a state only the database could produce. These
+// tests are what make it a user command.
+func TestLockAndUnlock(t *testing.T) {
+	store := newMemoryStore()
+	service := newTestService(store)
+	entity, _ := seedGraphProject(t, service, store)
+	ctx := context.Background()
+
+	locked, err := service.LockStoryEntity(ctx, LockStoryEntityRequest{ID: entity.ID, Revision: entity.Revision})
+	if err != nil {
+		t.Fatalf("LockStoryEntity: %v", err)
+	}
+	if locked.Status != storydomain.FactLocked {
+		t.Fatalf("the entity is %q after locking", locked.Status)
+	}
+	if locked.Revision != entity.Revision+1 {
+		t.Fatalf("the revision is %d, want %d", locked.Revision, entity.Revision+1)
+	}
+
+	// Every gate refuses to move a locked fact, which is what the lock is for.
+	if _, err := service.AcceptStoryEntity(ctx, FactDecisionRequest{ID: entity.ID, Revision: locked.Revision}); err == nil {
+		t.Fatal("a locked entity was accepted")
+	}
+	if _, err := service.RejectStoryEntity(ctx, FactDecisionRequest{ID: entity.ID, Revision: locked.Revision}); err == nil {
+		t.Fatal("a locked entity was rejected")
+	}
+	// Locking twice is a conflict rather than a no-op revision.
+	if _, err := service.LockStoryEntity(ctx, LockStoryEntityRequest{ID: entity.ID, Revision: locked.Revision}); err == nil {
+		t.Fatal("an already locked entity was locked again")
+	}
+	// A stale revision is a conflict, so a lock cannot silently overwrite another
+	// window's change.
+	if _, err := service.LockStoryEntity(ctx, LockStoryEntityRequest{ID: entity.ID, Revision: entity.Revision}); err == nil {
+		t.Fatal("a lock with a stale revision was accepted")
+	}
+
+	// Releasing returns the fact to 'accepted' — the state a locked fact was in
+	// before it was pinned — rather than to 'candidate', which would discard the
+	// decision the lock was protecting.
+	unlocked, err := service.UnlockStoryEntity(ctx, LockStoryEntityRequest{ID: entity.ID, Revision: locked.Revision})
+	if err != nil {
+		t.Fatalf("UnlockStoryEntity: %v", err)
+	}
+	if unlocked.Status != storydomain.FactAccepted {
+		t.Fatalf("the entity is %q after unlocking, want accepted", unlocked.Status)
+	}
+	// Unlocking something that is not locked is refused rather than treated as a
+	// confirmation the user did not make.
+	if _, err := service.UnlockStoryEntity(ctx, LockStoryEntityRequest{ID: entity.ID, Revision: unlocked.Revision}); err == nil {
+		t.Fatal("an unlocked entity was unlocked again")
+	}
+}
+
+// TestLockStoryEvent covers the same rules for events, because they are separate
+// commands over a separate table rather than one generic path.
+func TestLockStoryEvent(t *testing.T) {
+	store := newMemoryStore()
+	service := newTestService(store)
+	ctx := context.Background()
+	event, err := service.CreateStoryEvent(ctx, CreateStoryEventRequest{
+		ProjectID: "project-1", ChapterID: "chapter-1", Name: "Mira finds the letter",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	locked, err := service.LockStoryEvent(ctx, LockStoryEntityRequest{ID: event.ID, Revision: event.Revision})
+	if err != nil {
+		t.Fatalf("LockStoryEvent: %v", err)
+	}
+	if locked.Status != storydomain.FactLocked {
+		t.Fatalf("the event is %q after locking", locked.Status)
+	}
+	if _, err := service.AcceptStoryEvent(ctx, FactDecisionRequest{ID: event.ID, Revision: locked.Revision}); err == nil {
+		t.Fatal("a locked event was accepted")
+	}
+	unlocked, err := service.UnlockStoryEvent(ctx, LockStoryEntityRequest{ID: event.ID, Revision: locked.Revision})
+	if err != nil {
+		t.Fatalf("UnlockStoryEvent: %v", err)
+	}
+	if unlocked.Status != storydomain.FactAccepted {
+		t.Fatalf("the event is %q after unlocking", unlocked.Status)
+	}
+	// A lock on a fact that does not exist is a not-found rather than a storage
+	// failure, so the UI can say which it is.
+	if _, err := service.LockStoryEntity(ctx, LockStoryEntityRequest{ID: "no-such-entity", Revision: 1}); err == nil {
+		t.Fatal("a missing entity was locked")
+	}
+}
+
+// TestLockingIsRefusedOnAMissingOrStaleFact proves an unattached service fails
+// closed for the lock commands too.
+func TestLockCommandsFailClosed(t *testing.T) {
+	service := NewService(Options{})
+	ctx := context.Background()
+	for name, call := range map[string]func() error{
+		"LockStoryEntity": func() error {
+			_, err := service.LockStoryEntity(ctx, LockStoryEntityRequest{ID: "e", Revision: 1})
+			return err
+		},
+		"UnlockStoryEntity": func() error {
+			_, err := service.UnlockStoryEntity(ctx, LockStoryEntityRequest{ID: "e", Revision: 1})
+			return err
+		},
+		"LockStoryEvent": func() error {
+			_, err := service.LockStoryEvent(ctx, LockStoryEntityRequest{ID: "e", Revision: 1})
+			return err
+		},
+		"UnlockStoryEvent": func() error {
+			_, err := service.UnlockStoryEvent(ctx, LockStoryEntityRequest{ID: "e", Revision: 1})
+			return err
+		},
+	} {
+		if err := call(); err == nil {
+			t.Fatalf("%s served the call on an unattached service", name)
+		}
+	}
+}
