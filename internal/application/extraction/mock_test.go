@@ -181,12 +181,18 @@ func buildMockDocument(request Request) string {
 	}
 	event += `}`
 
-	relations := ""
+	// The relation array is built from a slice rather than by prefixing a comma to
+	// a string. The string form produced `[,{...}]` when there was nothing to
+	// prefix, which is invalid JSON — a defect the mock's own validation test
+	// caught, and the reason that test exists.
+	relationList := []string{}
 	if len(entities) > 1 {
-		relations = `,{"sourceRef":"e0","targetRef":"e1","relationType":"knows","validFromEventRef":"ev1","confidence":0.4}`
+		relationList = append(relationList,
+			`{"sourceRef":"e0","targetRef":"e1","relationType":"knows","validFromEventRef":"ev1","confidence":0.4}`)
 	}
 	return `{"schemaVersion":1,"summary":` + jsonString(summary) + `,"entities":[` +
-		strings.Join(entities, ",") + `],"events":[` + event + `],"relations":[` + relations + `]}`
+		strings.Join(entities, ",") + `],"events":[` + event + `],"relations":[` +
+		strings.Join(relationList, ",") + `]}`
 }
 
 // entityTypeFor assigns the schema's kinds to the scanned names by position.
@@ -202,43 +208,69 @@ func entityTypeFor(index int) string {
 	return "location"
 }
 
-// scanNames finds the capitalised or Chinese word-like runs in a chapter.
+// scanNames finds name-like spans in a chapter.
 //
-// The rule is deliberately crude and has no understanding of the text: two to
-// six characters of Han script, or two to twenty Latin letters starting with a
-// capital. A crude rule is the right one for a mock, because it cannot be
-// influenced by the text's content — which is what makes it useful for the
-// injection test.
+// The rule is deliberately crude and it is stated rather than disguised: it takes
+// the FIRST TWO CHARACTERS of each run of Han script, and the first Latin word of
+// each run of letters. In a Chinese sentence the subject usually leads, so the
+// leading two characters of a clause are often its subject's name. Often is not
+// always, and the mock does not care: what it needs is a string that (a) is
+// deterministic, (b) actually appears in the text so the evidence offsets are
+// real, and (c) cannot be influenced by what the text MEANS.
+//
+// That last property is why the rule is positional rather than a dictionary. A
+// mock that recognised names would have to read the text for meaning, and then
+// the injection fixture would be testing the mock's comprehension rather than the
+// boundary around it.
 func scanNames(text string) []string {
 	var names []string
 	seen := map[string]bool{}
 	runes := []rune(text)
-	for index := 0; index < len(runes); {
-		if !isHan(runes[index]) {
-			index++
-			continue
-		}
-		start := index
-		for index < len(runes) && isHan(runes[index]) {
-			index++
-		}
-		length := index - start
-		if length < 2 || length > 3 {
-			// A longer run is a sentence fragment rather than a name, and a single
-			// character is usually a particle.
-			continue
-		}
-		name := string(runes[start:index])
-		if seen[name] {
-			continue
+	add := func(name string) bool {
+		if len([]rune(name)) < 2 || seen[name] {
+			return false
 		}
 		seen[name] = true
 		names = append(names, name)
-		if len(names) == 3 {
-			return names
+		return len(names) == 3
+	}
+	for index := 0; index < len(runes); {
+		switch {
+		case isHan(runes[index]):
+			start := index
+			for index < len(runes) && isHan(runes[index]) {
+				index++
+			}
+			// Two characters from the start of the run: enough for a name, short
+			// enough that a sentence-opener is not returned whole.
+			run := runes[start:index]
+			if len(run) >= 2 {
+				if add(string(run[:2])) {
+					return names
+				}
+			}
+		case isLetter(runes[index]):
+			start := index
+			for index < len(runes) && isLetter(runes[index]) {
+				index++
+			}
+			if add(string(runes[start:index])) {
+				return names
+			}
+		default:
+			index++
 		}
 	}
 	return names
+}
+
+// isLetter reports whether a rune is an ASCII letter.
+//
+// Digits are excluded on purpose. A word-like run that contains a digit is
+// usually an identifier rather than a name, and the mock's own refs ("e0", "e1")
+// would otherwise be scanned as names if the text ever contained them.
+func isLetter(value rune) bool {
+	return (value >= 'a' && value <= 'z') || (value >= 'A' && value <= 'Z')
 }
 
 // isHan reports whether a rune is in the CJK unified ideographs block.
