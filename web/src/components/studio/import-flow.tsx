@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Alert, App, Button, Empty, Input, Modal, Space, Table, Tag } from "antd";
+import { Alert, App, Button, Empty, Input, InputNumber, Modal, Space, Table, Tag } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { FileUp, ListChecks, PencilLine, Sparkles, Upload } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -10,6 +10,8 @@ import {
     importDocumentByChunks,
     isImportBindingsAvailable,
     listChapters,
+    mergeChapter,
+    splitChapter,
     precheckImport,
     readDocumentRange,
 } from "@/services/desktop/drama";
@@ -337,6 +339,7 @@ export function ChapterPanel({ versionId, reloadToken = 0, onChanged }: ChapterP
     const [page, setPage] = useState<{ text: string; startRune: number; endRune: number; totalRunes: number } | null>(null);
     const [pageBusy, setPageBusy] = useState(false);
     const [extracting, setExtracting] = useState<string | null>(null);
+    const [splitTarget, setSplitTarget] = useState<{ id: string; revision: number; at: number; title: string } | null>(null);
 
     const load = useCallback(async () => {
         if (!versionId) {
@@ -421,6 +424,50 @@ export function ChapterPanel({ versionId, reloadToken = 0, onChanged }: ChapterP
         }
     };
 
+    /**
+     * splitAt divides a chapter at the rune offset the user chose.
+     *
+     * PRD FR-020 lists 手动合并/拆分 among the import flow's MUST items, so this is
+     * required rather than a convenience. The offset is entered as a character
+     * position inside the chapter, converted here to the version coordinate the
+     * command expects.
+     */
+    const splitAt = async () => {
+        if (!splitTarget) return;
+        setBusy(true);
+        try {
+            await splitChapter({
+                chapterId: splitTarget.id,
+                splitAtOffset: splitTarget.at,
+                secondTitle: splitTarget.title,
+                revision: splitTarget.revision,
+            } as desktop.SplitChapterRequest);
+            setSplitTarget(null);
+            message.success(t("studio.chapters.splitDone"));
+            await load();
+            onChanged?.();
+        } catch (caught) {
+            message.error(caught instanceof Error ? caught.message : t("studio.chapters.splitFailed"));
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    /** mergeWith absorbs the NEXT chapter into this one. */
+    const mergeWith = async (first: string, second: string, revision: number) => {
+        setBusy(true);
+        try {
+            await mergeChapter({ firstChapterId: first, secondChapterId: second, revision } as desktop.MergeChapterRequest);
+            message.success(t("studio.chapters.mergeDone"));
+            await load();
+            onChanged?.();
+        } catch (caught) {
+            message.error(caught instanceof Error ? caught.message : t("studio.chapters.mergeFailed"));
+        } finally {
+            setBusy(false);
+        }
+    };
+
     const pendingConfirmation = useMemo(() => rows.some((row) => row.status === "detected"), [rows]);
 
     const columns: ColumnsType<desktop.ChapterDTO> = [
@@ -461,6 +508,27 @@ export function ChapterPanel({ versionId, reloadToken = 0, onChanged }: ChapterP
                     >
                         {t("studio.chapters.extract")}
                     </Button>
+                    <Button
+                        size="small"
+                        data-testid={`studio-chapter-split-${record.id}`}
+                        onClick={() => setSplitTarget({ id: record.id, revision: record.revision, at: record.startOffset + 1, title: "" })}
+                    >
+                        {t("studio.chapters.split")}
+                    </Button>
+                    {/* Merging needs a chapter to absorb, so the last one has none. */}
+                    {rows.some((row) => row.ordinal === record.ordinal + 1) ? (
+                        <Button
+                            size="small"
+                            disabled={busy}
+                            data-testid={`studio-chapter-merge-${record.id}`}
+                            onClick={() => {
+                                const next = rows.find((row) => row.ordinal === record.ordinal + 1);
+                                if (next) void mergeWith(record.id, next.id, record.revision);
+                            }}
+                        >
+                            {t("studio.chapters.merge")}
+                        </Button>
+                    ) : null}
                 </Space>
             ),
         },
@@ -502,6 +570,38 @@ export function ChapterPanel({ versionId, reloadToken = 0, onChanged }: ChapterP
                     data-testid="studio-chapters-table"
                 />
             )}
+
+            {splitTarget ? (
+                <section className="rounded-xl border border-stone-200 p-4 dark:border-stone-800" data-testid="studio-split-panel">
+                    <h4 className="mb-2 text-sm font-medium">{t("studio.chapters.splitTitle")}</h4>
+                    <p className="mb-3 text-xs text-stone-500">{t("studio.chapters.splitNote")}</p>
+                    <div className="flex flex-wrap items-end gap-2">
+                        <label>
+                            <span className="mb-1 block text-xs">{t("studio.chapters.splitAt")}</span>
+                            <InputNumber
+                                value={splitTarget.at}
+                                data-testid="studio-split-offset"
+                                onChange={(value) => setSplitTarget((current) => (current ? { ...current, at: Number(value ?? 0) } : current))}
+                            />
+                        </label>
+                        <label className="min-w-52 flex-1">
+                            <span className="mb-1 block text-xs">{t("studio.chapters.secondTitle")}</span>
+                            <Input
+                                value={splitTarget.title}
+                                maxLength={200}
+                                data-testid="studio-split-title"
+                                onChange={(event) => setSplitTarget((current) => (current ? { ...current, title: event.target.value } : current))}
+                            />
+                        </label>
+                        <Button type="primary" size="small" loading={busy} data-testid="studio-split-submit" onClick={() => void splitAt()}>
+                            {t("studio.chapters.split")}
+                        </Button>
+                        <Button size="small" type="text" onClick={() => setSplitTarget(null)}>
+                            {t("common.cancel")}
+                        </Button>
+                    </div>
+                </section>
+            ) : null}
 
             {page ? (
                 <section className="rounded-xl border border-stone-200 p-4 dark:border-stone-800" data-testid="studio-chapter-page">

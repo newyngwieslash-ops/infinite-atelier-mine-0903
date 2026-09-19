@@ -475,6 +475,20 @@ export async function acceptStoryEntity(request: desktop.DecideStoryEntityReques
     return AcceptStoryEntity(request);
 }
 
+/** splitChapter divides one chapter into two. */
+export async function splitChapter(request: desktop.SplitChapterRequest): Promise<desktop.ChapterDTO[]> {
+    if (!isDramaBindingsAvailable()) throw unavailableError();
+    const { SplitChapter } = await loadDramaBinding();
+    return SplitChapter(request);
+}
+
+/** mergeChapter absorbs the chapter after the given one. */
+export async function mergeChapter(request: desktop.MergeChapterRequest): Promise<desktop.ChapterDTO> {
+    if (!isDramaBindingsAvailable()) throw unavailableError();
+    const { MergeChapter } = await loadDramaBinding();
+    return MergeChapter(request);
+}
+
 /** lockStoryEntity pins a fact so a later pass cannot revise it. */
 export async function lockStoryEntity(request: desktop.LockStoryEntityRequest): Promise<desktop.StoryEntityDTO> {
     if (!isDramaBindingsAvailable()) throw unavailableError();
