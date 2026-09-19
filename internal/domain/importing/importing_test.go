@@ -455,3 +455,64 @@ func assertBoundariesTile(t *testing.T, text string, chapters []ChapterBoundary)
 		t.Fatalf("the last boundary ends at %d, want %d", last.EndOffset, total)
 	}
 }
+
+// TestTitlesNeverExceedTheSchemaLimit covers the bound the chapter table's CHECK
+// enforces.
+//
+// The clip has to reserve room for its own ellipsis. A first draft appended the
+// ellipsis to a title already at the limit, producing MaxTitleRunes+1 characters
+// that the schema refuses: a document that parsed fine and could not be stored,
+// which surfaced as "The chapter title is too long" during an import of ordinary
+// prose. Every path that produces a title is checked here, because the same
+// mistake is available in each of them.
+func TestTitlesNeverExceedTheSchemaLimit(t *testing.T) {
+	// A document with no markers at all whose first line is far longer than the
+	// limit: the front-matter path is where the clipping happens.
+	long := strings.Repeat("字", MaxTitleRunes*3)
+	longChapters, err := DetectChapters(long, FormatText)
+	if err != nil {
+		t.Fatalf("DetectChapters: %v", err)
+	}
+	if len(longChapters) == 0 {
+		t.Fatal("no chapter was detected")
+	}
+	if title := longChapters[0].Title; len([]rune(title)) > MaxTitleRunes {
+		t.Fatalf("the title is %d characters, above the schema's %d: %q",
+			len([]rune(title)), MaxTitleRunes, title)
+	}
+	// Exactly at the limit is the boundary the off-by-one sat on, so it is
+	// checked separately from "far above it".
+	exact := strings.Repeat("字", MaxTitleRunes)
+	atLimit, err := DetectChapters(exact, FormatText)
+	if err != nil {
+		t.Fatalf("DetectChapters at the limit: %v", err)
+	}
+	if len(atLimit) == 0 {
+		t.Fatal("no chapter was detected at the limit")
+	}
+	if title := atLimit[0].Title; len([]rune(title)) > MaxTitleRunes {
+		t.Fatalf("a title of exactly %d characters was clipped past the limit: %d characters",
+			MaxTitleRunes, len([]rune(title)))
+	}
+	// A heading line just over the limit: at the limit plus one the heading rule
+	// still applies, so this exercises the heading path rather than the clip.
+	heading := "# " + strings.Repeat("字", MaxTitleRunes+5)
+	fromHeading, err := DetectChapters(heading, FormatMarkdown)
+	if err != nil {
+		t.Fatalf("DetectChapters from a heading: %v", err)
+	}
+	for _, chapter := range fromHeading {
+		if title := chapter.Title; len([]rune(title)) > MaxTitleRunes {
+			t.Fatalf("a heading produced a title of %d characters, above the limit: %q", len([]rune(title)), title)
+		}
+	}
+	// Every boundary must satisfy the domain's own check, which mirrors the
+	// schema: a boundary whose title passed the clip but failed Validate would be
+	// a document that parsed and could not be stored, which is the failure this
+	// test exists for.
+	for _, boundary := range append(append([]ChapterBoundary{}, longChapters...), atLimit...) {
+		if err := boundary.Validate(len([]rune(long))); err != nil {
+			t.Fatalf("a detected boundary does not satisfy the domain: %v", err)
+		}
+	}
+}

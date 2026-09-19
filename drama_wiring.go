@@ -5,6 +5,8 @@ import (
 
 	appassets "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/assets"
 	appevents "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/events"
+	appextraction "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/extraction"
+	appimporting "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/importing"
 	appscript "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/script"
 	appstaleness "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/staleness"
 	appstory "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/story"
@@ -12,6 +14,7 @@ import (
 	appworkflow "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/workflow"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/desktop"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/infrastructure/database"
+	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/infrastructure/filestore"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/platform/id"
 )
 
@@ -29,9 +32,13 @@ type dramaWiring struct {
 	staleness  *appstaleness.Service
 	assets     *appassets.Service
 	events     *appevents.Service
+	importing  *appimporting.Service
+	extraction *appextraction.Service
 
 	dramaBinding  *desktop.DramaBinding
 	assetsBinding *desktop.AssetsBinding
+	// importBinding is the WP-06 surface: document import and event extraction.
+	importBinding *desktop.ImportBinding
 }
 
 // composeDrama builds the drama stack over a writable database. It returns nil
@@ -41,7 +48,7 @@ type dramaWiring struct {
 // the story repository satisfies all six of the story aggregate's read and
 // write interfaces, the storyboard repository satisfies its four, and so on.
 // They share the single connection the handle owns.
-func composeDrama(handle *database.Handle) *dramaWiring {
+func composeDrama(handle *database.Handle, store *filestore.Store) *dramaWiring {
 	if handle == nil || handle.SQL() == nil {
 		return nil
 	}
@@ -64,13 +71,24 @@ func composeDrama(handle *database.Handle) *dramaWiring {
 		IDs:        ids,
 	})
 
+	// The story and import services are built as locals because three of the
+	// services below are composed over them: extraction reads a chapter through
+	// the import service, and the reader adapter needs both.
+	storyService := appstory.NewService(appstory.Options{
+		Repository: storyRepository,
+		Clock:      clock,
+		IDs:        ids,
+		Events:     eventService,
+	})
+	importingService := appimporting.NewService(appimporting.Options{
+		Store:  desktop.NewDocumentStore(store),
+		Story:  storyService,
+		Events: eventService,
+		Clock:  clock,
+	})
+
 	return &dramaWiring{
-		story: appstory.NewService(appstory.Options{
-			Repository: storyRepository,
-			Clock:      clock,
-			IDs:        ids,
-			Events:     eventService,
-		}),
+		story: storyService,
 		script: appscript.NewService(appscript.Options{
 			Repository: scriptRepository,
 			Clock:      clock,
@@ -115,7 +133,17 @@ func composeDrama(handle *database.Handle) *dramaWiring {
 			IDs:        ids,
 			Events:     eventService,
 		}),
-		events: eventService,
+		events:    eventService,
+		importing: importingService,
+		// The extractor is deliberately absent. There is no default: a build
+		// without one refuses extraction with a reason instead of inventing
+		// facts, and WP-07 supplies the implementation of the port.
+		extraction: appextraction.NewService(appextraction.Options{
+			Reader: desktop.NewChapterTextReader(storyService, importingService),
+			Story:  storyService,
+			Clock:  clock,
+			IDs:    ids,
+		}),
 	}
 }
 
@@ -134,5 +162,9 @@ func (w *dramaWiring) attach(ctx context.Context) {
 	}
 	if w.assetsBinding != nil {
 		desktop.AttachAssets(w.assetsBinding, ctx, w.assets)
+	}
+	if w.importBinding != nil {
+		desktop.AttachImporting(w.importBinding, ctx, w.importing)
+		desktop.AttachExtraction(w.importBinding, ctx, w.extraction)
 	}
 }

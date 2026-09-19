@@ -60,6 +60,7 @@ func run() error {
 	// starts so it exists on the binding surface; its services are attached
 	// only when startup composes a writable database.
 	application.dramaBinding = &desktop.DramaBinding{}
+	application.importBinding = &desktop.ImportBinding{}
 	application.assetsBinding = &desktop.AssetsBinding{}
 	application.emit = wailsruntime.EventsEmit
 	shutdown := newShutdownSequence(application.closeDatabase, logger, logCloser.Close, reportIndependent)
@@ -92,6 +93,7 @@ func run() error {
 			application.backupBinding,
 			application.dramaBinding,
 			application.assetsBinding,
+			application.importBinding,
 		},
 		SingleInstanceLock: &options.SingleInstanceLock{
 			UniqueId: singleInstanceID,

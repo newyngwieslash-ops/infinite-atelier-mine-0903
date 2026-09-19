@@ -205,7 +205,14 @@ func splitLines(text string) []string {
 // firstLineTitle picks a title for a document with no markers: its first
 // non-empty line, clipped. It gives the single chapter a name the user can
 // recognise in a list.
+//
+// The clip reserves room for the ellipsis rather than appending it beyond the
+// limit. That off-by-one is not cosmetic: the schema's CHECK on chapters.title is
+// length <= MaxTitleRunes, so a line of exactly the limit plus an ellipsis would
+// be 201 characters and the INSERT would be refused — a document that parsed
+// fine and could not be stored. A test with a single very long line found it.
 func firstLineTitle(text string) string {
+	const ellipsis = "…"
 	for _, line := range splitLines(text) {
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" {
@@ -213,7 +220,8 @@ func firstLineTitle(text string) string {
 		}
 		runes := []rune(trimmed)
 		if len(runes) > MaxTitleRunes {
-			return strings.TrimSpace(string(runes[:MaxTitleRunes])) + "…"
+			clipped := MaxTitleRunes - len([]rune(ellipsis))
+			return strings.TrimSpace(string(runes[:clipped])) + ellipsis
 		}
 		return trimmed
 	}

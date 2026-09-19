@@ -13,6 +13,8 @@ import (
 	appworkflow "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/workflow"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/apperror"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/event"
+	extractiondomain "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/extraction"
+	importdomain "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/importing"
 	scriptdomain "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/script"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/staleness"
 	storydomain "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/story"
@@ -2441,6 +2443,12 @@ func toDramaError(err error) error {
 	if category, message, ok := domainVersioningError(err); ok {
 		return apperror.New("DRAMA_"+upperText(category), "drama", false, message, nil)
 	}
+	if category, message, ok := domainImportError(err); ok {
+		return apperror.New("DRAMA_"+upperText(category), "drama", false, message, nil)
+	}
+	if category, message, ok := domainExtractionError(err); ok {
+		return apperror.New("DRAMA_"+upperText(category), "drama", false, message, nil)
+	}
 	return apperror.New("DRAMA_REQUEST_FAILED", "drama", false, "The drama request failed.", err)
 }
 
@@ -2597,4 +2605,29 @@ func (b *DramaBinding) CountDomainEvents(request ListDomainEventsRequest) (int, 
 		return 0, toDramaError(err)
 	}
 	return count, nil
+}
+
+// domainImportError extracts an import error's category and safe message.
+func domainImportError(err error) (category string, safeMessage string, ok bool) {
+	domainErr, is := importdomain.AsError(err)
+	if !is {
+		return "", "", false
+	}
+	return string(domainErr.Category), domainErr.SafeMessage, true
+}
+
+// domainExtractionError extracts an extraction refusal's code and message.
+//
+// Extraction classifies its own failures rather than borrowing the import
+// vocabulary, because the distinction the caller acts on is different: an import
+// refusal is about the document, while an extraction refusal is about the request
+// or the reading. The code is carried through as the category so a caller can
+// tell "no extractor is configured" from "the request was wrong" without parsing
+// the message.
+func domainExtractionError(err error) (category string, safeMessage string, ok bool) {
+	domainErr, is := extractiondomain.AsError(err)
+	if !is {
+		return "", "", false
+	}
+	return domainErr.Code, domainErr.SafeMessage, true
 }

@@ -44,8 +44,11 @@ type app struct {
 	// dramaBinding and assetsBinding are the WP-05 surface: the studio reads and
 	// writes the drama aggregates through the first, and the asset bible
 	// through the second.
-	dramaBinding   *desktop.DramaBinding
-	assetsBinding  *desktop.AssetsBinding
+	dramaBinding  *desktop.DramaBinding
+	assetsBinding *desktop.AssetsBinding
+	// importBinding is the WP-06 surface: document import, chapter confirmation
+	// and event extraction.
+	importBinding  *desktop.ImportBinding
 	providerWiring *providerWiring
 	jobWiring      *jobWiring
 	projectWiring  *projectWiring
@@ -170,13 +173,16 @@ func (a *app) startup(ctx context.Context) {
 			// services, but it fails closed on the same condition: a handle in
 			// safe mode has no SQL pool, so composeDrama returns nil and every
 			// drama method reports unavailable.
-			dramaStack := composeDrama(handle)
+			dramaStack := composeDrama(handle, store)
 			if dramaStack != nil {
 				if a.dramaBinding != nil {
 					dramaStack.dramaBinding = a.dramaBinding
 				}
 				if a.assetsBinding != nil {
 					dramaStack.assetsBinding = a.assetsBinding
+				}
+				if a.importBinding != nil {
+					dramaStack.importBinding = a.importBinding
 				}
 				dramaStack.attach(ctx)
 				a.dramaWiring = dramaStack

@@ -17,7 +17,10 @@
 //     for a model to fill in.
 package extraction
 
-import "strings"
+import (
+	"errors"
+	"strings"
+)
 
 // SchemaVersion is the revision of the EventExtraction contract this package
 // accepts. A document declaring another version is refused rather than parsed
@@ -222,12 +225,17 @@ func (e *RequestError) Unwrap() error {
 }
 
 // Codes for the refusals this domain reports.
+//
+// They are spelled the way the other domains spell a category — lower case with
+// underscores — because the desktop layer builds a stable application code from
+// them ("DRAMA_" plus the upper-cased value). A dotted or prefixed code would
+// produce a code unlike every other one the frontend already handles.
 const (
 	// CodeUnavailable means no extractor is configured. It is deliberately not
 	// retriable: nothing about waiting will attach one.
-	CodeUnavailable = "extraction.unavailable"
+	CodeUnavailable = "unavailable"
 	// CodeInvalidRequest means the request itself was wrong.
-	CodeInvalidRequest = "extraction.invalid_request"
+	CodeInvalidRequest = "invalid_request"
 )
 
 // InvalidRequestError refuses a malformed request.
@@ -241,4 +249,13 @@ func UnavailableError() *RequestError {
 		Code:        CodeUnavailable,
 		SafeMessage: "No document reader is configured, so extraction cannot run.",
 	}
+}
+
+// AsError extracts a request error from a wrapped chain.
+func AsError(err error) (*RequestError, bool) {
+	var target *RequestError
+	if errors.As(err, &target) {
+		return target, true
+	}
+	return nil, false
 }
