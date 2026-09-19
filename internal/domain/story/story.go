@@ -374,25 +374,40 @@ func (c Chapter) Contains(offset int) bool {
 
 // EntityType is what a story entity names (DOMAIN_MODEL §6.1).
 //
-// The six values are §6.1's list. PRD FR-030 names other nouns as well, but
-// they are not entity kinds: an event, a relationship and a character state are
-// rows of their own tables, so folding them into this set would give one
-// concept two homes. A new kind would need a CHECK migration and a review path,
-// which is why the set stays closed.
+// The six values §6.1 lists describe the story's people and things. PRD FR-030
+// names nine entity kinds, and two more are reachable here:
+//
+//   - `relationship` is for a relationship the text names as a thing in its own
+//     right — a sworn brotherhood, a betrothal — which a user can then describe,
+//     alias and attach facts to. An ordinary relation between two entities is
+//     still a story_relations row; this value does not move that.
+//   - `timeline_marker` is for a named point or span the story refers back to
+//     ("three years before the siege"). It is an entity rather than an event
+//     because it is referred to, not narrated.
+//
+// The PRD's remaining kinds are not added, and ADR-0010 records why: its
+// 'Event' and 'CharacterState' are rows of their own tables, and its 'PropState'
+// is already section 6.8's sparse character_state JSON with a 'prop' entity for
+// the object. Adding either would give one concept two homes. A new kind needs a
+// CHECK migration and a review path, which is why the set stays closed.
 type EntityType string
 
 const (
-	EntityCharacter    EntityType = "character"
-	EntityLocation     EntityType = "location"
-	EntityOrganization EntityType = "organization"
-	EntityProp         EntityType = "prop"
-	EntityConcept      EntityType = "concept"
-	EntityTime         EntityType = "time"
+	EntityCharacter      EntityType = "character"
+	EntityLocation       EntityType = "location"
+	EntityOrganization   EntityType = "organization"
+	EntityProp           EntityType = "prop"
+	EntityConcept        EntityType = "concept"
+	EntityTime           EntityType = "time"
+	EntityRelationship   EntityType = "relationship"
+	EntityTimelineMarker EntityType = "timeline_marker"
 )
 
-// EntityTypes lists the documented entity types in the schema's order.
+// EntityTypes lists the documented entity types in the schema's order, which is
+// what migration 000014's CHECK lists.
 var EntityTypes = []EntityType{
 	EntityCharacter, EntityLocation, EntityOrganization, EntityProp, EntityConcept, EntityTime,
+	EntityRelationship, EntityTimelineMarker,
 }
 
 // IsValidEntityType reports whether an entity type may be persisted.

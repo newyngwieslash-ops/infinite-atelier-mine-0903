@@ -75,13 +75,20 @@ func TestStoryVocabularies(t *testing.T) {
 }
 
 // TestVocabularyMatchesMigrationChecks pins each Go vocabulary against the
-// literal list in migration 000007.
+// literal list the migrations hold.
 //
 // The expected slices are written out here rather than derived from the
 // constants, so the two sides can disagree. That is the point: a value added to
 // the SQL CHECK without this package, or to this package without SQL, is a bug
 // — the database would refuse a value the domain accepts or the reverse — and
 // this test is where it fails.
+//
+// Most lists come from migration 000007. The two cases migration 000014 changed,
+// story_entities.entity_type and the added chapters.source_kind, are pinned to
+// what that migration defines, because that is what the database enforces now.
+// The mechanical parser in the database package resolves the newest definition
+// on its own, so this hand-written mirror is the check that a rebuild did not
+// quietly move both sides together.
 func TestVocabularyMatchesMigrationChecks(t *testing.T) {
 	cases := []struct {
 		name string
@@ -109,9 +116,24 @@ func TestVocabularyMatchesMigrationChecks(t *testing.T) {
 			want: []string{"detected", "confirmed", "edited"},
 		},
 		{
+			// Migration 000014 rebuilt this CHECK to FR-030's list, so the pin
+			// here is that migration rather than 000007's six values. The two
+			// lists differ by exactly 'relationship' and 'timeline_marker', which
+			// is what makes keeping a literal here worth it: the mechanical
+			// parser in the database package reads whatever the newest definition
+			// says, so a rebuild that dropped a value from both sides at once
+			// would pass there and fail here.
 			name: "story_entities.entity_type",
 			got:  entityTypeStrings(),
-			want: []string{"character", "location", "organization", "prop", "concept", "time"},
+			want: []string{
+				"character", "location", "organization", "prop", "concept", "time",
+				"relationship", "timeline_marker",
+			},
+		},
+		{
+			name: "chapters.source_kind",
+			got:  chapterSourceKindStrings(),
+			want: []string{"heading", "regex", "whole", "manual"},
 		},
 		{
 			name: "story_entities.status (and story_events, story_relations, character_states)",
@@ -196,6 +218,14 @@ func createdByStrings() []string {
 func chapterStatusStrings() []string {
 	out := make([]string, 0, len(ChapterStatuses))
 	for _, value := range ChapterStatuses {
+		out = append(out, string(value))
+	}
+	return out
+}
+
+func chapterSourceKindStrings() []string {
+	out := make([]string, 0, len(ChapterSourceKinds))
+	for _, value := range ChapterSourceKinds {
 		out = append(out, string(value))
 	}
 	return out

@@ -59,6 +59,118 @@ func migrationScript(t *testing.T, name string) string {
 	return string(data)
 }
 
+// defineTablePattern matches a CREATE TABLE for a named table. It is anchored to
+// a line start so `CREATE TABLE x_stage AS SELECT` cannot match a request for
+// `x`, and it allows the name to be quoted.
+var defineTablePattern = regexp.MustCompile(`(?m)^CREATE TABLE (?:IF NOT EXISTS )?` + "`?" + `%s` + "`?" + ` ?\(`)
+
+// tableDefinitionFile returns the migration that last defines a table.
+//
+// A table can be redefined: migration 000014 rebuilds story_entities to widen its
+// entity_type CHECK, so the newest definition is the one the database actually
+// enforces and the one a vocabulary must agree with. Reading a fixed filename
+// would compare Go against a definition that no longer exists — which is how the
+// entity_type drift went unnoticed, with the guard green while the schema
+// accepted two values Go refused.
+//
+// The search is over the sorted filenames, so "newest" means the last migration
+// the runner applies rather than a hand-maintained list.
+func tableDefinitionFile(t *testing.T, table string) string {
+	t.Helper()
+	names, err := filepath.Glob(filepath.Join("migrations", "*.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(names) == 0 {
+		t.Fatal("no migrations were found, so no table can be resolved")
+	}
+	// The filenames carry a zero-padded ordinal, so lexical order is apply order.
+	sort.Strings(names)
+	pattern := regexp.MustCompile(fmt.Sprintf(defineTablePattern.String(), regexp.QuoteMeta(table)))
+	found := ""
+	for _, name := range names {
+		data, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if pattern.Match(data) {
+			// Later files win, so keep scanning rather than stopping at the first.
+			found = filepath.Base(name)
+		}
+	}
+	if found == "" {
+		t.Fatalf("no migration defines the table %s", table)
+	}
+	return found
+}
+
+// effectiveCheckList returns a vocabulary from the migration that currently
+// defines the table, so a case never has to name a filename.
+//
+// It searches the CREATE TABLE definitions first. A column added later by ALTER
+// TABLE is not in any body, so a second pass looks for the column's own CHECK
+// anywhere in the newest file that mentions it — which is how chapters.source_kind
+// is defined.
+func effectiveCheckList(t *testing.T, table, column string) []string {
+	t.Helper()
+	file := tableDefinitionFile(t, table)
+	if values, err := checkListValues(migrationScript(t, file), table, column); err == nil {
+		return values
+	}
+	if file := columnAlterFile(t, table, column); file != "" {
+		body := migrationScript(t, file)
+		if values, err := columnCheckValues(body, column); err == nil {
+			return values
+		}
+	}
+	t.Fatalf("%s.%s has no closed vocabulary in %s or in any later migration", table, column, file)
+	return nil
+}
+
+// columnAlterFile returns the newest migration that constrains a column with an
+// inline CHECK outside a CREATE TABLE body, which is the ALTER TABLE ADD COLUMN
+// form migration 000014 uses.
+func columnAlterFile(t *testing.T, table, column string) string {
+	t.Helper()
+	names, err := filepath.Glob(filepath.Join("migrations", "*.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sort.Strings(names)
+	// The statement must name both the table and the column, so an unrelated
+	// table's identically named column cannot resolve it.
+	statement := regexp.MustCompile(`(?s)ALTER TABLE ` + regexp.QuoteMeta(table) + `[^;]*?` + regexp.QuoteMeta(column) + `[^;]*?CHECK`)
+	found := ""
+	for _, name := range names {
+		data, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if statement.Match(data) {
+			found = filepath.Base(name)
+		}
+	}
+	return found
+}
+
+// columnCheckValues extracts the values of a single `CHECK ( <column> IN (...) )`
+// from migration text without needing a table body.
+func columnCheckValues(migration, column string) ([]string, error) {
+	pattern := regexp.MustCompile(`(?s)CHECK \(\s*` + regexp.QuoteMeta(column) + `\s+IN \(([^)]*)\)\s*\)`)
+	match := pattern.FindStringSubmatch(migration)
+	if match == nil {
+		return nil, fmt.Errorf("no CHECK constrains the column %s in this migration", column)
+	}
+	var values []string
+	for _, valueMatch := range quotedValuePattern.FindAllStringSubmatch(match[1], -1) {
+		values = append(values, valueMatch[1])
+	}
+	if len(values) == 0 {
+		return nil, fmt.Errorf("the CHECK on %s has no quoted values", column)
+	}
+	return values, nil
+}
+
 // tableBodyText returns the text between a CREATE TABLE's opening parenthesis
 // and its terminator, so a column's CHECK is read from the right table.
 //
@@ -193,16 +305,25 @@ func TestWP05VocabulariesMatchTheSchema(t *testing.T) {
 
 		{"000007_story_graph.sql", "source_documents", "document_type", goValues(story.DocumentTypes)},
 		{"000007_story_graph.sql", "stage_runs_placeholder", "", nil},
-		{"000007_story_graph.sql", "story_entities", "entity_type", goValues(story.EntityTypes)},
 		{"000007_story_graph.sql", "story_entities", "status", goValues(story.FactStatuses)},
 		{"000007_story_graph.sql", "story_events", "status", goValues(story.FactStatuses)},
 		{"000007_story_graph.sql", "story_events", "source_scope", goValues(story.SourceScopes)},
-		{"000007_story_graph.sql", "story_event_participants", "role", goValues(story.ParticipantRoles)},
 		{"000007_story_graph.sql", "story_relations", "relation_type", goValues(story.RelationTypes)},
 		{"000007_story_graph.sql", "story_fact_sources", "fact_type", goValues(story.FactTypes)},
 		{"000007_story_graph.sql", "story_fact_sources", "source_kind", goValues(story.SourceKinds)},
 		{"000007_story_graph.sql", "story_fact_conflicts", "status", goValues(story.ConflictStatuses)},
 		{"000007_story_graph.sql", "chapters", "status", goValues(story.ChapterStatuses)},
+
+		// An empty file means "wherever this table or column is currently
+		// defined", which is the only correct answer for the four tables
+		// migration 000014 rebuilds and the one column it adds. Pinning these to
+		// 000007 would compare Go against a superseded CHECK: that is how the
+		// entity_type drift went unnoticed, with the guard green while the schema
+		// accepted two values Go refused.
+		{"", "story_entities", "entity_type", goValues(story.EntityTypes)},
+		{"", "story_event_participants", "role", goValues(story.ParticipantRoles)},
+		{"", "character_states", "status", goValues(story.FactStatuses)},
+		{"", "chapters", "source_kind", goValues(story.ChapterSourceKinds)},
 
 		{"000008_script.sql", "episodes", "status", goValues(script.EpisodeStatuses)},
 		{"000008_script.sql", "scenes", "interior_exterior", goValues(script.InteriorExteriors)},
@@ -238,6 +359,14 @@ func TestWP05VocabulariesMatchTheSchema(t *testing.T) {
 		}
 		label := testCase.table + "." + testCase.column
 		t.Run(label, func(t *testing.T) {
+			// An empty file means "wherever this table is currently defined",
+			// which is the only correct answer for a table a later migration
+			// rebuilt. A named file is still honoured for the cases that pin a
+			// definition deliberately.
+			if testCase.file == "" {
+				compareVocabularies(t, label, effectiveCheckList(t, testCase.table, testCase.column), testCase.goVocab)
+				return
+			}
 			migration := migrationScript(t, testCase.file)
 			sqlValues := checkListFor(t, migration, testCase.table, testCase.column)
 			compareVocabularies(t, label, sqlValues, testCase.goVocab)
@@ -324,6 +453,43 @@ func TestWP05ExtractorActuallyFindsVocabularies(t *testing.T) {
 	// whose constraint was dropped cannot pass by returning an empty list.
 	if _, err := checkListValues(migration, "asset_versions", "prompt"); err == nil {
 		t.Fatal("a column with no CHECK must be reported, not treated as an empty vocabulary")
+	}
+}
+
+// TestWP06TableVocabularyResolverPicksTheNewestDefinition guards the resolver the
+// story cases above now depend on.
+//
+// Those cases pass an empty filename so they compare against whatever defines the
+// table today. If the resolver quietly kept returning 000007, every one of them
+// would pass while checking a superseded CHECK — the same blindness that let the
+// entity_type drift through in the first place. So the resolution itself is
+// asserted rather than assumed.
+func TestWP06TableVocabularyResolverPicksTheNewestDefinition(t *testing.T) {
+	// A rebuilt table resolves to the migration that rebuilt it.
+	if got := tableDefinitionFile(t, "story_entities"); got != "000014_story_import.sql" {
+		t.Fatalf("story_entities resolved to %s, want the migration that rebuilt it", got)
+	}
+	// The vocabulary found there must be the widened one. The two definitions
+	// differ, so this is what proves the newest was read.
+	values := effectiveCheckList(t, "story_entities", "entity_type")
+	if !containsString(values, "timeline_marker") {
+		t.Fatalf("story_entities.entity_type resolved as %v, which is the pre-000014 vocabulary", values)
+	}
+	// A table defined once still resolves to its own migration.
+	if got := tableDefinitionFile(t, "story_relations"); got != "000007_story_graph.sql" {
+		t.Fatalf("story_relations resolved to %s, want its defining migration", got)
+	}
+	// A column added by ALTER TABLE has no CREATE TABLE body to read, so it must
+	// resolve through the column search instead.
+	if added := effectiveCheckList(t, "chapters", "source_kind"); !containsString(added, "manual") {
+		t.Fatalf("chapters.source_kind resolved as %v, want the added column's vocabulary", added)
+	}
+	// A staging table's name contains the real one, so the pattern must be
+	// anchored to a whole name: otherwise a rebuilt table resolves to its own
+	// copy, and the copy's foreign keys are not a definition of anything.
+	pattern := regexp.MustCompile(fmt.Sprintf(defineTablePattern.String(), regexp.QuoteMeta("story_entities")))
+	if pattern.MatchString("CREATE TABLE _wp06_story_entities_stage AS SELECT * FROM story_entities;") {
+		t.Fatal("the definition pattern matched a staging table, so a rebuilt table could resolve to its own copy")
 	}
 }
 
