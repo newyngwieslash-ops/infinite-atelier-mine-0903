@@ -26,6 +26,10 @@ export function ClearStaleMark(arg1) {
   return window['go']['desktop']['DramaBinding']['ClearStaleMark'](arg1);
 }
 
+export function CountDomainEvents(arg1) {
+  return window['go']['desktop']['DramaBinding']['CountDomainEvents'](arg1);
+}
+
 export function CreateChapter(arg1) {
   return window['go']['desktop']['DramaBinding']['CreateChapter'](arg1);
 }
@@ -100,6 +104,10 @@ export function GetReviewReport(arg1) {
 
 export function ListChapters(arg1) {
   return window['go']['desktop']['DramaBinding']['ListChapters'](arg1);
+}
+
+export function ListDomainEvents(arg1) {
+  return window['go']['desktop']['DramaBinding']['ListDomainEvents'](arg1);
 }
 
 export function ListEpisodes(arg1) {

@@ -5,12 +5,14 @@ import (
 	"sync"
 	"time"
 
+	appevents "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/events"
 	appscript "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/script"
 	appstaleness "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/staleness"
 	appstory "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/story"
 	appstoryboard "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/storyboard"
 	appworkflow "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/workflow"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/apperror"
+	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/event"
 	scriptdomain "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/script"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/staleness"
 	storydomain "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/story"
@@ -41,6 +43,7 @@ type DramaBinding struct {
 	storyboard *appstoryboard.Service
 	workflow   *appworkflow.Service
 	staleness  *appstaleness.Service
+	events     *appevents.Service
 }
 
 // AttachStory supplies the story service. A nil service leaves the story
@@ -135,6 +138,15 @@ func (b *DramaBinding) storyboardService() *appstoryboard.Service {
 	return b.storyboard
 }
 
+func (b *DramaBinding) eventService() *appevents.Service {
+	if b == nil {
+		return nil
+	}
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return b.events
+}
+
 func (b *DramaBinding) workflowService() *appworkflow.Service {
 	if b == nil {
 		return nil
@@ -142,6 +154,17 @@ func (b *DramaBinding) workflowService() *appworkflow.Service {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	return b.workflow
+}
+
+// AttachDomainEvents supplies the domain event stream.
+func AttachDomainEvents(binding *DramaBinding, ctx context.Context, service *appevents.Service) {
+	if binding == nil {
+		return
+	}
+	binding.mu.Lock()
+	binding.ctx = ctx
+	binding.events = service
+	binding.mu.Unlock()
 }
 
 func (b *DramaBinding) stalenessService() *appstaleness.Service {
@@ -191,6 +214,10 @@ const (
 	// the workflow service's own bound, applied here as well so an oversize
 	// request never reaches the service.
 	maxBatchReviewIssues = appworkflow.MaxBatchReviewIssues
+	// maxEventTypeLength bounds an event-type filter. The names are short
+	// camel-case words, so this only rejects something absurd before the
+	// service's vocabulary check runs.
+	maxEventTypeLength = 120
 )
 
 // ---------------------------------------------------------------------------
@@ -2418,4 +2445,99 @@ func domainVersioningError(err error) (category string, safeMessage string, ok b
 		return "", "", false
 	}
 	return string(domainErr.Category), domainErr.SafeMessage, true
+}
+
+// ListDomainEventsRequest narrows an event query.
+//
+// Every field is optional except the project: the stream is project-scoped
+// because every drama query is, and an unscoped read would be a cross-project
+// leak.
+type ListDomainEventsRequest struct {
+	ProjectID string `json:"projectId"`
+	// AggregateType and AggregateID narrow to one subject's history. They are
+	// applied together or not at all.
+	AggregateType string `json:"aggregateType,omitempty"`
+	AggregateID   string `json:"aggregateId,omitempty"`
+	// EventType narrows to one kind of event.
+	EventType string `json:"eventType,omitempty"`
+	// TraceID narrows to the events of one action.
+	TraceID string `json:"traceId,omitempty"`
+	// Limit caps the result and is clamped by the service.
+	Limit int `json:"limit,omitempty"`
+}
+
+// DomainEventDTO is the transport view of one domain event.
+type DomainEventDTO struct {
+	EventID       string `json:"eventId"`
+	EventType     string `json:"eventType"`
+	SchemaVersion int    `json:"schemaVersion"`
+	AggregateType string `json:"aggregateType"`
+	AggregateID   string `json:"aggregateId"`
+	ProjectID     string `json:"projectId"`
+	OccurredAt    string `json:"occurredAt"`
+	TraceID       string `json:"traceId"`
+	Payload       string `json:"payload"`
+}
+
+func toDomainEventDTO(record event.Event) DomainEventDTO {
+	return DomainEventDTO{
+		EventID:       record.EventID,
+		EventType:     string(record.EventType),
+		SchemaVersion: record.SchemaVersion,
+		AggregateType: string(record.AggregateType),
+		AggregateID:   record.AggregateID,
+		ProjectID:     record.ProjectID,
+		OccurredAt:    rfc3339OrEmpty(record.OccurredAt),
+		TraceID:       record.TraceID,
+		Payload:       record.Payload,
+	}
+}
+
+// ListDomainEvents returns a project's events newest first.
+func (b *DramaBinding) ListDomainEvents(request ListDomainEventsRequest) ([]DomainEventDTO, error) {
+	service := b.eventService()
+	if service == nil {
+		return nil, bindingUnavailable()
+	}
+	// The event type is validated by the service against the section 17
+	// vocabulary; the length bound here only keeps an absurd string from
+	// reaching that comparison.
+	if len(request.EventType) > maxEventTypeLength {
+		return nil, bindingInvalidInput()
+	}
+	records, err := service.List(b.context(), appevents.ListFilter{
+		ProjectID:     request.ProjectID,
+		AggregateType: request.AggregateType,
+		AggregateID:   request.AggregateID,
+		EventType:     request.EventType,
+		TraceID:       request.TraceID,
+		Limit:         request.Limit,
+	})
+	if err != nil {
+		return nil, toDramaError(err)
+	}
+	// A non-nil slice, so the caller can map over an empty answer.
+	result := make([]DomainEventDTO, 0, len(records))
+	for _, record := range records {
+		result = append(result, toDomainEventDTO(record))
+	}
+	return result, nil
+}
+
+// CountDomainEvents reports how many events match a query.
+func (b *DramaBinding) CountDomainEvents(request ListDomainEventsRequest) (int, error) {
+	service := b.eventService()
+	if service == nil {
+		return 0, bindingUnavailable()
+	}
+	count, err := service.Count(b.context(), appevents.ListFilter{
+		ProjectID:     request.ProjectID,
+		AggregateType: request.AggregateType,
+		AggregateID:   request.AggregateID,
+		EventType:     request.EventType,
+	})
+	if err != nil {
+		return 0, toDramaError(err)
+	}
+	return count, nil
 }

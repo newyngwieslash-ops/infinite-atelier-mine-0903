@@ -4,6 +4,7 @@ import (
 	"context"
 
 	appassets "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/assets"
+	appevents "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/events"
 	appscript "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/script"
 	appstaleness "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/staleness"
 	appstory "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/story"
@@ -27,6 +28,7 @@ type dramaWiring struct {
 	workflow   *appworkflow.Service
 	staleness  *appstaleness.Service
 	assets     *appassets.Service
+	events     *appevents.Service
 
 	dramaBinding  *desktop.DramaBinding
 	assetsBinding *desktop.AssetsBinding
@@ -53,6 +55,15 @@ func composeDrama(handle *database.Handle) *dramaWiring {
 	workflowRepository := database.NewWorkflowRepository(connection)
 	stalenessRepository := database.NewStalenessRepository(connection)
 
+	// The event stream is composed first because three of the services below
+	// record into it: the approvals that must write their governance event in
+	// the same transaction as the change they describe.
+	eventService := appevents.NewService(appevents.Options{
+		Repository: database.NewEventRepository(connection),
+		Clock:      clock,
+		IDs:        ids,
+	})
+
 	return &dramaWiring{
 		story: appstory.NewService(appstory.Options{
 			Repository: storyRepository,
@@ -63,6 +74,7 @@ func composeDrama(handle *database.Handle) *dramaWiring {
 			Repository: scriptRepository,
 			Clock:      clock,
 			IDs:        ids,
+			Events:     eventService,
 		}),
 		storyboard: appstoryboard.NewService(appstoryboard.Options{
 			DirectorPlans: storyboardRepository,
@@ -71,6 +83,7 @@ func composeDrama(handle *database.Handle) *dramaWiring {
 			Panels:        storyboardRepository,
 			Clock:         clock,
 			IDs:           ids,
+			Events:        eventService,
 		}),
 		workflow: appworkflow.NewService(appworkflow.Options{
 			Runs:      workflowRepository,
@@ -98,6 +111,7 @@ func composeDrama(handle *database.Handle) *dramaWiring {
 			Clock:      clock,
 			IDs:        ids,
 		}),
+		events: eventService,
 	}
 }
 
@@ -112,6 +126,7 @@ func (w *dramaWiring) attach(ctx context.Context) {
 		desktop.AttachStoryboard(w.dramaBinding, ctx, w.storyboard)
 		desktop.AttachWorkflow(w.dramaBinding, ctx, w.workflow)
 		desktop.AttachStaleness(w.dramaBinding, ctx, w.staleness)
+		desktop.AttachDomainEvents(w.dramaBinding, ctx, w.events)
 	}
 	if w.assetsBinding != nil {
 		desktop.AttachAssets(w.assetsBinding, ctx, w.assets)

@@ -254,3 +254,58 @@ export async function approveAssetVersion(request: desktop.ApproveVersionRequest
     const { ApproveVersion } = await loadAssetsBinding();
     return ApproveVersion(request);
 }
+
+// The domain event stream. It is a query, so a browser session gets an empty
+// answer rather than an error: a studio page renders its empty state instead of
+// a failure toast.
+
+export async function listDomainEvents(request: desktop.ListDomainEventsRequest): Promise<desktop.DomainEventDTO[]> {
+    if (!isDramaBindingsAvailable()) return [];
+    const { ListDomainEvents } = await loadDramaBinding();
+    return ListDomainEvents(request);
+}
+
+export async function countDomainEvents(request: desktop.ListDomainEventsRequest): Promise<number> {
+    if (!isDramaBindingsAvailable()) return 0;
+    const { CountDomainEvents } = await loadDramaBinding();
+    return CountDomainEvents(request);
+}
+
+/**
+ * DOMAIN_EVENT_TYPES mirrors the section 17 vocabulary on the Go side.
+ *
+ * It is exported so a section can offer a filter without hardcoding a list that
+ * would drift from the one the core validates against. The core refuses an
+ * unknown type, so a stale entry here fails loudly rather than silently
+ * filtering everything out.
+ */
+export const DOMAIN_EVENT_TYPES = [
+    "ProjectCreated",
+    "ProjectSettingsChanged",
+    "ProjectRuleLocked",
+    "SourceDocumentImported",
+    "ChapterBoundariesConfirmed",
+    "StoryFactAccepted",
+    "StoryFactConflictOpened",
+    "EpisodeCreated",
+    "StorySkeletonApproved",
+    "AdaptationStrategyApproved",
+    "ScriptVersionCreated",
+    "ScriptVersionApproved",
+    "AssetVersionCreated",
+    "AssetVersionApproved",
+    "DirectorPlanApproved",
+    "StoryboardVersionApproved",
+    "CanvasProjectionCreated",
+    "WorkflowStarted",
+    "WorkflowStageChanged",
+    "ReviewReportCreated",
+    "UserGateDecided",
+    "GenerationJobQueued",
+    "GenerationJobSucceeded",
+    "GenerationJobFailed",
+    "MemoryCreated",
+    "UpstreamVersionChanged",
+    "ArtifactMarkedStale",
+    "BackupCompleted",
+] as const;

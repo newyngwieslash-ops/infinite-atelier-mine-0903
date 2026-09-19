@@ -1052,6 +1052,34 @@ export namespace desktop {
 	        this.createdAt = source["createdAt"];
 	    }
 	}
+	export class DomainEventDTO {
+	    eventId: string;
+	    eventType: string;
+	    schemaVersion: number;
+	    aggregateType: string;
+	    aggregateId: string;
+	    projectId: string;
+	    occurredAt: string;
+	    traceId: string;
+	    payload: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new DomainEventDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.eventId = source["eventId"];
+	        this.eventType = source["eventType"];
+	        this.schemaVersion = source["schemaVersion"];
+	        this.aggregateType = source["aggregateType"];
+	        this.aggregateId = source["aggregateId"];
+	        this.projectId = source["projectId"];
+	        this.occurredAt = source["occurredAt"];
+	        this.traceId = source["traceId"];
+	        this.payload = source["payload"];
+	    }
+	}
 	export class EpisodeDTO {
 	    id: string;
 	    key: string;
@@ -1251,6 +1279,28 @@ export namespace desktop {
 	        this.includeDeleted = source["includeDeleted"];
 	        this.limit = source["limit"];
 	        this.offset = source["offset"];
+	    }
+	}
+	export class ListDomainEventsRequest {
+	    projectId: string;
+	    aggregateType?: string;
+	    aggregateId?: string;
+	    eventType?: string;
+	    traceId?: string;
+	    limit?: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ListDomainEventsRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.projectId = source["projectId"];
+	        this.aggregateType = source["aggregateType"];
+	        this.aggregateId = source["aggregateId"];
+	        this.eventType = source["eventType"];
+	        this.traceId = source["traceId"];
+	        this.limit = source["limit"];
 	    }
 	}
 	export class ListJobsRequest {

@@ -14,6 +14,8 @@ export function ApproveScriptVersion(arg1:desktop.ApproveScriptVersionRequest):P
 
 export function ClearStaleMark(arg1:desktop.ClearStaleMarkRequest):Promise<boolean>;
 
+export function CountDomainEvents(arg1:desktop.ListDomainEventsRequest):Promise<number>;
+
 export function CreateChapter(arg1:desktop.CreateChapterRequest):Promise<desktop.ChapterDTO>;
 
 export function CreateDirectorPlanVersion(arg1:desktop.CreateDirectorPlanVersionRequest):Promise<desktop.DirectorPlanVersionDTO>;
@@ -51,6 +53,8 @@ export function EnsureStoryboard(arg1:string):Promise<desktop.StoryboardDTO>;
 export function GetReviewReport(arg1:string):Promise<desktop.ReviewReportDTO>;
 
 export function ListChapters(arg1:string):Promise<Array<desktop.ChapterDTO>>;
+
+export function ListDomainEvents(arg1:desktop.ListDomainEventsRequest):Promise<Array<desktop.DomainEventDTO>>;
 
 export function ListEpisodes(arg1:string):Promise<Array<desktop.EpisodeDTO>>;
 

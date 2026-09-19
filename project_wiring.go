@@ -7,6 +7,7 @@ import (
 	"time"
 
 	appbackup "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/backup"
+	appevents "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/events"
 	applegacy "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/legacy"
 	appprojects "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/projects"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/buildinfo"
@@ -47,6 +48,11 @@ func composeProjects(handle *database.Handle, dirs appdirs.Dirs, store *filestor
 	ids := id.NewGenerator()
 	clock := appprojectsClock{}
 
+	eventService := appevents.NewService(appevents.Options{
+		Repository: database.NewEventRepository(connection),
+		Clock:      clock,
+		IDs:        ids,
+	})
 	projectService := appprojects.NewService(appprojects.Options{
 		Projects: database.NewProjectRepository(connection),
 		Canvas:   database.NewCanvasRepository(connection),
@@ -54,8 +60,11 @@ func composeProjects(handle *database.Handle, dirs appdirs.Dirs, store *filestor
 		// policies) are what the studio's creation wizard writes, so the service
 		// is composed with them rather than serving projects alone.
 		Settings: database.NewDramaSettingsRepository(connection),
-		Clock:    clock,
-		IDs:      ids,
+		// Events enables the style guide approval, which records its governance
+		// event in the same transaction as the switch.
+		Events: eventService,
+		Clock:  clock,
+		IDs:    ids,
 	})
 
 	// The import pipeline needs a file committer (bytes into the FileStore) and
