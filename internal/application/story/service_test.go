@@ -2,6 +2,7 @@ package story
 
 import (
 	"context"
+	"sort"
 	"sync"
 	"testing"
 	"time"
@@ -49,19 +50,28 @@ type memoryStore struct {
 	recorded  []event.Event
 	relations map[string]storydomain.StoryRelation
 	conflicts map[string]storydomain.StoryFactConflict
+	// The three child rows of the fact layer. Each is keyed by what makes it
+	// unique in the schema rather than by a surrogate, so the double refuses a
+	// duplicate the way SQLite's constraints do.
+	aliases      map[string]storydomain.StoryEntityAlias
+	participants map[string]storydomain.StoryEventParticipant
+	factSources  map[string]storydomain.StoryFactSource
 	// failCreate makes the next write fail, so a storage failure is testable.
 	failCreate error
 }
 
 func newMemoryStore() *memoryStore {
 	return &memoryStore{
-		documents: map[string]storydomain.SourceDocument{},
-		versions:  map[string]storydomain.SourceDocumentVersion{},
-		chapters:  map[string]storydomain.Chapter{},
-		entities:  map[string]storydomain.StoryEntity{},
-		events:    map[string]storydomain.StoryEvent{},
-		relations: map[string]storydomain.StoryRelation{},
-		conflicts: map[string]storydomain.StoryFactConflict{},
+		documents:    map[string]storydomain.SourceDocument{},
+		versions:     map[string]storydomain.SourceDocumentVersion{},
+		chapters:     map[string]storydomain.Chapter{},
+		entities:     map[string]storydomain.StoryEntity{},
+		events:       map[string]storydomain.StoryEvent{},
+		relations:    map[string]storydomain.StoryRelation{},
+		conflicts:    map[string]storydomain.StoryFactConflict{},
+		aliases:      map[string]storydomain.StoryEntityAlias{},
+		participants: map[string]storydomain.StoryEventParticipant{},
+		factSources:  map[string]storydomain.StoryFactSource{},
 	}
 }
 
@@ -827,4 +837,156 @@ func (s *memoryStore) ConfirmChapters(_ context.Context, sourceDocumentVersionID
 	}
 	s.recorded = append(s.recorded, record)
 	return nil
+}
+
+// The child rows of the fact layer: aliases, participants and evidence.
+
+func (s *memoryStore) CreateStoryEntityAlias(_ context.Context, record storydomain.StoryEntityAlias) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.failCreate != nil {
+		return s.failCreate
+	}
+	// The schema's unique index is over (entity, alias), so the double refuses a
+	// duplicate pair the same way rather than letting a second row in.
+	for _, existing := range s.aliases {
+		if existing.StoryEntityID == record.StoryEntityID && existing.Alias == record.Alias {
+			return storydomain.ConflictError("That name is already an alias for this entity.")
+		}
+	}
+	s.aliases[record.ID] = record
+	return nil
+}
+
+func (s *memoryStore) ListStoryEntityAliases(_ context.Context, storyEntityID string) ([]storydomain.StoryEntityAlias, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	records := []storydomain.StoryEntityAlias{}
+	for _, record := range s.aliases {
+		if record.StoryEntityID == storyEntityID {
+			records = append(records, record)
+		}
+	}
+	sort.Slice(records, func(i, j int) bool { return records[i].ID < records[j].ID })
+	return records, nil
+}
+
+func (s *memoryStore) CreateStoryEventParticipant(_ context.Context, record storydomain.StoryEventParticipant) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.failCreate != nil {
+		return s.failCreate
+	}
+	// The primary key is (event, entity, role), so the same entity may hold two
+	// roles but not the same one twice.
+	key := record.StoryEventID + "\x00" + record.StoryEntityID + "\x00" + string(record.Role)
+	if _, exists := s.participants[key]; exists {
+		return storydomain.ConflictError("That entity already holds that role in this event.")
+	}
+	s.participants[key] = record
+	return nil
+}
+
+func (s *memoryStore) ListStoryEventParticipants(_ context.Context, storyEventID string) ([]storydomain.StoryEventParticipant, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	records := []storydomain.StoryEventParticipant{}
+	for _, record := range s.participants {
+		if record.StoryEventID == storyEventID {
+			records = append(records, record)
+		}
+	}
+	sort.Slice(records, func(i, j int) bool { return records[i].Role < records[j].Role })
+	return records, nil
+}
+
+func (s *memoryStore) CreateStoryFactSource(_ context.Context, record storydomain.StoryFactSource) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.failCreate != nil {
+		return s.failCreate
+	}
+	s.factSources[record.ID] = record
+	return nil
+}
+
+func (s *memoryStore) ListStoryFactSources(_ context.Context, factType storydomain.FactType, factID string) ([]storydomain.StoryFactSource, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	records := []storydomain.StoryFactSource{}
+	for _, record := range s.factSources {
+		if record.FactType == factType && record.FactID == factID {
+			records = append(records, record)
+		}
+	}
+	sort.Slice(records, func(i, j int) bool { return records[i].ID < records[j].ID })
+	return records, nil
+}
+
+// The three list queries the graph panel drives. The double filters the same way
+// the SQL does, including the empty-filter rule, so a service test that passes
+// here is not passing because the double was permissive.
+
+func (s *memoryStore) ListStoryEntities(_ context.Context, projectID string, status storydomain.FactStatus) ([]storydomain.StoryEntity, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	records := []storydomain.StoryEntity{}
+	for _, record := range s.entities {
+		if record.ProjectID != projectID {
+			continue
+		}
+		// A soft-deleted row is never returned, which is the rule the SQL's
+		// `deleted_at = ''` carries.
+		if !record.DeletedAt.IsZero() {
+			continue
+		}
+		if status != "" && record.Status != status {
+			continue
+		}
+		records = append(records, record)
+	}
+	sort.Slice(records, func(i, j int) bool { return records[i].ID < records[j].ID })
+	return records, nil
+}
+
+func (s *memoryStore) ListStoryEvents(_ context.Context, projectID, chapterID string, status storydomain.FactStatus) ([]storydomain.StoryEvent, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	records := []storydomain.StoryEvent{}
+	for _, record := range s.events {
+		if record.ProjectID != projectID {
+			continue
+		}
+		if chapterID != "" && record.ChapterID != chapterID {
+			continue
+		}
+		if status != "" && record.Status != status {
+			continue
+		}
+		records = append(records, record)
+	}
+	sort.Slice(records, func(i, j int) bool {
+		if records[i].Ordinal != records[j].Ordinal {
+			return records[i].Ordinal < records[j].Ordinal
+		}
+		return records[i].ID < records[j].ID
+	})
+	return records, nil
+}
+
+func (s *memoryStore) ListStoryRelations(_ context.Context, projectID string, status storydomain.FactStatus) ([]storydomain.StoryRelation, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	records := []storydomain.StoryRelation{}
+	for _, record := range s.relations {
+		if record.ProjectID != projectID {
+			continue
+		}
+		if status != "" && record.Status != status {
+			continue
+		}
+		records = append(records, record)
+	}
+	sort.Slice(records, func(i, j int) bool { return records[i].ID < records[j].ID })
+	return records, nil
 }

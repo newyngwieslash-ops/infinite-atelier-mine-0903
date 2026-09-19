@@ -384,19 +384,38 @@ func (s *Service) createChapters(ctx context.Context, versionID string, boundari
 // than refused, because a caller asking for too much wants the text, not an
 // error.
 func (s *Service) ReadRange(ctx context.Context, versionID string, startRune, endRune int) (TextRange, error) {
-	if !s.Available() {
-		return TextRange{}, storageFailure()
-	}
-	version, err := s.story.GetSourceDocumentVersion(ctx, strings.TrimSpace(versionID))
+	text, start, total, err := s.readText(ctx, versionID, startRune, endRune, maxPageRunes)
 	if err != nil {
 		return TextRange{}, err
 	}
+	return TextRange{
+		Text:       text,
+		StartRune:  start,
+		EndRune:    start + len([]rune(text)),
+		TotalRunes: total,
+	}, nil
+}
+
+// readText reads a range of a version's normalized text under a size ceiling.
+//
+// Both public readers go through here, so the clamping, the negative-index
+// guards and the character-versus-byte handling exist once. The ceiling is the
+// only thing they disagree about, which is why it is an argument rather than a
+// constant read from inside.
+func (s *Service) readText(ctx context.Context, versionID string, startRune, endRune, maxRunes int) (string, int, int, error) {
+	if !s.Available() {
+		return "", 0, 0, storageFailure()
+	}
+	version, err := s.story.GetSourceDocumentVersion(ctx, strings.TrimSpace(versionID))
+	if err != nil {
+		return "", 0, 0, err
+	}
 	if strings.TrimSpace(version.NormalizedTextFileID) == "" {
-		return TextRange{}, importdomain.InvalidError("This version has no normalized text to read.")
+		return "", 0, 0, importdomain.InvalidError("This version has no normalized text to read.")
 	}
 	raw, err := s.ifs.Open(ctx, version.NormalizedTextFileID)
 	if err != nil {
-		return TextRange{}, importdomain.StorageError("The normalized text could not be read.", err)
+		return "", 0, 0, importdomain.StorageError("The normalized text could not be read.", err)
 	}
 	runes := []rune(string(raw))
 	total := len(runes)
@@ -409,19 +428,35 @@ func (s *Service) ReadRange(ctx context.Context, versionID string, startRune, en
 	if endRune <= 0 || endRune > total {
 		endRune = total
 	}
-	// Clamp to one page.
-	if endRune-startRune > maxPageRunes {
-		endRune = startRune + maxPageRunes
+	if endRune-startRune > maxRunes {
+		endRune = startRune + maxRunes
 	}
 	if endRune < startRune {
 		endRune = startRune
 	}
-	return TextRange{
-		Text:       string(runes[startRune:endRune]),
-		StartRune:  startRune,
-		EndRune:    endRune,
-		TotalRunes: total,
-	}, nil
+	return string(runes[startRune:endRune]), startRune, total, nil
+}
+
+// ChapterText returns a whole chapter's text.
+//
+// It differs from ReadRange in exactly one way: it does not clamp to a page. The
+// page limit exists so a UI never receives a document slice larger than it can
+// render, and an extraction is not a UI — it has to read the whole chapter or it
+// would propose facts about a fragment.
+//
+// The bound it keeps is the oversized-chapter refusal: a chapter larger than
+// MaxChapterRunes is refused rather than streamed into memory, because that is a
+// malformed chapter rather than a large one, and truncating it would silently
+// change what was read.
+func (s *Service) ChapterText(ctx context.Context, versionID string, startRune, endRune int) (string, error) {
+	text, _, _, err := s.readText(ctx, versionID, startRune, endRune, importdomain.MaxChapterRunes)
+	if err != nil {
+		return "", err
+	}
+	if len([]rune(text)) >= importdomain.MaxChapterRunes {
+		return "", importdomain.InvalidError("That chapter is larger than one reading may cover, which usually means a boundary was missed.")
+	}
+	return text, nil
 }
 
 // TextRange is one page of a document's text.

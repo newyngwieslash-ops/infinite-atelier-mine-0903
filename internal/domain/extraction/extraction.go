@@ -184,3 +184,61 @@ func (e *Error) Unwrap() error {
 	}
 	return e.Cause
 }
+
+// RequestError is a refusal of the request rather than of the model's output:
+// no extractor is attached, the chapter does not exist, or its text is empty.
+//
+// It is separate from Error because the two are handled differently. A malformed
+// model response is worth one repair attempt (AGENT_CONTRACTS §14.3); an
+// unavailable extractor is not worth retrying at all, and the caller needs to be
+// able to tell them apart to decide.
+//
+// It carries a safe message and a code, and no payload: SECURITY §17 requires a
+// security-shaped failure to be classified, and a caller that logs this message
+// must not be logging document text.
+type RequestError struct {
+	// Code is a stable identifier the desktop layer maps.
+	Code string
+	// SafeMessage is what the user is shown.
+	SafeMessage string
+	// Retriable says whether trying again could help.
+	Retriable bool
+	// Cause is an optional wrapped failure.
+	Cause error
+}
+
+func (e *RequestError) Error() string {
+	if e == nil {
+		return ""
+	}
+	return e.SafeMessage
+}
+
+func (e *RequestError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Cause
+}
+
+// Codes for the refusals this domain reports.
+const (
+	// CodeUnavailable means no extractor is configured. It is deliberately not
+	// retriable: nothing about waiting will attach one.
+	CodeUnavailable = "extraction.unavailable"
+	// CodeInvalidRequest means the request itself was wrong.
+	CodeInvalidRequest = "extraction.invalid_request"
+)
+
+// InvalidRequestError refuses a malformed request.
+func InvalidRequestError(message string) *RequestError {
+	return &RequestError{Code: CodeInvalidRequest, SafeMessage: message}
+}
+
+// UnavailableError reports that no extractor is attached.
+func UnavailableError() *RequestError {
+	return &RequestError{
+		Code:        CodeUnavailable,
+		SafeMessage: "No document reader is configured, so extraction cannot run.",
+	}
+}

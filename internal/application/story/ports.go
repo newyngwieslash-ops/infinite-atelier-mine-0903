@@ -85,6 +85,20 @@ type StoryEntityRepository interface {
 	GetStoryEntity(ctx context.Context, id string) (storydomain.StoryEntity, error)
 	// UpdateStoryEntity persists a change guarded by the expected revision.
 	UpdateStoryEntity(ctx context.Context, record storydomain.StoryEntity, expectedRevision int64) error
+	// ListStoryEntities returns a project's entities, oldest first, without the
+	// rows a soft delete hid.
+	//
+	// A status filter is a separate argument rather than folded into the project
+	// id, because the story-graph panel asks two different questions: everything
+	// the project has, and the candidates awaiting review. An empty status means
+	// "any".
+	ListStoryEntities(ctx context.Context, projectID string, status storydomain.FactStatus) ([]storydomain.StoryEntity, error)
+	// CreateStoryEntityAlias stores an alternative name. A duplicate
+	// (entity, alias) pair is a conflict, because the schema's unique index is
+	// over exactly that pair.
+	CreateStoryEntityAlias(ctx context.Context, record storydomain.StoryEntityAlias) error
+	// ListStoryEntityAliases returns an entity's aliases oldest first.
+	ListStoryEntityAliases(ctx context.Context, storyEntityID string) ([]storydomain.StoryEntityAlias, error)
 }
 
 // StoryEventRepository persists story events.
@@ -95,6 +109,21 @@ type StoryEventRepository interface {
 	GetStoryEvent(ctx context.Context, id string) (storydomain.StoryEvent, error)
 	// UpdateStoryEvent persists a change guarded by the expected revision.
 	UpdateStoryEvent(ctx context.Context, record storydomain.StoryEvent, expectedRevision int64) error
+	// ListStoryEvents returns a project's events in story order, without the
+	// rows a soft delete hid. An empty chapterID means every chapter; an empty
+	// status means any status.
+	//
+	// The order is (ordinal, id) rather than chapter order, because the panel
+	// shows the story's timeline and that is what ordinal means. The id breaks a
+	// tie so two events at one position come back in a stable order rather than
+	// in whatever order SQLite happened to return.
+	ListStoryEvents(ctx context.Context, projectID, chapterID string, status storydomain.FactStatus) ([]storydomain.StoryEvent, error)
+	// CreateStoryEventParticipant links an entity to an event. A duplicate
+	// (event, entity, role) triple is a conflict.
+	CreateStoryEventParticipant(ctx context.Context, record storydomain.StoryEventParticipant) error
+	// ListStoryEventParticipants returns an event's participants ordered by role
+	// then entity, so the same event renders the same way twice.
+	ListStoryEventParticipants(ctx context.Context, storyEventID string) ([]storydomain.StoryEventParticipant, error)
 }
 
 // StoryRelationRepository persists story relations.
@@ -103,6 +132,17 @@ type StoryRelationRepository interface {
 	CreateStoryRelation(ctx context.Context, record storydomain.StoryRelation) error
 	// GetStoryRelation returns one relation by id.
 	GetStoryRelation(ctx context.Context, id string) (storydomain.StoryRelation, error)
+	// ListStoryRelations returns a project's relations, oldest first, without the
+	// rows a soft delete hid. An empty status means any status.
+	ListStoryRelations(ctx context.Context, projectID string, status storydomain.FactStatus) ([]storydomain.StoryRelation, error)
+}
+
+// StoryFactSourceRepository persists the evidence a fact cites.
+type StoryFactSourceRepository interface {
+	// CreateStoryFactSource stores one evidence row.
+	CreateStoryFactSource(ctx context.Context, record storydomain.StoryFactSource) error
+	// ListStoryFactSources returns the evidence for one fact, oldest first.
+	ListStoryFactSources(ctx context.Context, factType storydomain.FactType, factID string) ([]storydomain.StoryFactSource, error)
 }
 
 // StoryConflictRepository persists recorded fact conflicts.
@@ -128,6 +168,7 @@ type Repository interface {
 	StoryEntityRepository
 	StoryEventRepository
 	StoryRelationRepository
+	StoryFactSourceRepository
 	StoryConflictRepository
 }
 

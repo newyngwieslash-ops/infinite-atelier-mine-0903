@@ -301,6 +301,20 @@ func (s *Service) ReviseChapter(ctx context.Context, request ReviseChapterReques
 }
 
 // ListChapters returns a document version's chapters in reading order.
+// GetChapter returns one chapter by id.
+//
+// The read exists for the extraction reader, which reaches a chapter from the
+// graph side and needs its offsets to slice the text it indexes.
+func (s *Service) GetChapter(ctx context.Context, id string) (storydomain.Chapter, error) {
+	if !s.Available() {
+		return storydomain.Chapter{}, storageFailure()
+	}
+	if strings.TrimSpace(id) == "" {
+		return storydomain.Chapter{}, storydomain.InvalidError("A chapter is required.")
+	}
+	return s.repository.GetChapter(ctx, strings.TrimSpace(id))
+}
+
 func (s *Service) ListChapters(ctx context.Context, sourceDocumentVersionID string) ([]storydomain.Chapter, error) {
 	if !s.Available() {
 		return nil, storageFailure()

@@ -118,6 +118,16 @@ const (
 	// allows 有限摘录 (a limited excerpt) for verification but forbids copying a
 	// whole chapter into the database.
 	MaxExcerptRunes = 200
+	// MaxChapterRunes bounds a chapter an extraction may read in one go.
+	//
+	// It is separate from ReadPageBytes because the two readers answer different
+	// questions. A page is what a renderer can show; this is what one model call
+	// may be asked to read. 200,000 characters is twice the whole-document
+	// performance target in one chapter, so a chapter beyond it is a detection
+	// mistake rather than a long chapter: the boundary was missed and everything
+	// after it was swallowed. Refusing is the honest response, because truncating
+	// would extract facts from a fragment while reporting the chapter as read.
+	MaxChapterRunes = 200000
 )
 
 // ChapterSource records how a boundary was decided. It is a queryable column
