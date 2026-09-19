@@ -152,12 +152,13 @@ func (r fixedReader) ChapterWithText(_ context.Context, chapterID string) (Chapt
 	if r.chapter.ID != chapterID {
 		return ChapterText{}, story.NotFoundError()
 	}
-	// The base is taken from the chapter, exactly as the real reader takes it.
-	// Setting it here from a constant instead would let this fake and the
-	// production adapter disagree about where the chapter begins, which is the
-	// class of divergence a fake is most likely to introduce: the real one is
-	// covered by the desktop tests, and a fake that computed the base differently
-	// would make the extraction tests green about a case that cannot happen.
+	// The base is taken from the chapter, exactly as the real reader takes it. The
+	// earlier version of this comment claimed "the real one is covered by the
+	// desktop tests"; that was false at the time — the adapter had no test, and a
+	// mutation setting its base to 0 left the whole suite green. It is true now
+	// (TestChapterReaderReportsWhereTheChapterStarts), which is why this fake
+	// still computes the base the same way rather than from a constant: the two
+	// could otherwise drift while every test stayed green.
 	base := r.chapter.StartOffset
 	if base < 0 {
 		base = 0

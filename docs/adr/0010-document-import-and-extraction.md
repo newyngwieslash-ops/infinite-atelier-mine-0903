@@ -218,3 +218,12 @@ scenarios, including `MockInvalidOnce`, which is what exercises the repair round
   ceiling and recorded as a remaining cost rather than claimed to be free.
 - `PropState` remains unmodelled. A later package that needs it should extend
   `character_states` rather than add a fourth representation.
+- Split and merge renumber inside one transaction, so they cannot be composed into
+  a larger operation that spans them. That is deliberate: the ordinal constraint
+  makes the intermediate state unrepresentable outside a transaction, so a caller
+  wanting to perform several boundary edits at once needs a command of its own
+  rather than several of these in sequence.
+- The backward page is a separate direction rather than a negative range, because
+  the range API's "non-positive end means the end of the document" made a backward
+  page inexpressible. A caller reading pages must therefore say which way it is
+  going, which is explicit rather than implied.

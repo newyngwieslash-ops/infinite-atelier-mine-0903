@@ -1951,6 +1951,8 @@ export namespace desktop {
 	    sourceDocumentVersionId: string;
 	    startRune: number;
 	    endRune: number;
+	    direction?: string;
+	    totalRunes?: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new ReadDocumentRangeRequest(source);
@@ -1961,6 +1963,8 @@ export namespace desktop {
 	        this.sourceDocumentVersionId = source["sourceDocumentVersionId"];
 	        this.startRune = source["startRune"];
 	        this.endRune = source["endRune"];
+	        this.direction = source["direction"];
+	        this.totalRunes = source["totalRunes"];
 	    }
 	}
 	export class ReviewIssueInputRequest {

@@ -459,6 +459,80 @@ func (s *Service) ChapterText(ctx context.Context, versionID string, startRune, 
 	return text, nil
 }
 
+// PageDirection is which way a page request moves from its anchor.
+//
+// It exists because a reader needs to go BACK, and the range API could not express
+// that: ReadRange clamps a non-positive end to the end of the document, so asking
+// for one page ending before an offset is not a thing its parameters can say. An
+// independent review found the consequence in the UI — the "previous page" button
+// passed `startRune - 1` and got a page running FORWARD from there, so it moved
+// one rune backwards and then a whole page forwards, and the button never returned
+// to a previous page.
+type PageDirection string
+
+const (
+	// PageForward starts at the anchor and runs to the end of the page.
+	PageForward PageDirection = "forward"
+	// PageBackward ENDS at the anchor and begins one page before it, which is what
+	// a reader's "previous page" means.
+	PageBackward PageDirection = "backward"
+)
+
+// ReadPage returns one page of a version's text, forwards or backwards from a
+// rune offset.
+//
+// A backward page ends AT the anchor rather than starting one rune before it: the
+// pages then tile without overlap or a one-rune sliver, which is what the reader's
+// buttons depend on.
+func (s *Service) ReadPage(ctx context.Context, versionID string, anchor int, direction PageDirection, totalHint int) (TextRange, error) {
+	if direction != PageBackward {
+		return s.ReadRange(ctx, versionID, anchor, 0)
+	}
+	if !s.Available() {
+		return TextRange{}, storageFailure()
+	}
+	// A backward page needs the version's total to know where its start is, and
+	// totalHint lets a caller that just read a page avoid measuring the text again.
+	// The hint is only a HINT: it is clamped to what the text actually holds, so a
+	// stale one yields a short page rather than a wrong offset.
+	total := totalHint
+	if total <= 0 {
+		// No hint: the size is measured from the text, which means reading it. That
+		// is the cost of a caller that arrives without having read anything, and it
+		// is why the hint exists.
+		probe, _, measured, err := s.readText(ctx, versionID, 0, 0, 1)
+		if err != nil {
+			return TextRange{}, err
+		}
+		_ = probe
+		total = measured
+	}
+	end := anchor
+	if end > total {
+		end = total
+	}
+	if end < 0 {
+		end = 0
+	}
+	start := end - maxPageRunes
+	if start < 0 {
+		start = 0
+	}
+	page, clampedStart, _, err := s.readText(ctx, versionID, start, end, maxPageRunes)
+	if err != nil {
+		return TextRange{}, err
+	}
+	return TextRange{
+		Text:      page,
+		StartRune: clampedStart,
+		// EndRune is the anchor rather than start+len(page): the two agree when the
+		// page is full, and when it is not, the anchor is the honest end because
+		// that is where the caller asked to stop.
+		EndRune:    end,
+		TotalRunes: total,
+	}, nil
+}
+
 // TextRange is one page of a document's text.
 type TextRange struct {
 	Text       string

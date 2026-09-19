@@ -1,9 +1,9 @@
 # Implementation Status
 
-> Last updated: 2026-09-18
+> Last updated: 2026-09-19
 > Product: Infinite Atelier Core + Drama Production Pack
-> Current work package: **WP-05 — 短剧领域模型与工作室 UI Shell**
-> Status: **COMPLETE for the WP-05 scope recorded in section 0e, and for the follow-up recorded in section 0f** (the drama schema, domain vocabulary, relation registry, application services and repositories, the drama and assets bindings, the studio shell and creation wizard, the projection and required-reference commands AC-CANVAS-001/002 need, the section 17 domain event stream, and the five version families that had no approval command). WP-01 through WP-04 remain COMPLETE for their recorded scopes; sections 0e and 0f state exactly which earlier gaps this package closed and which it left open.
+> Current work package: **WP-06 — 原始文档、章节与事件图谱**
+> Status: **COMPLETE for the 13 ROADMAP items, with two scope exclusions named in ADR-0010 §8 and one acceptance item marked PARTIAL in section 0g** (document import for TXT/Markdown/DOCX with encoding detection and normalization, chapter detection and confirmation with manual split and merge, original-text location through version-absolute offsets, paged reading and a bounded chunked transfer, the embedded EventExtraction contract and its validator, extraction with reference resolution, candidate writes and section 14.3's single repair round, the alias/participant/evidence writers and story-graph queries ADR-0007 recorded as missing, the conflict queue, accept/reject/lock, and the studio's import flow and story-graph sections). WP-01 through WP-05 remain COMPLETE for their recorded scopes; section 0g states exactly what this package delivered and what it did not, including the findings of two independent reviews and what was done about each.
 
 WP-03 start baseline (2026-09-15): branch `codex/wp-01-desktop-foundation`, HEAD `a243891455ec17687dd54b5ac90d3bd64478a1a1`, empty index. Freshly re-run baseline: `go test ./... -count=1` PASS (15 packages at start), `go vet ./...` PASS, `web` `npm run typecheck` PASS, `npm test` PASS (15 tests), `npm run build` PASS. Go commands require `GOTOOLCHAIN=go1.25.0 GOSUMDB=sum.golang.org` on this host because the user-level `go env` sets `GOSUMDB=off`, which blocks toolchain verification. The working tree already contained the WP-01/WP-02 tracked and untracked work plus the user's brand rename; none of it was modified outside the WP-03 scope.
 
@@ -64,7 +64,7 @@ WP-03 start baseline (2026-09-15): branch `codex/wp-01-desktop-foundation`, HEAD
 |---|---|---|
 | AC-STORY-001 编码正确 | PASS | `DetectEncoding` covers UTF-8 with BOM, UTF-16 by BOM, GBK and GB18030; the GBK fixture decodes, and the lossy-decode guard rejects what it cannot decode without loss. |
 | AC-STORY-001 章节检测 | PASS | The canary document's five chapters are detected and matched against its generated report; the boundaries are asserted to tile the document. |
-| AC-STORY-001 用户调整 | PASS | `ReviseChapter` adjusts a boundary's title and offsets under a revision guard and marks it `manual`. Split and merge are excluded, with ADR-0010 §8 stating why. |
+| AC-STORY-001 用户调整 | PASS | `ReviseChapter` adjusts a boundary's title and offsets under a revision guard and marks it `manual`; `SplitChapter` and `MergeChapter` divide and join boundaries, renumbering under `UNIQUE (version, ordinal)` in one transaction, with the text still tiling afterwards. PRD FR-020 lists 手动合并/拆分 as a MUST item and this is where it is delivered. |
 | AC-STORY-001 offsets 有效 | PASS | Evidence offsets are asserted to fall inside the chapter AND to index the VERSION's text, which is what §6.6's reader uses. Both assertions caught a real defect. |
 | AC-STORY-001 原文定位 | PASS | `ReadDocumentRange` returns a version's text by offset, bounded by the core's page ceiling. |
 | AC-STORY-001 duplicate hash 提示 | PASS | A repeat import of the same file is refused by default and reported with the document it was imported as; the UI requires an explicit confirmation. |
@@ -72,7 +72,7 @@ WP-03 start baseline (2026-09-15): branch `codex/wp-01-desktop-foundation`, HEAD
 | AC-STORY-002 结构校验 | PASS | The embedded schema is compiled and enforced; a document that violates it writes nothing. |
 | AC-STORY-002 来源 chapter/offset | PASS | Evidence rows carry the version, the chapter and, when the name is found, its offsets. |
 | AC-STORY-002 candidate 状态 | PASS | Every write goes through commands that hard-code `candidate`; the schema has no status field for a model to fill in. |
-| AC-STORY-002 接受/拒绝/锁定 | PASS | Accept, reject, lock and unlock exist for entities and for events; the gates refuse a locked fact any of the others. |
+| AC-STORY-002 接受/拒绝/锁定 | PASS | Accept, reject, lock and unlock exist for entities and for events; the gates refuse a locked fact any of the others, and a rejected fact cannot be locked because unlocking it would confirm it. |
 | AC-STORY-002 冲突记录 | PASS | Open, resolve and LIST; the list was the missing third of a loop whose commands existed with no way to find what they recorded. |
 | AC-STORY-002 无跨项目污染 | PASS | Every query is scoped by project, and the propagation skips a dependent whose project does not match; a test asserts another project sees none of a conflict. |
 | AC-STORY-002 一次 Schema 修复 | PASS | The repair round is implemented and asserted to reach the extractor with the violations, in exactly one round. |
@@ -109,6 +109,56 @@ code that did not do what they said; two fixtures were referenced by their
 licence rows and read by no test; and a test-time dependency was missing from the
 notices.
 
+### Second review
+
+A re-review confirmed three of those fixes by independent probe and mutation
+(the offset arithmetic including the hash's inverse, the conflict chain, and the
+comment/notice corrections), and found four things the first round had not
+settled. A separate quality review ran 30 mutations and found 10 survivors. Both
+sets are now fixed, each verified by a mutation that fails:
+
+1. **Unlock reversed a rejection.** Lock was allowed from any status and unlock
+   returns a fact to 'accepted', so reject → lock → unlock turned a rejection into
+   a confirmation through two individually-legal commands, reachable in two
+   clicks. A rejected fact can no longer be locked. This was a defect this package
+   introduced, not a pre-existing one.
+2. **ADR-0010 §8 was factually false about split and merge.** It claimed the
+   specification "never names" them; PRD FR-020 lists 手动合并/拆分 as a MUST item
+   and the acceptance criteria include 章节拆分可人工修正并保存. Both are now
+   implemented (transactional renumbering under `UNIQUE (version, ordinal)`), and
+   the false claim is replaced by the reasoning the section was missing. The
+   reviewer was right to refuse the original wording: deferring is defensible,
+   describing a MUST item as unspecified is not.
+3. **The production chapter reader had no test.** It holds the one assignment that
+   makes evidence offsets version-absolute, and a mutation setting it to zero left
+   the suite green — the application tests use a fake that computes the same value
+   independently, so the two could drift. The adapter now has tests, and the fake's
+   comment claiming "the real one is covered by the desktop tests" was false when
+   written and is true now.
+4. **Four tests that could not fail**, found by mutation: the upload's streaming
+   ceiling (its loop could never reach the threshold it asserted), the
+   duplicate-import check (no test at all — inverting its condition left the whole
+   suite green), the chapter confirmation (no test in either layer, which is how
+   the next item survived), and the reference cross-check for participants and
+   validFromEventRef. All four are now covered, and the mutations that survived
+   them are caught.
+5. **ConfirmChapters could record a confirmation that changed nothing.** The
+   guard checked only that boundaries existed, not that any was confirmable, so a
+   version whose boundaries were all 'edited' wrote `ChapterBoundariesConfirmed`
+   for a decision that did not happen.
+6. **The repair round covered only schema failures.** A reading whose shape is
+   valid but whose references dangle — the clearest repairable case — failed
+   without the model being asked. It now covers both checks.
+7. **The reader's previous-page control moved forward.** `ReadRange` clamps a
+   non-positive end to the end of the document, so asking for a page ending before
+   an offset produced one running forward from it: the button advanced nearly a
+   full page while moving one rune back. There is now an explicit direction, with
+   the tiling property asserted.
+8. **Three comment defects**: a special case that was unreachable (and whose
+   removal changes no message, so it was deleted rather than kept with a test that
+   could not fail), `MaxTitleRunes` claiming a CHECK on `chapters.title` that does
+   not exist, and the "non-blocking" claim scoped to the wrong bound.
+
 ## Known limits and deferred work
 
 - **No timing measurement for the 100k-character path.** The bounds are asserted;
@@ -116,9 +166,12 @@ notices.
 - **The precheck still crosses in one Wails message.** Bounded by the domain's
   input ceiling, but it is the one remaining cost proportional to document size
   on the webview thread.
-- **Chapter split and merge have no command**, and a generic "modify a fact" does
-  not exist. ADR-0010 §8 records why, so the next package can disagree with the
-  reasoning rather than rediscover the gap.
+- **A generic "modify a fact" command does not exist.** The specification does not
+  name one the way it names 合并/拆分, and a generic modify would be a second way to
+  write the same row; ADR-0010 §8 records the reasoning.
+- **The `chapterTextReader`-to-extraction path has no end-to-end test that starts
+  from a real import.** The adapter is tested against a populated store and the
+  extraction against a fake reader; the two are joined only in a desktop build.
 - **`PropState` is still unmodelled** (ADR-0010 §3).
 - **`go test -race` cannot run on this host** (no 64-bit C toolchain), so
   concurrency claims rest on design rather than on a race-detector run.

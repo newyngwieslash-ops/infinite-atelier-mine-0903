@@ -247,6 +247,14 @@ type ReadDocumentRangeRequest struct {
 	SourceDocumentVersionID string `json:"sourceDocumentVersionId"`
 	StartRune               int    `json:"startRune"`
 	EndRune                 int    `json:"endRune"`
+	// Direction is "forward" (the default) or "backward". A backward page ENDS at
+	// StartRune and begins one page before it, which is what a reader's previous-page
+	// control needs: the range API cannot express it, because a non-positive EndRune
+	// means "to the end of the document".
+	Direction string `json:"direction,omitempty"`
+	// TotalRunes is a hint from a previous page, so a backward read does not measure
+	// the text again. It is clamped, never trusted.
+	TotalRunes int `json:"totalRunes,omitempty"`
 }
 
 // DocumentRangeDTO is one page of text.
@@ -275,7 +283,8 @@ func (b *ImportBinding) ReadDocumentRange(request ReadDocumentRangeRequest) (Doc
 	if service == nil {
 		return DocumentRangeDTO{}, bindingUnavailable()
 	}
-	result, err := service.ReadRange(b.context(), request.SourceDocumentVersionID, request.StartRune, request.EndRune)
+	result, err := service.ReadPage(b.context(), request.SourceDocumentVersionID, request.StartRune,
+		appimporting.PageDirection(request.Direction), request.TotalRunes)
 	if err != nil {
 		return DocumentRangeDTO{}, toDramaError(err)
 	}

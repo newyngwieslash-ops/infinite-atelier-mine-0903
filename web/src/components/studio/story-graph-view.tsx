@@ -52,6 +52,16 @@ import type { desktop } from "@/wailsjs/go/models";
 
 export type StoryGraphSectionProps = { projectId: string };
 
+/**
+ * FACT_TABLE_PAGE_SIZE is how many rows one page of a fact table shows.
+ *
+ * The fact layer has no server-side limit — a chapter can propose 200 entities and
+ * a project has unbounded chapters — so the tables paginate rather than rendering
+ * everything. Fifty is small enough that a page renders without work and large
+ * enough that a reader sees a chapter's worth of facts at once.
+ */
+const FACT_TABLE_PAGE_SIZE = 50;
+
 /** STATUS_FILTERS are the review states the list can be narrowed to. */
 const STATUS_FILTERS = ["", "candidate", "accepted", "rejected", "locked"] as const;
 
@@ -449,7 +459,12 @@ export function StoryGraphSection({ projectId }: StoryGraphSectionProps) {
                         rowKey="id"
                         size="small"
                         loading={loading}
-                        pagination={false}
+                        // Paginated because the fact layer has no server-side limit:
+                        // a project holds up to 200 entities per chapter across an
+                        // unbounded number of chapters, and AGENTS requires a large
+                        // list not to render every row. The page size is the same for
+                        // all three tables so a reader sees a consistent window.
+                        pagination={{ pageSize: FACT_TABLE_PAGE_SIZE, showSizeChanger: false, size: "small" }}
                         columns={entityColumns}
                         dataSource={entities}
                         data-testid="studio-entities-table"
@@ -466,7 +481,7 @@ export function StoryGraphSection({ projectId }: StoryGraphSectionProps) {
                         rowKey="id"
                         size="small"
                         loading={loading}
-                        pagination={false}
+                        pagination={{ pageSize: FACT_TABLE_PAGE_SIZE, showSizeChanger: false, size: "small" }}
                         columns={eventColumns}
                         dataSource={events}
                         data-testid="studio-events-table"
@@ -483,7 +498,7 @@ export function StoryGraphSection({ projectId }: StoryGraphSectionProps) {
                         rowKey="id"
                         size="small"
                         loading={loading}
-                        pagination={false}
+                        pagination={{ pageSize: FACT_TABLE_PAGE_SIZE, showSizeChanger: false, size: "small" }}
                         columns={relationColumns}
                         dataSource={relations}
                         data-testid="studio-relations-table"

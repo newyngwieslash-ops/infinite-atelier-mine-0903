@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Alert, App, Button, Empty, Input, Modal, Popconfirm, Select, Space, Table, Tag } from "antd";
+import { Alert, App, Button, Empty, Input, Modal, Space, Table, Tag } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { FileUp, ListChecks, PencilLine, Sparkles, Upload } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -9,7 +9,6 @@ import {
     extractChapterEventCandidates,
     importDocumentByChunks,
     isImportBindingsAvailable,
-    isImportUploadAvailable,
     listChapters,
     precheckImport,
     readDocumentRange,
@@ -373,13 +372,27 @@ export function ChapterPanel({ versionId, reloadToken = 0, onChanged }: ChapterP
         }
     };
 
-    const openPage = async (startRune: number) => {
+    /**
+     * openPage reads one page, forwards or backwards from an anchor.
+     *
+     * The direction is explicit because the range API cannot express a backward
+     * page: a non-positive endRune means "to the end of the document", so asking
+     * for a page ending before an offset used to produce one running forward from
+     * it. The previous-page control was therefore broken — it moved one rune back
+     * and a whole page forward — and an independent review caught it in the UI.
+     *
+     * totalRunes is passed as a hint so a backward read does not measure the text
+     * again; the core clamps it rather than trusting it.
+     */
+    const openPage = async (anchor: number, direction: "forward" | "backward" = "forward") => {
         setPageBusy(true);
         try {
             const result = await readDocumentRange({
                 sourceDocumentVersionId: versionId,
-                startRune,
+                startRune: anchor,
                 endRune: 0,
+                direction,
+                totalRunes: page?.totalRunes ?? 0,
             } as desktop.ReadDocumentRangeRequest);
             setPage(result);
         } catch (caught) {
@@ -497,7 +510,12 @@ export function ChapterPanel({ versionId, reloadToken = 0, onChanged }: ChapterP
                             {t("studio.chapters.pageLabel", { from: page.startRune + 1, to: page.endRune, total: page.totalRunes })}
                         </h4>
                         <Space size="small">
-                            <Button size="small" disabled={pageBusy || page.startRune === 0} onClick={() => void openPage(Math.max(0, page.startRune - 1))}>
+                            <Button
+                                size="small"
+                                disabled={pageBusy || page.startRune === 0}
+                                data-testid="studio-chapter-previous"
+                                onClick={() => void openPage(page.startRune, "backward")}
+                            >
                                 {t("studio.chapters.previous")}
                             </Button>
                             <Button

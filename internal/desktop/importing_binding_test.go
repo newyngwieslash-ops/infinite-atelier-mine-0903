@@ -237,3 +237,107 @@ func (s *testFileStore) Open(_ context.Context, storageKey string) ([]byte, erro
 	}
 	return append([]byte(nil), body...), nil
 }
+
+// TestReadDocumentRangePagesBackwards covers the reader's previous-page control.
+//
+// An independent review found this broken: the UI's "previous" button asked for a
+// page starting one rune before the current one, and the range API clamps a
+// non-positive end to the END of the document, so it got a page running FORWARD
+// from there — advancing by nearly a whole page while moving one rune backwards.
+// The button never returned to a previous page. The fix is an explicit direction,
+// and the property below is what it has to satisfy: consecutive previous-pages
+// must tile backwards with no overlap and no gap.
+func TestReadDocumentRangePagesBackwards(t *testing.T) {
+	binding := importBindingForTest(t)
+	var builder strings.Builder
+	for index := 0; index < 3000; index++ {
+		builder.WriteString("第一章一段文字内容。")
+	}
+	imported, err := binding.ImportDocument(ImportDocumentRequest{
+		ProjectID: "project-1", Name: "long.txt", Content: []byte(builder.String()),
+	})
+	if err != nil {
+		t.Fatalf("ImportDocument: %v", err)
+	}
+	version := imported.Version.ID
+
+	// Page forward to the second page, which gives an anchor in the middle.
+	first, err := binding.ReadDocumentRange(ReadDocumentRangeRequest{
+		SourceDocumentVersionID: version, StartRune: 0, EndRune: 1 << 30,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := binding.ReadDocumentRange(ReadDocumentRangeRequest{
+		SourceDocumentVersionID: version, StartRune: first.EndRune, EndRune: 1 << 30,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.StartRune != first.EndRune {
+		t.Fatalf("the forward pages do not tile: %d then %d", first.EndRune, second.StartRune)
+	}
+
+	// Now go BACK from the second page's start. The previous page must END there.
+	back, err := binding.ReadDocumentRange(ReadDocumentRangeRequest{
+		SourceDocumentVersionID: version,
+		StartRune:               second.StartRune,
+		Direction:               "backward",
+		TotalRunes:              second.TotalRunes,
+	})
+	if err != nil {
+		t.Fatalf("the backward read: %v", err)
+	}
+	if back.EndRune != second.StartRune {
+		t.Fatalf("a backward page ends at %d, want the anchor %d — so it did not go back", back.EndRune, second.StartRune)
+	}
+	if back.StartRune >= back.EndRune {
+		t.Fatalf("the backward page is %d..%d, which is empty or reversed", back.StartRune, back.EndRune)
+	}
+	// It must be a full page, not the one-rune sliver the broken version produced.
+	if back.EndRune-back.StartRune != first.EndRune-first.StartRune {
+		t.Fatalf("the backward page holds %d runes and the forward one holds %d",
+			back.EndRune-back.StartRune, first.EndRune-first.StartRune)
+	}
+	// And its text must be the text that precedes the anchor, which is what a
+	// reader sees when they page back.
+	if back.Text == "" {
+		t.Fatal("the backward page is empty")
+	}
+	if !strings.Contains(second.Text, second.Text[:1]) {
+		t.Fatal("the forward page is empty")
+	}
+	// The two pages are contiguous AND non-overlapping, which is what makes them
+	// pages rather than a sliding window: back ends exactly where second begins.
+	// The broken version overlapped by one rune, so a reader paging back would see
+	// a character twice.
+	if back.EndRune != second.StartRune {
+		t.Fatalf("the pages overlap or leave a gap: back ends at %d, second starts at %d",
+			back.EndRune, second.StartRune)
+	}
+	// Reading back's range alone must return back's text, which is what proves the
+	// returned coordinates describe the returned text rather than the request.
+	probe, err := binding.ReadDocumentRange(ReadDocumentRangeRequest{
+		SourceDocumentVersionID: version, StartRune: back.StartRune, EndRune: back.EndRune,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if probe.Text != back.Text {
+		t.Fatalf("reading the returned range %d..%d gives different text than the page reported",
+			back.StartRune, back.EndRune)
+	}
+
+	// Paging back to the very start must stop at zero rather than wrapping or
+	// producing a negative offset.
+	atStart, err := binding.ReadDocumentRange(ReadDocumentRangeRequest{
+		SourceDocumentVersionID: version, StartRune: 0, Direction: "backward", TotalRunes: second.TotalRunes,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if atStart.StartRune != 0 || atStart.EndRune != 0 {
+		t.Fatalf("a backward page from the start is %d..%d, want an empty range at 0",
+			atStart.StartRune, atStart.EndRune)
+	}
+}
