@@ -119,5 +119,34 @@ if (Test-Path $SecurityScan) {
     Write-Host "SKIP: security scans — scripts/security-scan.mjs is missing."
 }
 
+# Both fixture generators can regenerate what they produced, so a fixture that
+# drifted from its generator — or a generator edited without regenerating — is
+# detectable. They support --check for exactly this, and without a gate that check
+# exists and never runs, which is how a generated fixture silently stops matching
+# the code that reads it.
+$CanaryGen = Join-Path $RootDir "scripts\gen-canary-fixture.mjs"
+if (Test-Path $CanaryGen) {
+    Push-Location $RootDir
+    try {
+        Invoke-Step "canary fixture is current" { node scripts/gen-canary-fixture.mjs --check }
+    } finally {
+        Pop-Location
+    }
+} else {
+    Write-Host "SKIP: canary fixture check — the generator is missing."
+}
+
+$HostileGen = Join-Path $RootDir "scripts\gen-malicious-fixtures.mjs"
+if (Test-Path $HostileGen) {
+    Push-Location $RootDir
+    try {
+        Invoke-Step "hostile-input fixtures are current" { node scripts/gen-malicious-fixtures.mjs --check }
+    } finally {
+        Pop-Location
+    }
+} else {
+    Write-Host "SKIP: hostile-input fixture check — the generator is missing."
+}
+
 Restore-EmbedPlaceholder
 Write-Host "`nPASS: available verification gates completed."

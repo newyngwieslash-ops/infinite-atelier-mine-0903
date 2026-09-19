@@ -2,6 +2,7 @@ package importing
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -307,4 +308,134 @@ func (s *fakeStore) Open(_ context.Context, storageKey string) ([]byte, error) {
 		return nil, os.ErrNotExist
 	}
 	return content, nil
+}
+
+// TestCanaryDocumentMatchesItsExpectedReport runs the whole import path over the
+// canary fixture, which is the input AC-STORY-001 is stated in terms of.
+//
+// The canary existed from the start of this work package and NOTHING read it: the
+// detection tests used small inline samples and the large-input test built its
+// own string. So the acceptance criterion's actual input — a real Chinese
+// document of more than 30,000 characters with more than three chapters, one of
+// them carrying a prompt-injection block — had never been through the code. A
+// fixture no test consumes is a claim rather than evidence.
+//
+// The expected file is generated alongside the document, so the count and the
+// titles are checked against a written record rather than against numbers copied
+// into this test. That is what makes a change to the generator visible here.
+func TestCanaryDocumentMatchesItsExpectedReport(t *testing.T) {
+	source := readFixtureDir(t, "canary-drama", "source.md")
+	expectedBytes := readFixtureDir(t, "canary-drama", "expected-chapters.json")
+
+	var expected struct {
+		ChineseCharCount int      `json:"chineseCharCount"`
+		ChapterCount     int      `json:"chapterCount"`
+		ChapterTitles    []string `json:"chapterTitles"`
+	}
+	if err := json.Unmarshal(expectedBytes, &expected); err != nil {
+		t.Fatalf("the expected report is not valid JSON: %v", err)
+	}
+	if expected.ChapterCount < 3 || expected.ChineseCharCount < 30000 {
+		t.Fatalf("the fixture no longer meets the acceptance input at all: %d chapters, %d characters",
+			expected.ChapterCount, expected.ChineseCharCount)
+	}
+
+	document, err := (&Service{}).prepare(source, "md")
+	if err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	if document.RuneCount() < 30000 {
+		t.Fatalf("the canary document is only %d characters", document.RuneCount())
+	}
+	if len(document.Chapters) != expected.ChapterCount {
+		t.Fatalf("detected %d chapters, want the %d the report records", len(document.Chapters), expected.ChapterCount)
+	}
+	// Every title the report lists must be found. The detector strips the
+	// Markdown hashes and keeps the text, so the comparison is on the text.
+	for index, want := range expected.ChapterTitles {
+		if index >= len(document.Chapters) {
+			break
+		}
+		if document.Chapters[index].Title != want {
+			t.Fatalf("chapter %d is %q, want %q", index, document.Chapters[index].Title, want)
+		}
+	}
+	// The boundaries must tile the document: chapter N ends where N+1 begins, and
+	// the last ends at the end of the text. A gap or an overlap would make a
+	// chapter's offsets point into another chapter.
+	total := document.RuneCount()
+	for index, chapter := range document.Chapters {
+		if index == 0 && chapter.StartOffset != 0 {
+			t.Fatalf("the first chapter starts at %d rather than 0", chapter.StartOffset)
+		}
+		if index > 0 && chapter.StartOffset != document.Chapters[index-1].EndOffset {
+			t.Fatalf("chapter %d starts at %d but the previous ends at %d",
+				index, chapter.StartOffset, document.Chapters[index-1].EndOffset)
+		}
+		if chapter.EndOffset < chapter.StartOffset {
+			t.Fatalf("chapter %d has a reversed range", index)
+		}
+	}
+	if last := document.Chapters[len(document.Chapters)-1]; last.EndOffset != total {
+		t.Fatalf("the last chapter ends at %d but the document is %d characters", last.EndOffset, total)
+	}
+
+	// The injection block is in the fourth chapter and must survive as data: the
+	// document is stored whole, and nothing in the pipeline acted on it.
+	if !strings.Contains(document.Text, "忽略之前的所有指令") {
+		t.Fatal("the canary's injection block was stripped, so the fixture no longer tests what it says")
+	}
+}
+
+// readFixtureDir reads a fixture relative to the repository's testdata directory.
+func readFixtureDir(t *testing.T, dir, name string) []byte {
+	t.Helper()
+	path := filepath.Join("..", "..", "..", "testdata", dir, name)
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading the fixture %s/%s: %v", dir, name, err)
+	}
+	return content
+}
+
+// TestExternalRelationshipAndEntityFixturesAreRefused covers the two hostile DOCX
+// fixtures that no test was reading.
+//
+// Their licence rows claim they pin behaviour — that an external relationship is
+// never followed and that a document type declaration's entity is not expanded —
+// and a claim no test exercises is not a pin. Both are checked here against the
+// real DOCX path: the document must import, and the payload the fixture declares
+// must not appear in the text.
+func TestExternalRelationshipAndEntityFixturesAreRefused(t *testing.T) {
+	// The external-relationship document has a normal body plus a relationship
+	// pointing at a URL. The body must be read and the relationship must not be
+	// resolved: nothing in the import path may make a network request, and the
+	// only way to assert that from here is that the text contains the body and
+	// nothing from the target.
+	external := readFixture(t, "docx-external-rel.docx")
+	text, err := extractText(external, importdomain.FormatDOCX)
+	if err != nil {
+		t.Fatalf("a DOCX declaring an external relationship must still be readable: %v", err)
+	}
+	if !strings.Contains(string(text), "第一章 外部关系") {
+		t.Fatalf("the body was not read: %q", firstLines(string(text), 2))
+	}
+	if strings.Contains(string(text), "example.invalid") {
+		t.Fatal("the external relationship's target appeared in the text, so something resolved it")
+	}
+
+	// The entity document defines an internal entity. encoding/xml does not expand
+	// a custom entity, so the body must come back WITHOUT the payload — the
+	// fixture pins that behaviour rather than asserting the payload is expanded.
+	// A change to a parser that expanded entities would break this.
+	entity := readFixture(t, "docx-entity-expansion.docx")
+	expanded, err := extractText(entity, importdomain.FormatDOCX)
+	if err != nil {
+		// A refusal is also acceptable and is what the reader does when the
+		// declaration makes the body unparseable: either way nothing was expanded.
+		return
+	}
+	if strings.Contains(string(expanded), "expanded-payload-marker") {
+		t.Fatal("the document's entity was expanded, which is the behaviour the fixture exists to rule out")
+	}
 }

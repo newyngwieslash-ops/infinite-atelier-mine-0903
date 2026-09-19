@@ -47,14 +47,16 @@ type app struct {
 	dramaBinding  *desktop.DramaBinding
 	assetsBinding *desktop.AssetsBinding
 	// importBinding is the WP-06 surface: document import, chapter confirmation
-	// and event extraction.
-	importBinding  *desktop.ImportBinding
-	providerWiring *providerWiring
-	jobWiring      *jobWiring
-	projectWiring  *projectWiring
-	dramaWiring    *dramaWiring
-	emit           func(context.Context, string, ...interface{})
-	newEnvelope    func(string, any) (desktop.Envelope, error)
+	// and event extraction. importUploadBinding carries a document from the
+	// webview in bounded chunks, so a large novel does not cross as one message.
+	importBinding       *desktop.ImportBinding
+	importUploadBinding *desktop.ImportUploadBinding
+	providerWiring      *providerWiring
+	jobWiring           *jobWiring
+	projectWiring       *projectWiring
+	dramaWiring         *dramaWiring
+	emit                func(context.Context, string, ...interface{})
+	newEnvelope         func(string, any) (desktop.Envelope, error)
 }
 
 func newApp(shutdown func(context.Context) error) *app {
@@ -183,6 +185,9 @@ func (a *app) startup(ctx context.Context) {
 				}
 				if a.importBinding != nil {
 					dramaStack.importBinding = a.importBinding
+				}
+				if a.importUploadBinding != nil {
+					dramaStack.importUploadBinding = a.importUploadBinding
 				}
 				dramaStack.attach(ctx)
 				a.dramaWiring = dramaStack

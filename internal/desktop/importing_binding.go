@@ -260,8 +260,16 @@ type DocumentRangeDTO struct {
 // ReadDocumentRange returns one page of a version's normalized text.
 //
 // The page size is the service's own ceiling, so a caller cannot ask for a whole
-// 100k-character document in one response. That is what keeps the reader
-// non-blocking: the response is bounded no matter what the caller sends.
+// 100k-character document in one response: the response is bounded no matter what
+// the caller sends. That is what makes the READER's cost independent of document
+// length.
+//
+// It is not, by itself, a claim that the whole import is non-blocking. The
+// transfer that feeds an import is bounded separately, by ImportUploadBinding's
+// chunking; the precheck still crosses in one message and is the remaining cost.
+// Saying "keeps the reader non-blocking" and stopping there was the kind of claim
+// this package has had to correct before — precise about one path, silent about
+// the other.
 func (b *ImportBinding) ReadDocumentRange(request ReadDocumentRangeRequest) (DocumentRangeDTO, error) {
 	service := b.importService()
 	if service == nil {

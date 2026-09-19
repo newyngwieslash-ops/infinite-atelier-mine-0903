@@ -61,6 +61,7 @@ func run() error {
 	// only when startup composes a writable database.
 	application.dramaBinding = &desktop.DramaBinding{}
 	application.importBinding = &desktop.ImportBinding{}
+	application.importUploadBinding = &desktop.ImportUploadBinding{}
 	application.assetsBinding = &desktop.AssetsBinding{}
 	application.emit = wailsruntime.EventsEmit
 	shutdown := newShutdownSequence(application.closeDatabase, logger, logCloser.Close, reportIndependent)
@@ -94,6 +95,7 @@ func run() error {
 			application.dramaBinding,
 			application.assetsBinding,
 			application.importBinding,
+			application.importUploadBinding,
 		},
 		SingleInstanceLock: &options.SingleInstanceLock{
 			UniqueId: singleInstanceID,

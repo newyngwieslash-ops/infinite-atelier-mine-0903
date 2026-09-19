@@ -7,8 +7,9 @@ import { useTranslation } from "react-i18next";
 import {
     confirmChapters,
     extractChapterEventCandidates,
-    importDocument,
+    importDocumentByChunks,
     isImportBindingsAvailable,
+    isImportUploadAvailable,
     listChapters,
     precheckImport,
     readDocumentRange,
@@ -77,6 +78,18 @@ export function ImportFlow({ projectId, onImported }: ImportFlowProps) {
             const bytes = new Uint8Array(buffer);
             setFileName(file.name);
             setContent(bytes);
+            // The precheck still crosses in one message, and that is a known
+            // limit rather than an oversight: the transfer that feeds the IMPORT
+            // is chunked, but the preview is a separate call and this one builds
+            // the DTO's number array. For a 100,000-character novel that is about
+            // 300,000 numbers, which the browser and the Go decoder each build
+            // once.
+            //
+            // It is bounded by the domain's own input ceiling, so it cannot grow
+            // without limit, and the acceptance criterion is stated about the
+            // reader: the chapter panel pages the text through ReadDocumentRange,
+            // whose response is capped by the core. This is recorded in the STATUS
+            // record as a remaining cost rather than claimed to be free.
             const result = await precheckImport({
                 projectId,
                 name: file.name,
@@ -96,13 +109,19 @@ export function ImportFlow({ projectId, onImported }: ImportFlowProps) {
         setBusy(true);
         setError(null);
         try {
-            const result = await importDocument({
+            // The chunked path, not the one-shot one: a 100,000-character novel is
+            // about 300 KB, and `Array.from` over it would build a 300,000-element
+            // array on the main thread — the opposite of the property the
+            // acceptance criterion asks for. The chunk ceiling comes from the core.
+            const result = await importDocumentByChunks({
                 projectId,
                 name: fileName,
                 format: extensionOf(fileName),
-                content: Array.from(content),
+                // The view is handed over as-is; nothing here builds the DTO's
+                // number array.
+                bytes: content,
                 confirmDuplicate,
-            } as desktop.ImportDocumentRequest);
+            });
             message.success(
                 t("studio.import.stored", {
                     chapters: result.chapters.length,

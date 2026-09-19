@@ -300,7 +300,6 @@ func (s *Service) ReviseChapter(ctx context.Context, request ReviseChapterReques
 	return record, nil
 }
 
-// ListChapters returns a document version's chapters in reading order.
 // GetChapter returns one chapter by id.
 //
 // The read exists for the extraction reader, which reaches a chapter from the
@@ -315,6 +314,7 @@ func (s *Service) GetChapter(ctx context.Context, id string) (storydomain.Chapte
 	return s.repository.GetChapter(ctx, strings.TrimSpace(id))
 }
 
+// ListChapters returns a document version's chapters in reading order.
 func (s *Service) ListChapters(ctx context.Context, sourceDocumentVersionID string) ([]storydomain.Chapter, error) {
 	if !s.Available() {
 		return nil, storageFailure()

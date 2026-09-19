@@ -38,7 +38,11 @@ type dramaWiring struct {
 	dramaBinding  *desktop.DramaBinding
 	assetsBinding *desktop.AssetsBinding
 	// importBinding is the WP-06 surface: document import and event extraction.
-	importBinding *desktop.ImportBinding
+	// importUploadBinding is the chunked transfer that feeds it, because a Wails
+	// message carrying a whole 100k-character novel as a byte array is work
+	// proportional to the document on the webview's main thread.
+	importBinding       *desktop.ImportBinding
+	importUploadBinding *desktop.ImportUploadBinding
 }
 
 // composeDrama builds the drama stack over a writable database. It returns nil
@@ -166,5 +170,8 @@ func (w *dramaWiring) attach(ctx context.Context) {
 	if w.importBinding != nil {
 		desktop.AttachImporting(w.importBinding, ctx, w.importing)
 		desktop.AttachExtraction(w.importBinding, ctx, w.extraction)
+		if w.importUploadBinding != nil {
+			desktop.AttachImportUpload(w.importUploadBinding, ctx, w.importBinding)
+		}
 	}
 }

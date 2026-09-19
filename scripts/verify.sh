@@ -92,6 +92,25 @@ else
   printf 'SKIP: security scans — scripts/security-scan.mjs is missing.\n'
 fi
 
+# Both fixture generators can regenerate what they produced, so a fixture that
+# drifted from its generator — or a generator edited without regenerating — is
+# detectable. They support --check for exactly this, and without a gate that check
+# exists and never runs, which is how a generated fixture silently stops matching
+# the code that reads it.
+if [ -f "$ROOT_DIR/scripts/gen-canary-fixture.mjs" ]; then
+  cd "$ROOT_DIR"
+  run_step "canary fixture is current" node scripts/gen-canary-fixture.mjs --check
+else
+  printf 'SKIP: canary fixture check — the generator is missing.\n'
+fi
+
+if [ -f "$ROOT_DIR/scripts/gen-malicious-fixtures.mjs" ]; then
+  cd "$ROOT_DIR"
+  run_step "hostile-input fixtures are current" node scripts/gen-malicious-fixtures.mjs --check
+else
+  printf 'SKIP: hostile-input fixture check — the generator is missing.\n'
+fi
+
 if command -v wails >/dev/null 2>&1; then
   cd "$ROOT_DIR"
   run_step "Wails production build" wails build

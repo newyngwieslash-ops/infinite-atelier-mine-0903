@@ -29,6 +29,7 @@ type WailsGo = {
         DramaBinding?: WailsBinding;
         AssetsBinding?: WailsBinding;
         ImportBinding?: WailsBinding;
+        ImportUploadBinding?: WailsBinding;
     };
 };
 
@@ -75,6 +76,12 @@ export function isImportBindingsAvailable(): boolean {
     return typeof importing.PrecheckImport === "function" && typeof importing.ImportDocument === "function";
 }
 
+/** isImportUploadAvailable reports whether the chunked transfer is reachable. */
+export function isImportUploadAvailable(): boolean {
+    const uploading = getDesktopWindow()?.go?.desktop?.ImportUploadBinding;
+    return Boolean(uploading) && typeof uploading?.BeginImportUpload === "function";
+}
+
 /** isExtractionAvailable reports whether an extractor is configured. */
 export function isExtractionAvailable(): boolean {
     const importing = getDesktopWindow()?.go?.desktop?.ImportBinding;
@@ -90,6 +97,7 @@ export function isAssetsBindingsAvailable(): boolean {
 let dramaModule: Promise<typeof import("@/wailsjs/go/desktop/DramaBinding")> | undefined;
 let assetsModule: Promise<typeof import("@/wailsjs/go/desktop/AssetsBinding")> | undefined;
 let importingModule: Promise<typeof import("@/wailsjs/go/desktop/ImportBinding")> | undefined;
+let importUploadModule: Promise<typeof import("@/wailsjs/go/desktop/ImportUploadBinding")> | undefined;
 
 async function loadDramaBinding() {
     dramaModule ??= import("@/wailsjs/go/desktop/DramaBinding").catch((error: unknown) => {
@@ -107,6 +115,14 @@ async function loadImportBinding() {
     return importingModule;
 }
 
+async function loadImportUploadBinding() {
+    importUploadModule ??= import("@/wailsjs/go/desktop/ImportUploadBinding").catch((error: unknown) => {
+        importUploadModule = undefined;
+        throw error;
+    });
+    return importUploadModule;
+}
+
 async function loadAssetsBinding() {
     assetsModule ??= import("@/wailsjs/go/desktop/AssetsBinding").catch((error: unknown) => {
         assetsModule = undefined;
@@ -120,6 +136,7 @@ export function resetDramaClients(): void {
     dramaModule = undefined;
     assetsModule = undefined;
     importingModule = undefined;
+    importUploadModule = undefined;
 }
 
 function unavailableError(): Error {
@@ -514,4 +531,86 @@ export async function resolveStoryConflict(request: desktop.ResolveStoryConflict
     if (!isDramaBindingsAvailable()) throw unavailableError();
     const { ResolveStoryConflict } = await loadDramaBinding();
     return ResolveStoryConflict(request);
+}
+
+/**
+ * importDocumentByChunks sends a document in bounded pieces and imports it.
+ *
+ * A Wails message carries text, so binary crosses as base64. Sending a whole
+ * novel in one message would build a JSON array with one element per BYTE —
+ * about 300,000 elements for a 100,000-character Chinese document — twice, once
+ * in the browser and once in the Go decoder, on the webview's main thread. That
+ * is work proportional to the document on the thread that paints the UI.
+ *
+ * This walks the same protocol the legacy migration uses for media: begin,
+ * append bounded chunks, finish. The size declared at the start is verified
+ * against what arrives, so a lost chunk fails the import instead of silently
+ * storing a truncated document.
+ *
+ * The chunk ceiling comes from the core rather than from a constant here: the
+ * core refuses a chunk above its own limit, and a number chosen on this side
+ * would be a second place for it to be wrong.
+ */
+export async function importDocumentByChunks(
+    // The bytes are a Uint8Array rather than the request DTO's `content` array on
+    // purpose. The DTO carries bytes as a JSON number array, which for a novel is
+    // hundreds of thousands of numbers; taking the view avoids ever building it.
+    request: Omit<desktop.ImportDocumentRequest, "content"> & { bytes: Uint8Array },
+    onProgress?: (progress: { sent: number; total: number }) => void,
+): Promise<desktop.ImportDocumentResult> {
+    if (!isImportUploadAvailable()) throw unavailableError();
+    const { BeginImportUpload, AppendImportUploadChunk, FinishImportUpload, AbortImportUpload } = await loadImportUploadBinding();
+
+    const bytes = request.bytes;
+    const begun = await BeginImportUpload({
+        projectId: request.projectId,
+        name: request.name,
+        format: request.format,
+        totalBytes: bytes.byteLength,
+        documentId: request.documentId,
+        documentType: request.documentType,
+        confirmDuplicate: request.confirmDuplicate,
+    } as desktop.BeginImportUploadRequest);
+
+    try {
+        const chunkBytes = begun.chunkBytes > 0 ? begun.chunkBytes : 64 * 1024;
+        for (let offset = 0; offset < bytes.byteLength; offset += chunkBytes) {
+            const slice = bytes.subarray(offset, Math.min(offset + chunkBytes, bytes.byteLength));
+            await AppendImportUploadChunk({
+                uploadId: begun.uploadId,
+                chunk: bytesToBase64(slice),
+            } as desktop.AppendImportUploadChunkRequest);
+            onProgress?.({ sent: Math.min(offset + chunkBytes, bytes.byteLength), total: bytes.byteLength });
+        }
+        return await FinishImportUpload({ uploadId: begun.uploadId } as desktop.FinishImportUploadRequest);
+    } catch (error) {
+        // A cancelled transfer releases its buffer rather than leaving the core
+        // holding bytes until the next upload is begun.
+        try {
+            await AbortImportUpload(begun.uploadId);
+        } catch {
+            // The abort is best effort: the original failure is what the caller
+            // needs to see, and swallowing it here would replace a useful error
+            // with a confusing one.
+        }
+        throw error;
+    }
+}
+
+/**
+ * bytesToBase64 encodes one chunk.
+ *
+ * It builds the binary string in bounded pieces because
+ * `String.fromCharCode(...slice)` spreads the whole chunk into arguments, and a
+ * large spread overflows the call stack — the same size problem in a smaller
+ * place.
+ */
+function bytesToBase64(bytes: Uint8Array): string {
+    const CHUNK = 8192;
+    let binary = "";
+    for (let offset = 0; offset < bytes.length; offset += CHUNK) {
+        const slice = bytes.subarray(offset, Math.min(offset + CHUNK, bytes.length));
+        binary += String.fromCharCode(...Array.from(slice));
+    }
+    return btoa(binary);
 }

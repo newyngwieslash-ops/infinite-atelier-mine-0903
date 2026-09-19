@@ -60,6 +60,20 @@ export namespace desktop {
 	        this.legacyMetadata = source["legacyMetadata"];
 	    }
 	}
+	export class AppendImportUploadChunkRequest {
+	    uploadId: string;
+	    chunk: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new AppendImportUploadChunkRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.uploadId = source["uploadId"];
+	        this.chunk = source["chunk"];
+	    }
+	}
 	export class ApprovePanelImageRequest {
 	    panelVersionId: string;
 	    approvedImageAssetVersionId: string;
@@ -246,6 +260,44 @@ export namespace desktop {
 	        this.fileBytes = source["fileBytes"];
 	        this.stagedFiles = source["stagedFiles"];
 	        this.stagedDatabase = source["stagedDatabase"];
+	    }
+	}
+	export class BeginImportUploadRequest {
+	    projectId: string;
+	    name?: string;
+	    format?: string;
+	    totalBytes: number;
+	    documentId?: string;
+	    documentType?: string;
+	    confirmDuplicate?: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new BeginImportUploadRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.projectId = source["projectId"];
+	        this.name = source["name"];
+	        this.format = source["format"];
+	        this.totalBytes = source["totalBytes"];
+	        this.documentId = source["documentId"];
+	        this.documentType = source["documentType"];
+	        this.confirmDuplicate = source["confirmDuplicate"];
+	    }
+	}
+	export class BeginImportUploadResult {
+	    uploadId: string;
+	    chunkBytes: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new BeginImportUploadResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.uploadId = source["uploadId"];
+	        this.chunkBytes = source["chunkBytes"];
 	    }
 	}
 	export class CanvasChatSessionDTO {
@@ -1216,6 +1268,18 @@ export namespace desktop {
 	        this.participants = source["participants"];
 	        this.evidence = source["evidence"];
 	        this.summary = source["summary"];
+	    }
+	}
+	export class FinishImportUploadRequest {
+	    uploadId: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new FinishImportUploadRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.uploadId = source["uploadId"];
 	    }
 	}
 	export class ImportDocumentRequest {
