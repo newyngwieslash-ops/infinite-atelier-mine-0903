@@ -3,9 +3,145 @@
 > Last updated: 2026-09-18
 > Product: Infinite Atelier Core + Drama Production Pack
 > Current work package: **WP-05 — 短剧领域模型与工作室 UI Shell**
-> Status: **COMPLETE for the WP-05 scope recorded in section 0e** (the drama schema, domain vocabulary, relation registry, application services and repositories, the drama and assets bindings, the studio shell and creation wizard, and the projection and required-reference commands AC-CANVAS-001/002 need). WP-01 through WP-04 remain COMPLETE for their recorded scopes; section 0e states exactly which earlier gaps this package closed and which it left open.
+> Status: **COMPLETE for the WP-05 scope recorded in section 0e, and for the follow-up recorded in section 0f** (the drama schema, domain vocabulary, relation registry, application services and repositories, the drama and assets bindings, the studio shell and creation wizard, the projection and required-reference commands AC-CANVAS-001/002 need, the section 17 domain event stream, and the five version families that had no approval command). WP-01 through WP-04 remain COMPLETE for their recorded scopes; sections 0e and 0f state exactly which earlier gaps this package closed and which it left open.
 
 WP-03 start baseline (2026-09-15): branch `codex/wp-01-desktop-foundation`, HEAD `a243891455ec17687dd54b5ac90d3bd64478a1a1`, empty index. Freshly re-run baseline: `go test ./... -count=1` PASS (15 packages at start), `go vet ./...` PASS, `web` `npm run typecheck` PASS, `npm test` PASS (15 tests), `npm run build` PASS. Go commands require `GOTOOLCHAIN=go1.25.0 GOSUMDB=sum.golang.org` on this host because the user-level `go env` sets `GOSUMDB=off`, which blocks toolchain verification. The working tree already contained the WP-01/WP-02 tracked and untracked work plus the user's brand rename; none of it was modified outside the WP-03 scope.
+
+# 0f. WP-05 follow-up: domain events and the missing approvals (2026-09-18)
+
+## Why this exists
+
+Section 0e closed WP-05 with two partial deliveries named as its largest gaps:
+the §17 domain event stream was not implemented, and five of the eight version
+families had no way to reach `approved`. This section records the work that
+closed both, and what it found while doing so.
+
+## Scope completed
+
+- **Status: COMPLETE for this follow-up.** The two gaps section 0e named are
+  closed to the extent WP-05's own commands can close them; what remains is
+  named below per event.
+- Schema: forward migration `000013_domain_events.sql`. `000001`–`000012` were
+  not modified.
+- Domain: `internal/domain/event` — §17's twenty-eight names and the envelope,
+  both pinned by a test against the specification's list.
+- Application: `internal/application/events` (record, build, list, count) plus
+  the recorder ports on six services and the emissions from their commands.
+- Infrastructure: the `domain_events` repository, and the shared §2.5 approval
+  switch in `version_approval.go`.
+- Bindings: `ListDomainEvents` and `CountDomainEvents` on `DramaBinding`, with
+  the Wails surface regenerated.
+- Frontend: `listDomainEvents` / `countDomainEvents` and `DOMAIN_EVENT_TYPES` in
+  `services/desktop/drama.ts`.
+- Docs: ADR-0009, the ADR index, TRACEABILITY, README, this section.
+
+## Commands executed and actual results
+
+| Command | Result |
+|---|---|
+| `go test ./... -count=1` | **PASS** (35 packages ok) |
+| `go vet ./...` | **PASS** |
+| `gofmt -l .` | **PASS** (no output) |
+| `node scripts/security-scan.mjs` | **PASS** (365 files scanned) |
+| `web`: `npm run typecheck` | **PASS** |
+| `wails generate module` (v2.15.0) | **PASS**; `models.ts` 99 classes to 101, both added, none removed; `DramaBinding` now 48 methods |
+| `git diff --check` | **PASS** |
+| `go test -race ./...` | **ENVIRONMENT FAILURE, not a pass** — unchanged from section 0e |
+
+## What was delivered
+
+**The event stream.** `domain_events` stores the §17 envelope. It has no foreign
+key to an event's subject and no revision: an event outlives what it describes,
+and a stream that could be rewritten would not be a record of what happened. The
+one reference it keeps is to the project, because every drama query is
+project-scoped.
+
+**Two emission paths, and the difference is deliberate.** An approval records its
+event inside its own transaction and refuses without a recorder, because the
+event is the governance record of a decision. Every other command announces
+itself after its write succeeds and carries on if the announcement fails, because
+the row is already committed. ADR-0009 draws the line; `RecordBestEffort`'s doc
+comment says why its error is dropped.
+
+**The five missing approvals.** Skeleton, adaptation strategy, director plan,
+storyboard version and style guide version now have commands. All eight families
+share one implementation of the switch, because the order of its two writes is
+what keeps the schema's partial unique index satisfiable.
+
+**Twenty of the twenty-eight events are emitted** by the commands that cause
+them. The seven that are not belong to packages that do not exist yet, and each
+is named below rather than left to be discovered.
+
+## Defects found while doing the work
+
+1. **`script_versions` had a second implementation of the §2.5 switch.** It
+   predated the shared helper, took the supersede target as a caller-supplied id,
+   and had its own transaction. Mutation testing found it: disabling the shared
+   helper's supersede step left the suite green, because the script family never
+   used it. Two implementations of one rule can disagree about the order, so the
+   script repository now delegates to the shared switch and the whole repository
+   has exactly one statement writing `'superseded'`.
+
+2. **A nil recorder panicked.** The recorder is an interface, so a service
+   composed without one holds a nil interface and calling a method on it panics.
+   The existing test suite caught this when the first emit site was added. Each
+   service now has one nil-checked `recordEvent`, so no emit site can forget.
+
+3. **The same duplication appeared twice in this follow-up itself**: a first
+   `approveVersion` helper was written without an event and left unreachable
+   while every family used `approveVersionWithEvent`. It was removed, and the
+   file header records that it existed rather than pretending it never did.
+
+## Emissions: the twenty and the seven
+
+| Emitted by WP-05 commands | Not emitted, and by whom |
+|---|---|
+| ProjectCreated, ProjectSettingsChanged, ProjectRuleLocked | ChapterBoundariesConfirmed — WP-06's chapter confirmation |
+| SourceDocumentImported | GenerationJobQueued / Succeeded / Failed — the job core |
+| StoryFactAccepted, StoryFactConflictOpened | MemoryCreated — WP-10 |
+| EpisodeCreated, StorySkeletonApproved, AdaptationStrategyApproved | UpstreamVersionChanged — WP-07's impact analyzer. WP-05 emits `ArtifactMarkedStale`, the mark itself rather than the upstream change that caused it |
+| ScriptVersionCreated, ScriptVersionApproved | BackupCompleted — the backup service |
+| AssetVersionCreated, AssetVersionApproved | |
+| DirectorPlanApproved, StoryboardVersionApproved | |
+| CanvasProjectionCreated | |
+| WorkflowStarted, WorkflowStageChanged, ReviewReportCreated, UserGateDecided | |
+| ArtifactMarkedStale | |
+
+Emitting the remaining seven from WP-05 would mean inventing their call sites, so
+the vocabulary and the table are complete while the emissions are not.
+
+## Known limits
+
+- **The style-guide approval reports `ProjectSettingsChanged`.** §17 defines no
+  style-guide event and the vocabulary is closed, so the approval uses the
+  closest name §17 offers with a payload naming what changed. ADR-0009 records it
+  and the alternative that was not taken.
+- **A best-effort event can be lost** if the event write fails after the row
+  commits. The row is still the authority on what exists; the stream is a
+  projection, like the canvas. That is what ADR-0009's first decision buys and
+  costs.
+- **The stream has no subscription.** It is a query
+  (`ListDomainEvents`/`CountDomainEvents`), not a push. The `core:event` channel
+  carries job and provider events; wiring domain events onto it would be a
+  transport decision for whichever package first needs live updates.
+- **Only `script_versions`' approval path is covered end to end against the real
+  database.** The other seven families are covered through the shared switch at
+  the unit and repository level, plus the mutation that proves the switch's order
+  matters. A dedicated integration test per family would be more convincing and
+  was not written.
+- Real paid providers were never contacted; every test uses synthetic fixtures
+  and temporary databases.
+
+## Git and data safety
+
+- Existing user changes preserved: **yes**. An unrelated 78 KB report appeared in
+  the working tree during this work; it is not WP-05's, it was not read into the
+  package, and it was deliberately left untracked and uncommitted.
+- Automatic commit/push/stash/reset/clean: **none**.
+- Secrets found or introduced: **none**; the scanner passes over 365 files.
+- Migrations executed against user data: **none**. `000013` ran only against
+  temporary test databases.
+- Every mutation probe was restored, and the tree was verified clean afterwards.
 
 # 0e. WP-05 result (2026-09-18)
 

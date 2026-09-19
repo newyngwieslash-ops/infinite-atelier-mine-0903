@@ -47,3 +47,4 @@
 | 0006 | Legacy import pipeline, idempotency, ordinary backup v1 | Accepted |
 | 0007 | Drama schema and vocabulary rulings | Accepted |
 | 0008 | Staleness propagation, projection commands, and version approval | Accepted |
+| 0009 | Domain event stream and approval semantics | Accepted |
