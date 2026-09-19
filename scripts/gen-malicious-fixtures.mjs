@@ -107,21 +107,24 @@ function buildZip(entries) {
     return Buffer.concat([...parts, centralBytes, end]);
 }
 
+// The content-type manifest of a real Word document. Shared so the valid DOCX
+// fixtures and the one that is missing its body describe the same package.
+const docxContentTypesManifest =
+    '<?xml version="1.0" encoding="UTF-8"?>' +
+    '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
+    '<Default Extension="xml" ContentType="application/xml"/>' +
+    '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>' +
+    "</Types>";
+
 // A DOCX whose body carries the injection text. Minimal but structurally
 // honest: [Content_Types].xml and word/document.xml are what the importer reads.
 function docxWith(bodyXml, extraEntries = []) {
-    const contentTypes =
-        '<?xml version="1.0" encoding="UTF-8"?>' +
-        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
-        '<Default Extension="xml" ContentType="application/xml"/>' +
-        '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>' +
-        "</Types>";
     const document =
         '<?xml version="1.0" encoding="UTF-8"?>' +
         '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">' +
         "<w:body>" + bodyXml + "</w:body></w:document>";
     return buildZip([
-        { name: "[Content_Types].xml", content: contentTypes, compression: 8 },
+        { name: "[Content_Types].xml", content: docxContentTypesManifest, compression: 8 },
         { name: "word/document.xml", content: document, compression: 8 },
         ...extraEntries,
     ]);
@@ -199,6 +202,44 @@ const fixtures = {
             '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">' +
             '<w:body><w:p><w:r><w:t>&payload;</w:t></w:r></w:p></w:body></w:document>',
     ),
+
+    // A structurally valid ZIP that is not an OOXML package: it opens cleanly,
+    // every path is inside the root, no size is inflated, and it carries a
+    // `word/document.xml` — but no `[Content_Types].xml`. The archive reader
+    // therefore accepts it and the DOCX container check is the only code that
+    // can refuse it. The other archives above cannot play this role: zip-slip is
+    // stopped by the traversal guard and bad-docx never opens, so a mutation
+    // disabling the container check left the suite green until this existed.
+    "zip-not-docx.zip": buildZip([
+        { name: "word/document.xml", content: "<document>not a word processing document</document>", compression: 8 },
+        { name: "readme.txt", content: "an ordinary archive that merely resembles a docx\n" },
+    ]),
+
+    // A real OOXML package of the wrong kind, under a .docx name: a spreadsheet
+    // that a user renamed. It HAS a [Content_Types].xml, so the "manifest is
+    // missing" branch does not fire, and the manifest describes SpreadsheetML
+    // rather than WordprocessingML — which is the only thing that can refuse it.
+    // Someone mailing the wrong file is the everyday version of this mistake.
+    "xlsx-named-docx.docx": buildZip([
+        {
+            name: "[Content_Types].xml",
+            content:
+                '<?xml version="1.0" encoding="UTF-8"?>' +
+                '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
+                '<Default Extension="xml" ContentType="application/xml"/>' +
+                '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>' +
+                "</Types>",
+            compression: 8,
+        },
+        { name: "xl/workbook.xml", content: "<workbook><sheets/></workbook>", compression: 8 },
+    ]),
+
+    // A package whose manifest IS a Word manifest but whose body part is absent
+    // — what a document looks like after a tool dropped a part. It passes the
+    // manifest check and is refused only for having no readable body.
+    "docx-missing-body.docx": buildZip([
+        { name: "[Content_Types].xml", content: docxContentTypesManifest, compression: 8 },
+    ]),
 
     // A GBK-encoded text file. The importer detects the encoding by decoding
     // attempt rather than by trusting the extension.
