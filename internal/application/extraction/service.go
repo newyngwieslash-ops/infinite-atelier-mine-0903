@@ -23,6 +23,7 @@ package extraction
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
@@ -47,6 +48,37 @@ type Extractor interface {
 	// The context carries cancellation, and an implementation must honour it:
 	// AGENT_CONTRACTS section 15 requires a cancel to reach the provider.
 	Extract(ctx context.Context, request Request) ([]byte, error)
+}
+
+// RepairingExtractor is an Extractor that can be asked to fix its own output.
+//
+// It is a separate interface rather than a second method on Extractor because
+// section 14.3's repair round is part of the AGENT CONTRACT, not part of every
+// implementation of it: a caller testing the write path wants an extractor that
+// returns one fixed document, and forcing that to implement a repair it never
+// performs would be ceremony. The service checks for this interface and reports
+// the difference when an extractor cannot repair — see repairSupport.
+type RepairingExtractor interface {
+	Extractor
+	// Repair is handed the SAME request plus the violations the last attempt
+	// produced, and returns a new attempt.
+	//
+	// The violations name the rule and the path and never quote the document, so
+	// an implementation may put them in a prompt without carrying untrusted text
+	// forward. The text it is given is the same chapter, which the model has
+	// already seen: the repair adds what was wrong, not what was read.
+	Repair(ctx context.Context, request Request, violations []extractiondomain.Violation) ([]byte, error)
+}
+
+// repairSupport asks whether an extractor can perform section 14.3's repair.
+//
+// A nil answer is not an error here: the extraction proceeds, and a validation
+// failure is reported as final. That is the honest behaviour for an extractor
+// that cannot repair, and it is what a single-shot test extractor gets. What must
+// NOT happen is a silent claim that a repair was attempted.
+func repairSupport(extractor Extractor) (RepairingExtractor, bool) {
+	repairing, ok := extractor.(RepairingExtractor)
+	return repairing, ok
 }
 
 // Request is what an extractor is given about one chapter.
@@ -192,13 +224,14 @@ type Result struct {
 
 // ExtractChapterEventCandidates reads one chapter and stores what it proposes.
 //
-// The order is: read the text, ask, validate, then write. Each step can refuse
-// and the refusals are distinct, because the caller acts on them differently: a
-// validation failure is worth one repair attempt, a storage failure is worth a
-// retry, and a missing chapter is worth nothing at all.
+// The order is: read the text, ask, validate, repair once, then write. Each step
+// can refuse and the refusals are distinct, because the caller acts on them
+// differently: a validation failure is worth one repair attempt, a storage
+// failure is worth a retry, and a missing chapter is worth nothing at all.
 //
 // Nothing is written until validation has passed, so a refused document leaves
-// the graph exactly as it was.
+// the graph exactly as it was — including across the repair round, where the
+// first, malformed reading must leave no rows behind.
 func (s *Service) ExtractChapterEventCandidates(ctx context.Context, chapterID string) (Result, error) {
 	if !s.Available() {
 		return Result{}, extractiondomain.UnavailableError()
@@ -214,20 +247,60 @@ func (s *Service) ExtractChapterEventCandidates(ctx context.Context, chapterID s
 	if strings.TrimSpace(chapter.Text) == "" {
 		return Result{}, extractiondomain.InvalidRequestError("That chapter has no text to read.")
 	}
-	raw, err := s.extractor.Extract(ctx, Request{
+	request := Request{
 		ChapterID: chapter.Chapter.ID,
 		Title:     chapter.Chapter.Title,
 		Text:      chapter.Text,
 		Language:  chapter.Language,
-	})
+	}
+	raw, err := s.extractor.Extract(ctx, request)
 	if err != nil {
 		// The extractor's own failure passes through: it already carries a
 		// category, and re-wrapping it would lose whether a retry could help.
 		return Result{}, err
 	}
 	document, err := validation.EventExtraction(raw)
+	if err == nil {
+		return s.store(ctx, chapter, document)
+	}
+	// One repair round, per AGENT_CONTRACTS section 14.3: send the violations back
+	// to the SAME extractor once and validate again. Not a loop: a model that
+	// cannot satisfy the contract given a precise list of what is wrong will not
+	// manage it on a third attempt either, and each round is a paid call.
+	repairing, canRepair := repairSupport(s.extractor)
+	if !canRepair {
+		// An extractor that cannot repair is not an error, but the refusal has to
+		// say which refusal it is: "the model produced something invalid and
+		// nothing was asked to fix it" is a different situation from "the model
+		// tried twice and failed".
+		return Result{}, err
+	}
+	raw, repairErr := repairing.Repair(ctx, request, violationsFor(err))
+	if repairErr != nil {
+		// A cancel during the repair is the caller's decision rather than a model
+		// failure, so it is reported as itself.
+		return Result{}, repairErr
+	}
+	document, err = validation.EventExtraction(raw)
 	if err != nil {
+		// The second failure is final. The caller sees the SECOND document's
+		// violations, because those describe what is still wrong after the model
+		// was told what was wrong.
 		return Result{}, err
 	}
 	return s.store(ctx, chapter, document)
+}
+
+// violationsFor extracts the violations an extraction error carries.
+//
+// It returns nil for an error that is not a validation refusal — a document that
+// was not JSON at all carries no violations and its cause is a parse failure —
+// so the repair round is told "that was not JSON" rather than an empty list it
+// would read as "nothing is wrong".
+func violationsFor(err error) []extractiondomain.Violation {
+	var domainErr *extractiondomain.Error
+	if errors.As(err, &domainErr) {
+		return domainErr.Violations
+	}
+	return nil
 }

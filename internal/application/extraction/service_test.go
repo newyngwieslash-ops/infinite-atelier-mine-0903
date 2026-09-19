@@ -456,16 +456,103 @@ func TestExtractionReportsEveryViolation(t *testing.T) {
 	}
 }
 
-// TestInvalidOnceStillWritesNothing proves the first failure is not partial: the
-// repair scenario must not leave the first attempt's rows behind.
-func TestInvalidOnceStillWritesNothing(t *testing.T) {
+// TestInvalidOnceRepairsAndWrites proves AGENT_CONTRACTS section 14.3's single
+// repair round: a malformed first reading is sent back once, the second attempt
+// validates, and only then does anything get written.
+//
+// It is the scenario MockInvalidOnce exists for. Before the repair round was
+// implemented this test asserted that the first failure was final, which was true
+// of the code and untrue of the contract.
+func TestInvalidOnceRepairsAndWrites(t *testing.T) {
 	harness := newHarness(t, MockInvalidOnce)
+	result, err := harness.service.ExtractChapterEventCandidates(context.Background(), testChapter)
+	if err != nil {
+		t.Fatalf("a repair round should have produced a valid document: %v", err)
+	}
+	if harness.mock.RepairCalls() != 1 {
+		t.Fatalf("the extractor was asked to repair %d times, want exactly one", harness.mock.RepairCalls())
+	}
+	// The violations must REACH the extractor, or the repair is a blind retry.
+	// That distinction is the whole point of section 14.3: a model told what was
+	// wrong can fix it, and one asked to try again usually cannot.
+	violations := harness.mock.LastViolations()
+	if len(violations) == 0 {
+		t.Fatal("the repair round was given no violations, so it could not know what to fix")
+	}
+	for _, violation := range violations {
+		if violation.Path == "" || violation.Message == "" {
+			t.Fatalf("a violation sent for repair is missing its path or message: %+v", violation)
+		}
+	}
+	// The violations name the rule, and must not quote the model's own document —
+	// that text came from a chapter and would be carried into the next prompt.
+	for _, violation := range violations {
+		if strings.Contains(violation.Message, "vehicle") {
+			t.Fatalf("a violation quoted the offending value: %+v", violation)
+		}
+		if !strings.Contains(violation.Message, "enum") {
+			t.Fatalf("a violation does not name the rule that failed: %+v", violation)
+		}
+	}
+	// And the write happened once, after the repair: not twice, and not on the
+	// strength of the first attempt.
+	if result.Entities == 0 {
+		t.Fatal("the repaired reading wrote no entities")
+	}
+	if len(harness.story.entities) != result.Entities {
+		t.Fatalf("the result reports %d entities and %d were written", result.Entities, len(harness.story.entities))
+	}
+	if len(harness.mock.Requests()) != 1 {
+		t.Fatalf("the chapter was read %d times; the repair must reuse the text rather than re-reading it", len(harness.mock.Requests()))
+	}
+}
+
+// TestAFailedRepairWritesNothing is the other side of the same rule: when the
+// second attempt is also invalid, the extraction fails and the graph is untouched.
+func TestAFailedRepairWritesNothing(t *testing.T) {
+	harness := newHarness(t, MockInvalidAlways)
 	if _, err := harness.service.ExtractChapterEventCandidates(context.Background(), testChapter); err == nil {
-		t.Fatal("the first, malformed reading was accepted")
+		t.Fatal("an extractor that stayed invalid was accepted")
+	}
+	if harness.mock.RepairCalls() != 1 {
+		t.Fatalf("the extractor was asked to repair %d times; section 14.3 allows exactly one", harness.mock.RepairCalls())
+	}
+	if len(harness.story.entities) != 0 || len(harness.story.events) != 0 ||
+		len(harness.story.relations) != 0 || len(harness.story.factSources) != 0 {
+		t.Fatalf("a failed repair wrote %d entities, %d events, %d relations and %d evidence rows",
+			len(harness.story.entities), len(harness.story.events),
+			len(harness.story.relations), len(harness.story.factSources))
+	}
+}
+
+// TestAnExtractorThatCannotRepairStillFails proves the optional interface is
+// genuinely optional: an extractor without a repair method reports the validation
+// failure rather than claiming a repair happened.
+func TestAnExtractorThatCannotRepairStillFails(t *testing.T) {
+	harness := newHarness(t, MockNormal)
+	// A single-shot extractor: no Repair method, which is what a minimal
+	// implementation and a simple test double look like.
+	harness.service.extractor = &singleShotExtractor{raw: []byte(`{"schemaVersion":1,"entities":[{"ref":"x","type":"vehicle","canonicalName":"n"}],"events":[],"relations":[]}`)}
+	_, err := harness.service.ExtractChapterEventCandidates(context.Background(), testChapter)
+	if err == nil {
+		t.Fatal("a malformed document from an extractor that cannot repair was accepted")
+	}
+	var domainErr *extractiondomain.Error
+	if !errors.As(err, &domainErr) || len(domainErr.Violations) == 0 {
+		t.Fatalf("the refusal carries no violations, so the caller cannot see what was wrong: %v", err)
 	}
 	if len(harness.story.entities) != 0 {
-		t.Fatalf("the malformed first reading wrote %d entities", len(harness.story.entities))
+		t.Fatal("a refused document wrote rows")
 	}
+}
+
+// singleShotExtractor returns one document and cannot repair.
+type singleShotExtractor struct {
+	raw []byte
+}
+
+func (e *singleShotExtractor) Extract(_ context.Context, _ Request) ([]byte, error) {
+	return e.raw, nil
 }
 
 // TestExtractionRefusesADanglingReference covers the rule the schema cannot

@@ -81,6 +81,11 @@ type Mock struct {
 	// now is injectable so a recorded request's timing is deterministic in a test
 	// that cares.
 	now func() time.Time
+	// repairCalls and lastViolations record what section 14.3's repair round was
+	// asked for, so a test can assert the violations actually reached the
+	// extractor rather than being dropped on the way.
+	repairCalls    int
+	lastViolations []extractiondomain.Violation
 }
 
 // NewMock builds a mock in the given mode.
@@ -137,6 +142,54 @@ func (m *Mock) Extract(ctx context.Context, request Request) ([]byte, error) {
 
 	// The normal path reads the text it was given.
 	return []byte(buildMockDocument(request)), nil
+}
+
+// Repair answers the one repair round AGENT_CONTRACTS section 14.3 allows.
+//
+// This is what makes MockInvalidOnce a real scenario rather than a dead mode: the
+// first call returns a document that cannot validate, and this returns a valid
+// one, so the service's repair path runs end to end and the write that follows it
+// is the write the test asserts on.
+//
+// The violations are recorded rather than ignored, so a test can check what the
+// service sent back. A mock that discarded them would leave "the violations reach
+// the extractor" untested, and that is the property section 14.3 is about.
+func (m *Mock) Repair(_ context.Context, request Request, violations []extractiondomain.Violation) ([]byte, error) {
+	m.mu.Lock()
+	m.repairCalls++
+	m.lastViolations = append([]extractiondomain.Violation(nil), violations...)
+	mode := m.mode
+	m.mu.Unlock()
+
+	switch mode {
+	case MockError:
+		return nil, extractiondomain.InvalidRequestError("The extractor could not be reached.")
+	case MockInvalidAlways:
+		// Still wrong, so a caller can prove that a failed repair writes nothing.
+		return []byte(`{"schemaVersion":1,"entities":[{"ref":"x","type":"vehicle","canonicalName":"n"}],"events":[],"relations":[]}`), nil
+	case MockDanglingReference:
+		return []byte(`{"schemaVersion":1,"entities":[],"events":[],"relations":[{"sourceRef":"ghost","targetRef":"phantom","relationType":"knows"}]}`), nil
+	case MockEmpty:
+		return []byte(`{"schemaVersion":1,"summary":"Nothing happens in this chapter.","entities":[],"events":[],"relations":[]}`), nil
+	default:
+		// MockNormal and MockInvalidOnce both land here, which is what makes the
+		// invalid-once scenario succeed on the second attempt.
+		return []byte(buildMockDocument(request)), nil
+	}
+}
+
+// RepairCalls reports how many repair rounds the mock was asked for.
+func (m *Mock) RepairCalls() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.repairCalls
+}
+
+// LastViolations returns what the last repair round was told.
+func (m *Mock) LastViolations() []extractiondomain.Violation {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]extractiondomain.Violation(nil), m.lastViolations...)
 }
 
 // buildMockDocument produces a document derived from the chapter's own text.

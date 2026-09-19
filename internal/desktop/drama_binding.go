@@ -2,6 +2,7 @@ package desktop
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
@@ -2800,9 +2801,21 @@ func domainImportError(err error) (category string, safeMessage string, ok bool)
 // tell "no extractor is configured" from "the request was wrong" without parsing
 // the message.
 func domainExtractionError(err error) (category string, safeMessage string, ok bool) {
-	domainErr, is := extractiondomain.AsError(err)
-	if !is {
-		return "", "", false
+	if domainErr, is := extractiondomain.AsError(err); is {
+		return domainErr.Code, domainErr.SafeMessage, true
 	}
-	return domainErr.Code, domainErr.SafeMessage, true
+	// A validation refusal is the other half of this domain's errors, and it is
+	// the one the user most needs to see: it says the reading did not match the
+	// contract and names the paths that were wrong, so the message carries the
+	// violations rather than only a code.
+	//
+	// The first version of this mapper recognised only the request error, so a
+	// validation failure fell through to the generic branch and arrived as "The
+	// drama request failed." with the violations discarded — leaving both the user
+	// and, before the repair round existed, the model with nothing to act on.
+	var validationErr *extractiondomain.Error
+	if errors.As(err, &validationErr) {
+		return "EXTRACTION_INVALID_OUTPUT", validationErr.Error(), true
+	}
+	return "", "", false
 }

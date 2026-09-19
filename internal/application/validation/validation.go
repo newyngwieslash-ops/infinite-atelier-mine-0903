@@ -18,9 +18,11 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
+	"github.com/santhosh-tekuri/jsonschema/v6/kind"
 
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/extraction"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/schemas"
@@ -91,35 +93,108 @@ func EventExtraction(raw []byte) (extraction.Document, error) {
 
 // violationsOf flattens the library's error tree into one entry per problem.
 //
-// The Basic form is the library's own flat listing, so the JSON Pointer and the
-// message come from the code that knows the schema's structure rather than from
-// string handling here. Traversing the nested tree by hand also produces the
-// duplicate this avoids: a nested error repeats its cause's complaint under each
-// keyword that failed.
+// Each entry names the RULE that failed and the path it failed at, and stops
+// there. That is a deliberate limit on what leaves this function, because these
+// strings are what section 14.3 sends back to a model for the repair round, and a
+// model's output quotes a document that is untrusted input. The library's own
+// detailed message would name the offending value — it renders the ref that did
+// not match the pattern, the enum value it did not recognise — so it is not used.
+//
+// What is used is the keyword path, which the library draws from the schema's own
+// vocabulary: "type", "enum", "required", "maxLength" and the rest. That is a
+// closed set the schema author controls, it names exactly what to fix, and it
+// cannot carry a byte of the document.
+//
+// The library's basic message is kept only where it is already value-free, which
+// is the `required` and `additionalProperties` families. `additionalProperties`
+// DOES name the offending property, so its list is dropped here — a property name
+// is attacker-chosen text and has no business in a prompt.
 func violationsOf(err error) []Violation {
 	validationErr, ok := err.(*jsonschema.ValidationError)
 	if !ok {
 		return []Violation{{Path: "/", Message: "the document did not match the contract"}}
 	}
-	output := validationErr.BasicOutput()
-	violations := make([]Violation, 0, len(output.Errors))
-	for _, unit := range output.Errors {
-		path := unit.InstanceLocation
-		if path == "" {
-			path = "/"
+	violations := make([]Violation, 0, 8)
+	var walk func(node *jsonschema.ValidationError)
+	walk = func(node *jsonschema.ValidationError) {
+		if len(node.Causes) > 0 {
+			for _, cause := range node.Causes {
+				walk(cause)
+			}
+			return
 		}
-		message := "did not match the contract"
-		if unit.Error != nil {
-			message = unit.Error.String()
-		}
-		violations = append(violations, Violation{Path: path, Message: truncate(message)})
+		// InstanceLocation is the token list; the JSON Pointer is rendered from it
+		// here because the library's Basic form is what did that conversion, and
+		// this walk deliberately does not use that form.
+		violations = append(violations, Violation{Path: jsonPointer(node.InstanceLocation), Message: ruleName(node)})
 	}
-	// A document that failed without a single unit is still a refusal, so the
+	walk(validationErr)
+	// A document that failed without a single leaf is still a refusal, so the
 	// result is never an empty error list attached to an error.
 	if len(violations) == 0 {
 		violations = append(violations, Violation{Path: "/", Message: "the document did not match the contract"})
 	}
 	return dedupeViolations(violations)
+}
+
+// ruleName renders the schema rule that failed, without any instance value.
+//
+// The keyword path is preferred because it is the schema's own vocabulary and
+// therefore closed. A keyword with no path falls back to the library's message,
+// which is bounded — and the two families that quote an instance value are
+// special-cased away rather than trusted to behave.
+func ruleName(node *jsonschema.ValidationError) string {
+	// `required` is the one keyword whose complaint is useless without the name it
+	// is about, and the name is safe: it comes from the SCHEMA's required list, so
+	// it is a value this repository chose rather than one the document did. A
+	// model told only "does not satisfy required" cannot act; told which property
+	// is missing, it can.
+	if required, ok := node.ErrorKind.(*kind.Required); ok && len(required.Missing) > 0 {
+		return "is missing the required property '" + strings.Join(required.Missing, "', '") + "'"
+	}
+	if node.ErrorKind != nil {
+		if path := node.ErrorKind.KeywordPath(); len(path) > 0 {
+			return "does not satisfy " + strings.Join(path, "/")
+		}
+	}
+	message := node.Error()
+	// `additional properties 'x' not allowed` names a property the INSTANCE chose,
+	// so the name is dropped and only the rule is kept. This is the case the
+	// sanitising exists for: that name is attacker-chosen text.
+	if strings.HasPrefix(message, "additional propert") {
+		return "has a property the contract does not define"
+	}
+	return truncate(sanitiseMessage(message))
+}
+
+// sanitiseMessage drops a quoted instance value from a library message.
+//
+// The library quotes instance values in several keywords (an enum's value, a
+// regex that did not match, a format that did not parse). Rather than enumerate
+// them, anything inside single quotes is removed, which is where every one of
+// them appears. A message that loses too much becomes generic, and generic is the
+// safe direction: a repair round with a vague complaint is better than a prompt
+// carrying text from the document.
+func sanitiseMessage(message string) string {
+	var builder strings.Builder
+	quoted := false
+	for _, character := range message {
+		switch character {
+		case '\'':
+			quoted = !quoted
+			continue
+		case '"':
+			continue
+		}
+		if !quoted {
+			builder.WriteRune(character)
+		}
+	}
+	cleaned := strings.Join(strings.Fields(builder.String()), " ")
+	if cleaned == "" {
+		return "the document did not match the contract"
+	}
+	return cleaned
 }
 
 // truncate bounds a message, so a violation cannot echo a long stretch of the
@@ -285,4 +360,32 @@ func stringSlice(object map[string]any, key string) []string {
 		}
 	}
 	return out
+}
+
+// jsonPointer renders a token list as a JSON Pointer.
+//
+// RFC 6901 escapes two characters: `~` becomes `~0` and `/` becomes `~1`. A token
+// list built from array indices never contains either, but a property name can —
+// and an unescaped pointer would address a different value than the one the
+// violation is about, which in a repair prompt means the model edits the wrong
+// field.
+func jsonPointer(tokens []string) string {
+	if len(tokens) == 0 {
+		return "/"
+	}
+	var builder strings.Builder
+	for _, token := range tokens {
+		builder.WriteByte('/')
+		for _, character := range token {
+			switch character {
+			case '~':
+				builder.WriteString("~0")
+			case '/':
+				builder.WriteString("~1")
+			default:
+				builder.WriteRune(character)
+			}
+		}
+	}
+	return builder.String()
 }
