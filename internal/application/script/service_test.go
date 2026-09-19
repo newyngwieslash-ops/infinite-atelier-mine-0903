@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/event"
 	scriptdomain "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/script"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/versioning"
 )
@@ -49,6 +50,9 @@ type memoryStore struct {
 	shots        map[string]scriptdomain.Shot
 	failCreate   error
 	approveCalls int
+	// events records what the approval commands wrote, so a test can assert the
+	// governance record exists rather than only that the status moved.
+	events []event.Event
 }
 
 func newMemoryStore() *memoryStore {
@@ -932,4 +936,75 @@ func itoa(value int) string {
 		value /= 10
 	}
 	return digits
+}
+
+// The approval methods reproduce the repository's supersede-then-approve shape,
+// including the event write, so a service test can assert the whole switch
+// without a database. They mirror the real implementation's semantics rather
+// than mocking them: the previous approval becomes superseded, the target
+// becomes approved, and the event must be present.
+func (s *memoryStore) CurrentApprovedSkeletonVersionID(_ context.Context, episodeID string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for id, record := range s.skeletons {
+		if record.EpisodeID == episodeID && record.Status == versioning.StatusApproved {
+			return id, nil
+		}
+	}
+	return "", nil
+}
+
+func (s *memoryStore) ApproveStorySkeletonVersion(_ context.Context, versionID, episodeID string, expectedStatus versioning.Status, record event.Event) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.failCreate != nil {
+		return s.failCreate
+	}
+	target, ok := s.skeletons[versionID]
+	if !ok || target.Status != expectedStatus {
+		return scriptdomain.ConflictError("This version changed in another window. Reload it and try again.")
+	}
+	for id, existing := range s.skeletons {
+		if existing.EpisodeID == episodeID && existing.Status == versioning.StatusApproved && id != versionID {
+			existing.Status = versioning.StatusSuperseded
+			s.skeletons[id] = existing
+		}
+	}
+	target.Status = versioning.StatusApproved
+	s.skeletons[versionID] = target
+	s.events = append(s.events, record)
+	return nil
+}
+
+func (s *memoryStore) CurrentApprovedStrategyVersionID(_ context.Context, episodeID string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for id, record := range s.strategies {
+		if record.EpisodeID == episodeID && record.Status == versioning.StatusApproved {
+			return id, nil
+		}
+	}
+	return "", nil
+}
+
+func (s *memoryStore) ApproveAdaptationStrategyVersion(_ context.Context, versionID, episodeID string, expectedStatus versioning.Status, record event.Event) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.failCreate != nil {
+		return s.failCreate
+	}
+	target, ok := s.strategies[versionID]
+	if !ok || target.Status != expectedStatus {
+		return scriptdomain.ConflictError("This version changed in another window. Reload it and try again.")
+	}
+	for id, existing := range s.strategies {
+		if existing.EpisodeID == episodeID && existing.Status == versioning.StatusApproved && id != versionID {
+			existing.Status = versioning.StatusSuperseded
+			s.strategies[id] = existing
+		}
+	}
+	target.Status = versioning.StatusApproved
+	s.strategies[versionID] = target
+	s.events = append(s.events, record)
+	return nil
 }

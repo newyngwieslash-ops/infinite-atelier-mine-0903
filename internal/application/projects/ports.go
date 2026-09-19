@@ -8,7 +8,10 @@ import (
 	"context"
 	"time"
 
+	eventsapp "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/events"
+	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/event"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/project"
+	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/versioning"
 )
 
 // Clock abstracts time so tests are deterministic.
@@ -121,16 +124,37 @@ type SettingsRepository interface {
 	UpdateRule(ctx context.Context, record project.Rule, expectedRevision int64) error
 
 	CreateStyleGuide(ctx context.Context, guide project.StyleGuide) error
+	// GetStyleGuide returns one guide version, which the approval reads before
+	// deciding.
+	GetStyleGuide(ctx context.Context, id string) (project.StyleGuide, error)
 	ListStyleGuides(ctx context.Context, projectID string) ([]project.StyleGuide, error)
 	// MaxStyleGuideVersion reports the highest version number a project's style
 	// guides reach, or zero when it has none.
 	MaxStyleGuideVersion(ctx context.Context, projectID string) (int, error)
+	// CurrentApprovedStyleGuideVersionID returns the project's approved guide
+	// version, or "" when none is approved.
+	CurrentApprovedStyleGuideVersionID(ctx context.Context, projectID string) (string, error)
+	// ApproveStyleGuideVersion switches which version is approved, recording the
+	// event in the same transaction.
+	ApproveStyleGuideVersion(ctx context.Context, versionID, projectID string, expectedStatus versioning.Status, record event.Event) error
 
 	UpsertProviderPolicy(ctx context.Context, policy project.ProviderPolicy) error
 	ListProviderPolicies(ctx context.Context, projectID string) ([]project.ProviderPolicy, error)
 }
 
 // Service holds the combined project queries the desktop layer exposes.
+// EventRecorder builds a domain event for a command that records it inside its
+// own transaction.
+//
+// It is the narrow surface §16's "event" requirement needs, and it is optional:
+// a Service composed without one still serves every command, and the approval
+// commands fail closed rather than approving without a record. That direction is
+// deliberate — an approval that is not recorded is worse than an approval that
+// is refused, because the governance record is what a later audit reads.
+type EventRecorder interface {
+	Build(ctx context.Context, draft eventsapp.Draft) (event.Event, error)
+}
+
 type Service struct {
 	projects ProjectRepository
 	canvas   CanvasRepository
@@ -140,6 +164,9 @@ type Service struct {
 	// project and canvas command, and the drama configuration commands fail
 	// closed with a storage error rather than half-working.
 	settings SettingsRepository
+	// events is optional too, and only the style guide approval needs it: that
+	// command refuses rather than approving without a governance record.
+	events EventRecorder
 }
 
 // Options configures a Service.
@@ -151,4 +178,7 @@ type Options struct {
 	// Settings enables the drama configuration commands. A nil value leaves
 	// them unavailable.
 	Settings SettingsRepository
+	// Events enables the style guide approval. A nil value leaves it failing
+	// closed.
+	Events EventRecorder
 }

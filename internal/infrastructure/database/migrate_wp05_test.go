@@ -43,11 +43,12 @@ func wp05Migrations(t *testing.T) fstest.MapFS {
 		"000010_storyboard.sql":                  {Data: wp05SQL(t, "000010_storyboard.sql")},
 		"000011_workflow_review.sql":             {Data: wp05SQL(t, "000011_workflow_review.sql")},
 		"000012_artifact_staleness.sql":          {Data: wp05SQL(t, "000012_artifact_staleness.sql")},
+		"000013_domain_events.sql":               {Data: wp05SQL(t, "000013_domain_events.sql")},
 	}
 }
 
 // wp05HeadVersion is the user_version the full WP-05 set reaches.
-const wp05HeadVersion = 12
+const wp05HeadVersion = 13
 
 // applyMigrationFileSplits runs one migration file the way the runner does:
 // splitSQL on the raw text, then execute each fragment in order. It returns the
@@ -90,6 +91,7 @@ func TestWP05SplitSQLCompatibility(t *testing.T) {
 		"000010_storyboard.sql",
 		"000011_workflow_review.sql",
 		"000012_artifact_staleness.sql",
+		"000013_domain_events.sql",
 	}
 	for _, name := range files {
 		script := string(migrationSQL(t, name))
@@ -154,6 +156,8 @@ func TestWP05MigrationFreshDatabase(t *testing.T) {
 		"workflow_runs", "stage_runs", "review_reports", "review_issues", "user_gate_decisions", "workflow_events",
 		// 000012
 		"artifact_staleness",
+		// 000013
+		"domain_events",
 	}
 	for _, table := range tables {
 		if queryInt(t, db, "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='"+table+"'") != 1 {
@@ -341,9 +345,10 @@ func TestWP05MigrationsRollBackOnFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A migration set that adds one broken file on top must leave the previous
-	// version as the head.
+	// version as the head. The number is deliberately far above the real head so
+	// it cannot collide with a migration added later.
 	broken := wp05Migrations(t)
-	broken["000013_broken.sql"] = &fstest.MapFile{Data: []byte("CREATE TABLE should_not_exist (id TEXT);\nCREATE TABLE oops (id TEXT REFERENCES nothing(id));\n")}
+	broken["000099_broken.sql"] = &fstest.MapFile{Data: []byte("CREATE TABLE should_not_exist (id TEXT);\nCREATE TABLE oops (id TEXT REFERENCES nothing(id));\n")}
 	if err := applyMigrations(ctx, db, broken); err == nil {
 		t.Fatal("a broken migration must be reported")
 	}

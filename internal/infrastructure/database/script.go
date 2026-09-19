@@ -5,6 +5,7 @@ import (
 	"database/sql"
 
 	scriptapp "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/script"
+	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/event"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/script"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/versioning"
 )
@@ -776,3 +777,27 @@ func scanShot(row rowScanner) (script.Shot, error) {
 
 // Ensure the repository satisfies the application port.
 var _ scriptapp.Repository = (*ScriptRepository)(nil)
+
+// CurrentApprovedSkeletonVersionID returns the episode's approved skeleton
+// version, or "" when none is approved.
+func (r *ScriptRepository) CurrentApprovedSkeletonVersionID(ctx context.Context, episodeID string) (string, error) {
+	return currentApprovedVersionID(ctx, r.db, familyStorySkeletonVersions, episodeID)
+}
+
+// ApproveStorySkeletonVersion switches which skeleton version is approved,
+// recording the event in the same transaction.
+func (r *ScriptRepository) ApproveStorySkeletonVersion(ctx context.Context, versionID, episodeID string, expectedStatus versioning.Status, record event.Event) error {
+	return approveVersionWithEvent(ctx, r.db, familyStorySkeletonVersions, versionID, episodeID, expectedStatus, record)
+}
+
+// CurrentApprovedStrategyVersionID returns the episode's approved adaptation
+// strategy version, or "" when none is approved.
+func (r *ScriptRepository) CurrentApprovedStrategyVersionID(ctx context.Context, episodeID string) (string, error) {
+	return currentApprovedVersionID(ctx, r.db, familyAdaptationStrategies, episodeID)
+}
+
+// ApproveAdaptationStrategyVersion switches which strategy version is approved,
+// recording the event in the same transaction.
+func (r *ScriptRepository) ApproveAdaptationStrategyVersion(ctx context.Context, versionID, episodeID string, expectedStatus versioning.Status, record event.Event) error {
+	return approveVersionWithEvent(ctx, r.db, familyAdaptationStrategies, versionID, episodeID, expectedStatus, record)
+}

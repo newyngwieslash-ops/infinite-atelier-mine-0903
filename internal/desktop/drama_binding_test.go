@@ -16,10 +16,12 @@ import (
 	appstoryboard "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/storyboard"
 	appworkflow "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/workflow"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/apperror"
+	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/event"
 	scriptdomain "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/script"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/staleness"
 	storydomain "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/story"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/storyboard"
+	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/versioning"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/workflow"
 )
 
@@ -39,6 +41,8 @@ type dramaStore struct {
 	relations  map[string]storydomain.StoryRelation
 	conflicts  map[string]storydomain.StoryFactConflict
 	episodes   map[string]scriptdomain.Episode
+	skeletons  map[string]scriptdomain.StorySkeletonVersion
+	strategies map[string]scriptdomain.AdaptationStrategyVersion
 	scripts    map[string]scriptdomain.Script
 	scriptVers map[string]scriptdomain.ScriptVersion
 	scenes     map[string]scriptdomain.Scene
@@ -57,33 +61,43 @@ type dramaStore struct {
 
 	// failNext makes the next write fail, so a storage failure is testable.
 	failNext error
+	// recorded holds what the approval commands wrote, so a binding test can
+	// assert the governance row rather than only the status change. The name is
+	// not 'events' because that field is already the story-event map.
+	recorded []event.Event
+	// episodeProjects stands in for the join the real repository does against
+	// the episodes table to resolve an approval's project.
+	episodeProjects map[string]string
 }
 
 func newDramaStore() *dramaStore {
 	return &dramaStore{
-		documents:  map[string]storydomain.SourceDocument{},
-		versions:   map[string]storydomain.SourceDocumentVersion{},
-		chapters:   map[string]storydomain.Chapter{},
-		entities:   map[string]storydomain.StoryEntity{},
-		events:     map[string]storydomain.StoryEvent{},
-		relations:  map[string]storydomain.StoryRelation{},
-		conflicts:  map[string]storydomain.StoryFactConflict{},
-		episodes:   map[string]scriptdomain.Episode{},
-		scripts:    map[string]scriptdomain.Script{},
-		scriptVers: map[string]scriptdomain.ScriptVersion{},
-		scenes:     map[string]scriptdomain.Scene{},
-		shots:      map[string]scriptdomain.Shot{},
-		plans:      map[string]storyboard.DirectorPlanVersion{},
-		boards:     map[string]storyboard.Storyboard{},
-		boardVers:  map[string]storyboard.StoryboardVersion{},
-		items:      map[string]storyboard.StoryboardItem{},
-		panels:     map[string]storyboard.StoryboardPanelVersion{},
-		runs:       map[string]workflow.WorkflowRun{},
-		stages:     map[string]workflow.StageRun{},
-		reports:    map[string]workflow.ReviewReport{},
-		issues:     map[string][]workflow.ReviewIssue{},
-		decisions:  map[string]workflow.UserGateDecision{},
-		audit:      map[string][]workflow.WorkflowEvent{},
+		skeletons:       map[string]scriptdomain.StorySkeletonVersion{},
+		strategies:      map[string]scriptdomain.AdaptationStrategyVersion{},
+		episodeProjects: map[string]string{},
+		documents:       map[string]storydomain.SourceDocument{},
+		versions:        map[string]storydomain.SourceDocumentVersion{},
+		chapters:        map[string]storydomain.Chapter{},
+		entities:        map[string]storydomain.StoryEntity{},
+		events:          map[string]storydomain.StoryEvent{},
+		relations:       map[string]storydomain.StoryRelation{},
+		conflicts:       map[string]storydomain.StoryFactConflict{},
+		episodes:        map[string]scriptdomain.Episode{},
+		scripts:         map[string]scriptdomain.Script{},
+		scriptVers:      map[string]scriptdomain.ScriptVersion{},
+		scenes:          map[string]scriptdomain.Scene{},
+		shots:           map[string]scriptdomain.Shot{},
+		plans:           map[string]storyboard.DirectorPlanVersion{},
+		boards:          map[string]storyboard.Storyboard{},
+		boardVers:       map[string]storyboard.StoryboardVersion{},
+		items:           map[string]storyboard.StoryboardItem{},
+		panels:          map[string]storyboard.StoryboardPanelVersion{},
+		runs:            map[string]workflow.WorkflowRun{},
+		stages:          map[string]workflow.StageRun{},
+		reports:         map[string]workflow.ReviewReport{},
+		issues:          map[string][]workflow.ReviewIssue{},
+		decisions:       map[string]workflow.UserGateDecision{},
+		audit:           map[string][]workflow.WorkflowEvent{},
 	}
 }
 
@@ -2234,4 +2248,163 @@ func lowerCamelSpelling(fieldName, key string) bool {
 		return false
 	}
 	return strings.EqualFold(key, fieldName)
+}
+
+// The approval doubles reproduce the repository's supersede-then-approve shape,
+// including the event write, so a binding test exercises the same contract the
+// real repository provides.
+func (s *dramaStore) CurrentApprovedSkeletonVersionID(_ context.Context, episodeID string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for id, record := range s.skeletons {
+		if record.EpisodeID == episodeID && record.Status == versioning.StatusApproved {
+			return id, nil
+		}
+	}
+	return "", nil
+}
+
+func (s *dramaStore) ApproveStorySkeletonVersion(_ context.Context, versionID, episodeID string, expectedStatus versioning.Status, record event.Event) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.failNext != nil {
+		return s.failNext
+	}
+	target, ok := s.skeletons[versionID]
+	if !ok || target.Status != expectedStatus {
+		return scriptdomain.ConflictError("This version changed in another window. Reload it and try again.")
+	}
+	for id, existing := range s.skeletons {
+		if existing.EpisodeID == episodeID && existing.Status == versioning.StatusApproved && id != versionID {
+			existing.Status = versioning.StatusSuperseded
+			s.skeletons[id] = existing
+		}
+	}
+	target.Status = versioning.StatusApproved
+	s.skeletons[versionID] = target
+	s.recorded = append(s.recorded, record)
+	return nil
+}
+
+func (s *dramaStore) CurrentApprovedStrategyVersionID(_ context.Context, episodeID string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for id, record := range s.strategies {
+		if record.EpisodeID == episodeID && record.Status == versioning.StatusApproved {
+			return id, nil
+		}
+	}
+	return "", nil
+}
+
+func (s *dramaStore) ApproveAdaptationStrategyVersion(_ context.Context, versionID, episodeID string, expectedStatus versioning.Status, record event.Event) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.failNext != nil {
+		return s.failNext
+	}
+	target, ok := s.strategies[versionID]
+	if !ok || target.Status != expectedStatus {
+		return scriptdomain.ConflictError("This version changed in another window. Reload it and try again.")
+	}
+	for id, existing := range s.strategies {
+		if existing.EpisodeID == episodeID && existing.Status == versioning.StatusApproved && id != versionID {
+			existing.Status = versioning.StatusSuperseded
+			s.strategies[id] = existing
+		}
+	}
+	target.Status = versioning.StatusApproved
+	s.strategies[versionID] = target
+	s.recorded = append(s.recorded, record)
+	return nil
+}
+
+func (s *dramaStore) CurrentApprovedDirectorPlanVersionID(_ context.Context, episodeID string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for id, plan := range s.plans {
+		if plan.EpisodeID == episodeID && plan.Status == versioning.StatusApproved {
+			return id, nil
+		}
+	}
+	return "", nil
+}
+
+func (s *dramaStore) ApproveDirectorPlanVersion(_ context.Context, versionID, episodeID string, expectedStatus versioning.Status, record event.Event) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.failNext != nil {
+		return s.failNext
+	}
+	target, ok := s.plans[versionID]
+	if !ok || target.Status != expectedStatus {
+		return storyboard.ConflictError("This version changed in another window. Reload it and try again.")
+	}
+	for id, existing := range s.plans {
+		if existing.EpisodeID == episodeID && existing.Status == versioning.StatusApproved && id != versionID {
+			existing.Status = versioning.StatusSuperseded
+			s.plans[id] = existing
+		}
+	}
+	target.Status = versioning.StatusApproved
+	s.plans[versionID] = target
+	s.recorded = append(s.recorded, record)
+	return nil
+}
+
+func (s *dramaStore) CurrentApprovedStoryboardVersionID(_ context.Context, storyboardID string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for id, version := range s.boardVers {
+		if version.StoryboardID == storyboardID && version.Status == versioning.StatusApproved {
+			return id, nil
+		}
+	}
+	return "", nil
+}
+
+func (s *dramaStore) ApproveStoryboardVersion(_ context.Context, versionID, storyboardID string, expectedStatus versioning.Status, record event.Event) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.failNext != nil {
+		return s.failNext
+	}
+	target, ok := s.boardVers[versionID]
+	if !ok || target.Status != expectedStatus {
+		return storyboard.ConflictError("This version changed in another window. Reload it and try again.")
+	}
+	for id, existing := range s.boardVers {
+		if existing.StoryboardID == storyboardID && existing.Status == versioning.StatusApproved && id != versionID {
+			existing.Status = versioning.StatusSuperseded
+			s.boardVers[id] = existing
+		}
+	}
+	target.Status = versioning.StatusApproved
+	s.boardVers[versionID] = target
+	s.recorded = append(s.recorded, record)
+	return nil
+}
+
+func (s *dramaStore) ProjectOfEpisode(_ context.Context, episodeID string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	projectID, ok := s.episodeProjects[episodeID]
+	if !ok {
+		return "", scriptdomain.NotFoundError()
+	}
+	return projectID, nil
+}
+
+func (s *dramaStore) ProjectOfStoryboard(_ context.Context, storyboardID string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	board, ok := s.boards[storyboardID]
+	if !ok {
+		return "", storyboard.NotFoundError()
+	}
+	projectID, ok := s.episodeProjects[board.EpisodeID]
+	if !ok {
+		return "", storyboard.NotFoundError()
+	}
+	return projectID, nil
 }

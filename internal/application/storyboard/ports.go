@@ -8,6 +8,11 @@ import (
 	"context"
 	"time"
 
+	eventsapp "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/events"
+
+	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/event"
+	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/versioning"
+
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/storyboard"
 )
 
@@ -32,6 +37,19 @@ type DirectorPlanRepository interface {
 	// number is derived from the maximum rather than a count, because the schema
 	// has UNIQUE (episode_id, version_number) and a reused number is rejected.
 	MaxDirectorPlanVersionNumber(ctx context.Context, episodeID string) (int, error)
+	// CurrentApprovedDirectorPlanVersionID returns the episode's approved plan
+	// version, or "" when none is approved.
+	CurrentApprovedDirectorPlanVersionID(ctx context.Context, episodeID string) (string, error)
+	// ApproveDirectorPlanVersion switches which version is approved, recording
+	// the event in the same transaction.
+	ApproveDirectorPlanVersion(ctx context.Context, versionID, episodeID string, expectedStatus versioning.Status, record event.Event) error
+	// ProjectOfEpisode returns the project an episode belongs to.
+	//
+	// It exists because the storyboard tables have no project column: a director
+	// plan names an episode and the episode names the project, so the read that
+	// resolves it belongs beside the join rather than in the service, which would
+	// otherwise need the episode aggregate it does not own.
+	ProjectOfEpisode(ctx context.Context, episodeID string) (string, error)
 }
 
 // StoryboardRepository persists storyboard identities and their versions.
@@ -50,6 +68,15 @@ type StoryboardRepository interface {
 	// has, or zero when it has none.
 	MaxStoryboardVersionNumber(ctx context.Context, storyboardID string) (int, error)
 	CreateStoryboardVersion(ctx context.Context, version storyboard.StoryboardVersion) error
+	// CurrentApprovedStoryboardVersionID returns the storyboard's approved
+	// version, or "" when none is approved.
+	CurrentApprovedStoryboardVersionID(ctx context.Context, storyboardID string) (string, error)
+	// ApproveStoryboardVersion switches which version is approved, recording the
+	// event in the same transaction.
+	ApproveStoryboardVersion(ctx context.Context, versionID, storyboardID string, expectedStatus versioning.Status, record event.Event) error
+	// ProjectOfStoryboard returns the project a storyboard belongs to, resolved
+	// through its episode for the same reason as ProjectOfEpisode.
+	ProjectOfStoryboard(ctx context.Context, storyboardID string) (string, error)
 }
 
 // StoryboardItemRepository persists the per-shot rows of a storyboard version.
@@ -87,6 +114,18 @@ type PanelRepository interface {
 }
 
 // Service holds the storyboard commands and queries.
+// EventRecorder builds a domain event for a command that records it inside its
+// own transaction.
+//
+// It is the narrow surface §16's "event" requirement needs, and it is optional:
+// a Service composed without one still serves every command, and the approval
+// commands fail closed rather than approving without a record. That direction is
+// deliberate — an approval that is not recorded is worse than an approval that
+// is refused, because the governance record is what a later audit reads.
+type EventRecorder interface {
+	Build(ctx context.Context, draft eventsapp.Draft) (event.Event, error)
+}
+
 type Service struct {
 	directorPlans DirectorPlanRepository
 	storyboards   StoryboardRepository
@@ -94,6 +133,7 @@ type Service struct {
 	panels        PanelRepository
 	clock         Clock
 	ids           IDGenerator
+	events        EventRecorder
 }
 
 // Options configures a Service.
@@ -104,4 +144,7 @@ type Options struct {
 	Panels        PanelRepository
 	Clock         Clock
 	IDs           IDGenerator
+	// Events enables the approval commands. A nil value leaves them failing
+	// closed.
+	Events EventRecorder
 }

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 
 	storyboardapp "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/storyboard"
+	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/event"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/storyboard"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/versioning"
 )
@@ -589,3 +590,67 @@ var (
 	_ storyboardapp.StoryboardItemRepository = (*StoryboardRepository)(nil)
 	_ storyboardapp.PanelRepository          = (*StoryboardRepository)(nil)
 )
+
+// CurrentApprovedDirectorPlanVersionID returns the episode's approved director
+// plan version, or "" when none is approved.
+func (r *StoryboardRepository) CurrentApprovedDirectorPlanVersionID(ctx context.Context, episodeID string) (string, error) {
+	return currentApprovedVersionID(ctx, r.db, familyDirectorPlans, episodeID)
+}
+
+// ApproveDirectorPlanVersion switches which plan version is approved, recording
+// the event in the same transaction.
+func (r *StoryboardRepository) ApproveDirectorPlanVersion(ctx context.Context, versionID, episodeID string, expectedStatus versioning.Status, record event.Event) error {
+	return approveVersionWithEvent(ctx, r.db, familyDirectorPlans, versionID, episodeID, expectedStatus, record)
+}
+
+// CurrentApprovedStoryboardVersionID returns the storyboard's approved version,
+// or "" when none is approved.
+func (r *StoryboardRepository) CurrentApprovedStoryboardVersionID(ctx context.Context, storyboardID string) (string, error) {
+	return currentApprovedVersionID(ctx, r.db, familyStoryboardVersions, storyboardID)
+}
+
+// ApproveStoryboardVersion switches which storyboard version is approved,
+// recording the event in the same transaction.
+func (r *StoryboardRepository) ApproveStoryboardVersion(ctx context.Context, versionID, storyboardID string, expectedStatus versioning.Status, record event.Event) error {
+	return approveVersionWithEvent(ctx, r.db, familyStoryboardVersions, versionID, storyboardID, expectedStatus, record)
+}
+
+// ProjectOfEpisode returns the project an episode belongs to.
+//
+// The storyboard tables carry no project column, so this join is how an approval
+// finds the project its event is filed under.
+func (r *StoryboardRepository) ProjectOfEpisode(ctx context.Context, episodeID string) (string, error) {
+	conn := r.conn()
+	if conn == nil {
+		return "", storageError("STORYBOARD_STORE_UNAVAILABLE", "The storyboard store is unavailable.", nil)
+	}
+	var projectID string
+	err := conn.QueryRowContext(ctx, `SELECT project_id FROM episodes WHERE id = ?`, episodeID).Scan(&projectID)
+	if err == sql.ErrNoRows {
+		return "", storyboard.NotFoundError()
+	}
+	if err != nil {
+		return "", storageError("STORYBOARD_READ_FAILED", "The project could not be read.", err)
+	}
+	return projectID, nil
+}
+
+// ProjectOfStoryboard returns the project a storyboard belongs to, resolved
+// through its episode.
+func (r *StoryboardRepository) ProjectOfStoryboard(ctx context.Context, storyboardID string) (string, error) {
+	conn := r.conn()
+	if conn == nil {
+		return "", storageError("STORYBOARD_STORE_UNAVAILABLE", "The storyboard store is unavailable.", nil)
+	}
+	var projectID string
+	err := conn.QueryRowContext(ctx, `SELECT episodes.project_id FROM storyboards
+		JOIN episodes ON episodes.id = storyboards.episode_id
+		WHERE storyboards.id = ?`, storyboardID).Scan(&projectID)
+	if err == sql.ErrNoRows {
+		return "", storyboard.NotFoundError()
+	}
+	if err != nil {
+		return "", storageError("STORYBOARD_READ_FAILED", "The project could not be read.", err)
+	}
+	return projectID, nil
+}

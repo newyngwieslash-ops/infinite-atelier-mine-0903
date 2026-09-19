@@ -8,6 +8,11 @@ import (
 	"context"
 	"time"
 
+	eventsapp "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/events"
+
+	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/event"
+	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/versioning"
+
 	scriptdomain "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/script"
 )
 
@@ -49,6 +54,13 @@ type SkeletonRepository interface {
 	// MaxStorySkeletonVersionNumber reports the highest version number an
 	// episode has, or zero when it has none.
 	MaxStorySkeletonVersionNumber(ctx context.Context, episodeID string) (int, error)
+	// CurrentApprovedSkeletonVersionID returns the episode's approved version, or
+	// "" when none is approved.
+	CurrentApprovedSkeletonVersionID(ctx context.Context, episodeID string) (string, error)
+	// ApproveStorySkeletonVersion switches which version is approved, recording
+	// the event in the same transaction so the approval and its audit land
+	// together.
+	ApproveStorySkeletonVersion(ctx context.Context, versionID, episodeID string, expectedStatus versioning.Status, record event.Event) error
 }
 
 // StrategyRepository persists adaptation strategy versions.
@@ -61,6 +73,12 @@ type StrategyRepository interface {
 	// MaxAdaptationStrategyVersionNumber reports the highest version number an
 	// episode has, or zero when it has none.
 	MaxAdaptationStrategyVersionNumber(ctx context.Context, episodeID string) (int, error)
+	// CurrentApprovedStrategyVersionID returns the episode's approved strategy
+	// version, or "" when none is approved.
+	CurrentApprovedStrategyVersionID(ctx context.Context, episodeID string) (string, error)
+	// ApproveAdaptationStrategyVersion switches which version is approved,
+	// recording the event in the same transaction.
+	ApproveAdaptationStrategyVersion(ctx context.Context, versionID, episodeID string, expectedStatus versioning.Status, record event.Event) error
 }
 
 // ScriptRepository persists scripts and script versions.
@@ -141,10 +159,23 @@ type Repository interface {
 }
 
 // Service holds the episode and script commands and queries.
+// EventRecorder builds a domain event for a command that records it inside its
+// own transaction.
+//
+// It is the narrow surface §16's "event" requirement needs, and it is optional:
+// a Service composed without one still serves every command, and the approval
+// commands fail closed rather than approving without a record. That direction is
+// deliberate — an approval that is not recorded is worse than an approval that
+// is refused, because the governance record is what a later audit reads.
+type EventRecorder interface {
+	Build(ctx context.Context, draft eventsapp.Draft) (event.Event, error)
+}
+
 type Service struct {
 	repository Repository
 	clock      Clock
 	ids        IDGenerator
+	events     EventRecorder
 }
 
 // Options configures a Service.
@@ -152,4 +183,7 @@ type Options struct {
 	Repository Repository
 	Clock      Clock
 	IDs        IDGenerator
+	// Events enables the commands that must record a domain event. A nil value
+	// leaves those commands failing closed; every other command still works.
+	Events EventRecorder
 }

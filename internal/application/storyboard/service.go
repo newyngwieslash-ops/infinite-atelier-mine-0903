@@ -26,6 +26,7 @@ func NewService(options Options) *Service {
 		panels:        options.Panels,
 		clock:         options.Clock,
 		ids:           options.IDs,
+		events:        options.Events,
 	}
 }
 

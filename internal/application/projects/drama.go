@@ -4,6 +4,9 @@ import (
 	"context"
 	"strings"
 
+	eventsapp "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/events"
+
+	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/event"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/project"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/versioning"
 )
@@ -513,4 +516,76 @@ func (s *Service) ListProviderPolicies(ctx context.Context, projectID string) ([
 		return nil, err
 	}
 	return settingsRepository.ListProviderPolicies(ctx, projectID)
+}
+
+// ApproveStyleGuideVersionRequest approves one style guide version.
+type ApproveStyleGuideVersionRequest struct {
+	VersionID string
+	TraceID   string
+}
+
+// ApproveStyleGuideVersion switches which style guide version is in force.
+//
+// It is the §2.5 switch for §4.5's versioned guide, and it is the fifth of the
+// five version families that had no way to reach `approved`. The supersede and
+// the approval happen in one repository transaction, and the §17 event is
+// recorded inside it: §16 asks every command for both, and an approval with no
+// record of who decided it is the outcome a governance stream must not have.
+func (s *Service) ApproveStyleGuideVersion(ctx context.Context, request ApproveStyleGuideVersionRequest) (project.StyleGuide, error) {
+	if !s.Available() {
+		return project.StyleGuide{}, storageFailure()
+	}
+	settingsRepository, err := s.settingsRepository()
+	if err != nil {
+		return project.StyleGuide{}, err
+	}
+	if s.events == nil {
+		// Refusing is the safe direction: an unrecorded approval is a governance
+		// hole, while a refused approval is merely unavailable.
+		return project.StyleGuide{}, project.StorageError("The approval cannot be recorded, so it was not applied.", nil)
+	}
+	guide, err := settingsRepository.GetStyleGuide(ctx, request.VersionID)
+	if err != nil {
+		return project.StyleGuide{}, err
+	}
+	if err := versioning.CanApprove(guide.Status, versioning.StatusApproved); err != nil {
+		return project.StyleGuide{}, err
+	}
+	// Section 17 defines no style-guide event name, and the vocabulary is closed
+	// (a test pins it to that list), so the approval is reported as
+	// ProjectSettingsChanged. That is the closest name §17 offers and §3 groups
+	// ProjectStyleGuide inside the ProjectAggregate, so an approval is a change
+	// to the project's configuration. The payload names what actually changed so
+	// a consumer can tell a guide approval from a settings edit; ADR-0009 records
+	// the mapping and the alternative (adding a name to §17's list) that was not
+	// taken.
+	record, err := s.events.Build(ctx, eventsapp.Draft{
+		Type:          event.ProjectSettingsChanged,
+		AggregateType: event.AggregateProject,
+		AggregateID:   guide.ProjectID,
+		ProjectID:     guide.ProjectID,
+		TraceID:       request.TraceID,
+		Payload:       `{"styleGuideVersionId":"` + guide.ID + `","change":"approved"}`,
+	})
+	if err != nil {
+		return project.StyleGuide{}, err
+	}
+	if err := settingsRepository.ApproveStyleGuideVersion(ctx, guide.ID, guide.ProjectID, guide.Status, record); err != nil {
+		return project.StyleGuide{}, err
+	}
+	guide.Status = versioning.StatusApproved
+	return guide, nil
+}
+
+// ApprovedStyleGuideVersionID returns the project's approved guide version id,
+// or "" when none is approved.
+func (s *Service) ApprovedStyleGuideVersionID(ctx context.Context, projectID string) (string, error) {
+	if !s.Available() {
+		return "", storageFailure()
+	}
+	settingsRepository, err := s.settingsRepository()
+	if err != nil {
+		return "", err
+	}
+	return settingsRepository.CurrentApprovedStyleGuideVersionID(ctx, projectID)
 }

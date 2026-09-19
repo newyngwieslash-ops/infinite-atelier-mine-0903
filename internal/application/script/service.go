@@ -11,7 +11,7 @@ import (
 
 // NewService builds the script service.
 func NewService(options Options) *Service {
-	return &Service{repository: options.Repository, clock: options.Clock, ids: options.IDs}
+	return &Service{repository: options.Repository, clock: options.Clock, ids: options.IDs, events: options.Events}
 }
 
 // Available reports whether the service can operate. An unattached binding

@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/event"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/storyboard"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/versioning"
 )
@@ -61,15 +62,22 @@ type memoryRepo struct {
 	panels         map[string]storyboard.StoryboardPanelVersion
 	approvedPanels []string
 	failNextWrite  error
+	// events records what the approval commands wrote, so a test can assert the
+	// governance record exists rather than only that the status moved.
+	events []event.Event
+	// episodeProjects maps an episode to its project, standing in for the join
+	// the real repository does against the episodes table.
+	episodeProjects map[string]string
 }
 
 func newMemoryRepo() *memoryRepo {
 	return &memoryRepo{
-		plans:       map[string]storyboard.DirectorPlanVersion{},
-		storyboards: map[string]storyboard.Storyboard{},
-		versions:    map[string]storyboard.StoryboardVersion{},
-		items:       map[string]storyboard.StoryboardItem{},
-		panels:      map[string]storyboard.StoryboardPanelVersion{},
+		plans:           map[string]storyboard.DirectorPlanVersion{},
+		storyboards:     map[string]storyboard.Storyboard{},
+		versions:        map[string]storyboard.StoryboardVersion{},
+		items:           map[string]storyboard.StoryboardItem{},
+		panels:          map[string]storyboard.StoryboardPanelVersion{},
+		episodeProjects: map[string]string{},
 	}
 }
 
@@ -732,4 +740,97 @@ func seedItem(t *testing.T, service *Service, shotID string, ordinal int) storyb
 		t.Fatal(err)
 	}
 	return item
+}
+
+// The approval doubles reproduce the repository's supersede-then-approve shape,
+// including the event write, so a service test can assert the whole switch
+// without a database.
+func (r *memoryRepo) CurrentApprovedDirectorPlanVersionID(_ context.Context, episodeID string) (string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for id, plan := range r.plans {
+		if plan.EpisodeID == episodeID && plan.Status == versioning.StatusApproved {
+			return id, nil
+		}
+	}
+	return "", nil
+}
+
+func (r *memoryRepo) ApproveDirectorPlanVersion(_ context.Context, versionID, episodeID string, expectedStatus versioning.Status, record event.Event) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.failNextWrite != nil {
+		return r.failNextWrite
+	}
+	target, ok := r.plans[versionID]
+	if !ok || target.Status != expectedStatus {
+		return storyboard.ConflictError("This version changed in another window. Reload it and try again.")
+	}
+	for id, existing := range r.plans {
+		if existing.EpisodeID == episodeID && existing.Status == versioning.StatusApproved && id != versionID {
+			existing.Status = versioning.StatusSuperseded
+			r.plans[id] = existing
+		}
+	}
+	target.Status = versioning.StatusApproved
+	r.plans[versionID] = target
+	r.events = append(r.events, record)
+	return nil
+}
+
+func (r *memoryRepo) CurrentApprovedStoryboardVersionID(_ context.Context, storyboardID string) (string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for id, version := range r.versions {
+		if version.StoryboardID == storyboardID && version.Status == versioning.StatusApproved {
+			return id, nil
+		}
+	}
+	return "", nil
+}
+
+func (r *memoryRepo) ApproveStoryboardVersion(_ context.Context, versionID, storyboardID string, expectedStatus versioning.Status, record event.Event) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.failNextWrite != nil {
+		return r.failNextWrite
+	}
+	target, ok := r.versions[versionID]
+	if !ok || target.Status != expectedStatus {
+		return storyboard.ConflictError("This version changed in another window. Reload it and try again.")
+	}
+	for id, existing := range r.versions {
+		if existing.StoryboardID == storyboardID && existing.Status == versioning.StatusApproved && id != versionID {
+			existing.Status = versioning.StatusSuperseded
+			r.versions[id] = existing
+		}
+	}
+	target.Status = versioning.StatusApproved
+	r.versions[versionID] = target
+	r.events = append(r.events, record)
+	return nil
+}
+
+func (r *memoryRepo) ProjectOfEpisode(_ context.Context, episodeID string) (string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	projectID, ok := r.episodeProjects[episodeID]
+	if !ok {
+		return "", storyboard.NotFoundError()
+	}
+	return projectID, nil
+}
+
+func (r *memoryRepo) ProjectOfStoryboard(_ context.Context, storyboardID string) (string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	board, ok := r.storyboards[storyboardID]
+	if !ok {
+		return "", storyboard.NotFoundError()
+	}
+	projectID, ok := r.episodeProjects[board.EpisodeID]
+	if !ok {
+		return "", storyboard.NotFoundError()
+	}
+	return projectID, nil
 }

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/projects"
+	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/event"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/project"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/versioning"
 )
@@ -402,3 +403,44 @@ func (r *DramaSettingsRepository) ListProviderPolicies(ctx context.Context, proj
 var (
 	_ projects.SettingsRepository = (*DramaSettingsRepository)(nil)
 )
+
+// CurrentApprovedStyleGuideVersionID returns the project's approved style guide
+// version, or "" when none is approved.
+func (r *DramaSettingsRepository) CurrentApprovedStyleGuideVersionID(ctx context.Context, projectID string) (string, error) {
+	return currentApprovedVersionID(ctx, r.db, familyStyleGuides, projectID)
+}
+
+// ApproveStyleGuideVersion switches which guide version is approved, recording
+// the event in the same transaction.
+func (r *DramaSettingsRepository) ApproveStyleGuideVersion(ctx context.Context, versionID, projectID string, expectedStatus versioning.Status, record event.Event) error {
+	return approveVersionWithEvent(ctx, r.db, familyStyleGuides, versionID, projectID, expectedStatus, record)
+}
+
+// GetStyleGuide returns one style guide version.
+//
+// It exists for the approval command, which reads the version before deciding:
+// CanApprove needs the status the caller is moving away from, and the event
+// needs the project the version belongs to.
+func (r *DramaSettingsRepository) GetStyleGuide(ctx context.Context, id string) (project.StyleGuide, error) {
+	conn := r.conn()
+	if conn == nil {
+		return project.StyleGuide{}, storageError("PROJECT_STYLE_STORE_UNAVAILABLE", "The project store is unavailable.", nil)
+	}
+	row := conn.QueryRowContext(ctx, styleGuideSelectColumns+` WHERE id = ?`, id)
+	var guide project.StyleGuide
+	var status, createdByType, createdAt string
+	err := row.Scan(&guide.ID, &guide.ProjectID, &guide.VersionNumber, &status,
+		&guide.BasedOnVersionID, &guide.VisualStyle, &guide.Palette, &guide.Lighting,
+		&guide.Composition, &guide.CameraLanguage, &guide.NegativeConstraints, &guide.SoundDirection,
+		&createdByType, &guide.CreatedByID, &guide.ChangeReason, &guide.LegacyMetadata, &createdAt)
+	if err == sql.ErrNoRows {
+		return project.StyleGuide{}, project.NotFoundError()
+	}
+	if err != nil {
+		return project.StyleGuide{}, storageError("PROJECT_STYLE_READ_FAILED", "The style guide could not be read.", err)
+	}
+	guide.Status = versioning.Status(status)
+	guide.CreatedByType = versioning.CreatedByType(createdByType)
+	guide.CreatedAt = parseTime(createdAt)
+	return guide, nil
+}
