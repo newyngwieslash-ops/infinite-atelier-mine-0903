@@ -71,7 +71,17 @@ func (s *Service) store(ctx context.Context, chapter ChapterText, document extra
 		}
 		result.Evidence++
 		for _, alias := range proposal.Aliases {
-			span := findSpan(chapter.Text, alias)
+			// Base zero on purpose. The two offset systems are genuinely different
+			// rather than inconsistently applied, and the deciding factor is which
+			// text row is named.
+			//
+			// Section 6.2 gives an alias a source_chapter_id and two offsets and no
+			// version reference, so the only text its offsets can index is the
+			// chapter it names: they are chapter-relative. Section 6.6 gives
+			// evidence a source_document_version_id, which is what its offsets
+			// index, so those are version-absolute. That is why this call passes
+			// zero and the evidence calls pass the chapter's base.
+			span := findSpan(chapter.Text, alias, 0)
 			if _, err := s.story.AddStoryEntityAlias(ctx, appstory.AddStoryEntityAliasRequest{
 				StoryEntityID:   record.ID,
 				Alias:           alias,
@@ -233,14 +243,22 @@ type span struct {
 	end   *int
 }
 
-// findSpan locates a name in the chapter and returns its rune range.
+// findSpan locates a name in the chapter text and returns its range in VERSION
+// coordinates.
 //
 // The FIRST occurrence is taken rather than a model-supplied position, because
-// the model's arithmetic is not verifiable and a wrong offset is worse than
-// none. When the name is absent — the model may have normalised a name it read —
-// no span is returned, and the evidence row then records the chapter without a
+// the model's arithmetic is not verifiable and a wrong offset is worse than none.
+// When the name is absent — the model may have normalised a name it read — no
+// span is returned, and the evidence row then records the chapter without a
 // range, which §6.6 allows.
-func findSpan(text, name string) span {
+//
+// The shift from chapter-local to version-absolute happens here rather than at
+// the write, so there is exactly one place that knows about the two coordinate
+// systems. `base` is where the chapter begins in the version; a span found inside
+// the chapter text is relative to the chapter, and every offset this package
+// stores is relative to the version, because that is what section 6.6's reader
+// indexes.
+func findSpan(text, name string, base int) span {
 	trimmed := strings.TrimSpace(name)
 	if trimmed == "" {
 		return span{}
@@ -250,34 +268,40 @@ func findSpan(text, name string) span {
 		return span{}
 	}
 	// Index is a byte offset, so the prefix is measured in runes to convert it.
-	start := utf8.RuneCountInString(text[:index])
+	start := base + utf8.RuneCountInString(text[:index])
 	end := start + utf8.RuneCountInString(trimmed)
 	return span{start: &start, end: &end}
 }
 
 // writeEntityEvidence records where an entity was found.
 func (s *Service) writeEntityEvidence(ctx context.Context, chapter ChapterText, entityID string, proposal extractiondomain.Entity) error {
-	location := findSpan(chapter.Text, proposal.CanonicalName)
-	return s.recordEvidence(ctx, chapter, story.FactEntity, entityID, location, excerptHash(chapter.Text, location))
+	location := findSpan(chapter.Text, proposal.CanonicalName, chapter.BaseOffset)
+	return s.recordEvidence(ctx, chapter, story.FactEntity, entityID, location, excerptHash(chapter, location))
 }
 
 // writeEventEvidence records where an event was found.
 //
-// An event has no single name in the text to point at, so the evidence is the
-// chapter without a range. That is the honest record: the event exists in this
-// chapter, and the offsets that would say exactly where are not something this
-// layer can compute from a label.
+// An event's own name is not text in the chapter — it is the model's label — so
+// looking it up finds nothing and the row carries the chapter without a range.
+// That is the honest record: the event exists in this chapter, and the offsets
+// that would say exactly where are not something this layer can compute from a
+// label. The lookup is attempted anyway because a model that quotes the chapter
+// verbatim produces a real span, and a real span is better evidence than none.
 func (s *Service) writeEventEvidence(ctx context.Context, chapter ChapterText, eventID string, proposal extractiondomain.Event) error {
-	location := findSpan(chapter.Text, proposal.Name)
-	return s.recordEvidence(ctx, chapter, story.FactEvent, eventID, location, excerptHash(chapter.Text, location))
+	location := findSpan(chapter.Text, proposal.Name, chapter.BaseOffset)
+	return s.recordEvidence(ctx, chapter, story.FactEvent, eventID, location, excerptHash(chapter, location))
 }
 
-// writeRelationEvidence records where a relation was found. Like an event, a
-// relation is a statement rather than a phrase, so it carries the chapter and,
-// when the source entity's name appears, that name's range.
+// writeRelationEvidence records where a relation was found.
+//
+// A relation is a statement rather than a phrase, so there is nothing in the text
+// to point at and the row carries the chapter with no range. The first draft's
+// comment claimed it looked up "the source entity's name"; it did not, and the
+// comment was the only thing that suggested otherwise. This says what the code
+// does.
 func (s *Service) writeRelationEvidence(ctx context.Context, chapter ChapterText, relationID string, proposal extractiondomain.Relation) error {
 	location := span{}
-	return s.recordEvidence(ctx, chapter, story.FactRelation, relationID, location, excerptHash(chapter.Text, location))
+	return s.recordEvidence(ctx, chapter, story.FactRelation, relationID, location, excerptHash(chapter, location))
 }
 
 // recordEvidence writes one fact-source row.
@@ -301,16 +325,21 @@ func (s *Service) recordEvidence(ctx context.Context, chapter ChapterText, factT
 
 // excerptHash is the digest of the passage the offsets point at.
 //
-// It is what lets the pipeline notice the text changed under a fact: the reader
-// re-reads the range, hashes it, and compares. When there is no range the whole
-// chapter is hashed, so the value is still a usable comparison and still not a
-// copy of the text — §6.6 permits a limited excerpt, and a hash is smaller than
-// the excerpt it stands for.
-func excerptHash(text string, location span) string {
-	excerpt := text
+// The offsets are version-absolute and the text is the chapter's slice, so the
+// range is translated back before slicing: subtracting the base turns the stored
+// pair into an index into `text`. Hashing the untranslated range would read the
+// wrong passage whenever a chapter does not start at zero, which is the same
+// confusion that made the offsets wrong in the first place.
+//
+// When there is no range the chapter is hashed whole, so the value is still a
+// usable comparison and still not a copy of the text — §6.6 permits a limited
+// excerpt for verification, and a hash is smaller than the excerpt it stands for.
+func excerptHash(chapter ChapterText, location span) string {
+	excerpt := chapter.Text
 	if location.start != nil && location.end != nil {
-		runes := []rune(text)
-		start, end := *location.start, *location.end
+		runes := []rune(chapter.Text)
+		start := *location.start - chapter.BaseOffset
+		end := *location.end - chapter.BaseOffset
 		if start >= 0 && end <= len(runes) && start <= end {
 			excerpt = string(runes[start:end])
 		}

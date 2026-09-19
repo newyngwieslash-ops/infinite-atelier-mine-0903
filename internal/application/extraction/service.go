@@ -103,7 +103,24 @@ type ChapterText struct {
 	// SourceDocumentVersionID is the version whose normalized text the chapter's
 	// offsets index. It is what an evidence row names.
 	SourceDocumentVersionID string
-	Text                    string
+	// Text is the chapter's own slice of the version's text.
+	Text string
+	// BaseOffset is where that slice begins in the VERSION's text.
+	//
+	// Two coordinate systems meet here, and conflating them was a real defect. A
+	// chapter's offsets are relative to the version, so the slice this reader
+	// returns begins at chapter.StartOffset in the version and at zero within
+	// itself. The offsets that go into evidence must be version-relative, because
+	// DOMAIN_MODEL section 6.6 says the passage is read back "通过 offset 从规范化文本
+	// 读取" — and the reader that does that reads the version, not the chapter. A
+	// span found inside Text is therefore chapter local, and the service adds
+	// BaseOffset before writing it.
+	//
+	// Without this field the two systems agree only when a chapter starts at zero,
+	// which is what a single-chapter fixture produces. That is how the defect
+	// survived a green suite: with one chapter at offset 0 the addition was a
+	// no-op and its absence was invisible.
+	BaseOffset int
 	// Language of the document, where known.
 	Language string
 }

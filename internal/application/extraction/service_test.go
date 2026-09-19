@@ -2,6 +2,8 @@ package extraction
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"strings"
 	"testing"
@@ -150,11 +152,22 @@ func (r fixedReader) ChapterWithText(_ context.Context, chapterID string) (Chapt
 	if r.chapter.ID != chapterID {
 		return ChapterText{}, story.NotFoundError()
 	}
+	// The base is taken from the chapter, exactly as the real reader takes it.
+	// Setting it here from a constant instead would let this fake and the
+	// production adapter disagree about where the chapter begins, which is the
+	// class of divergence a fake is most likely to introduce: the real one is
+	// covered by the desktop tests, and a fake that computed the base differently
+	// would make the extraction tests green about a case that cannot happen.
+	base := r.chapter.StartOffset
+	if base < 0 {
+		base = 0
+	}
 	return ChapterText{
 		Chapter:                 r.chapter,
 		ProjectID:               r.project,
 		SourceDocumentVersionID: r.version,
 		Text:                    r.text,
+		BaseOffset:              base,
 		Language:                "zh",
 	}, nil
 }
@@ -189,6 +202,10 @@ const (
 	// with — enough for a character, a location and one more — and every one of
 	// them appears in the text at an offset the evidence can point at.
 	testText = "米拉走进大厅。阿艾看见了第三个人。黄昏降临了。"
+	// testChapterBase is where the chapter starts in its version's text. Non-zero
+	// on purpose: it is what makes a chapter-local span and a version-absolute one
+	// two different numbers, so a missing shift fails rather than passing.
+	testChapterBase = 1000
 )
 
 func newHarness(t *testing.T, mode MockMode) *testHarness {
@@ -206,11 +223,16 @@ func newHarness(t *testing.T, mode MockMode) *testHarness {
 			SourceDocumentVersionID: testVersion,
 			Ordinal:                 1,
 			Title:                   "第一章",
-			StartOffset:             0,
-			EndOffset:               len([]rune(testText)),
-			SourceKind:              story.ChapterFromPattern,
-			Status:                  story.ChapterConfirmed,
-			Revision:                1,
+			// A NON-ZERO start, so the chapter-local and version-absolute offset
+			// systems cannot coincidentally agree. With a start of zero the two are
+			// identical and a missing base shift is invisible — which is exactly how
+			// the coordinate defect this fixture now guards against survived a green
+			// suite.
+			StartOffset: testChapterBase,
+			EndOffset:   testChapterBase + len([]rune(testText)),
+			SourceKind:  story.ChapterFromPattern,
+			Status:      story.ChapterConfirmed,
+			Revision:    1,
 		},
 		project: testProject,
 		version: testVersion,
@@ -325,40 +347,71 @@ func TestExtractionWritesCandidatesAndEvidence(t *testing.T) {
 		if source.StartOffset == nil || source.EndOffset == nil {
 			continue
 		}
-		// The offsets index the chapter text, so reading that range must return a
-		// passage that the proposed name appears in.
-		runes := []rune(testText)
-		if *source.StartOffset < 0 || *source.EndOffset > len(runes) || *source.StartOffset > *source.EndOffset {
-			t.Fatalf("evidence offsets %d..%d are outside the chapter", *source.StartOffset, *source.EndOffset)
+		// The offsets index the VERSION's normalized text — that is what section
+		// 6.6 says the reader uses to show the passage, and the field the row
+		// names is source_document_version_id. So the range is checked against the
+		// version, reconstructed here as the chapter's own text preceded by the
+		// characters that come before it.
+		//
+		// The first draft of this assertion checked the range against the CHAPTER,
+		// which is why a chapter-local offset looked correct: it was compared with
+		// the wrong text, so both sides of the comparison were wrong together. The
+		// base being non-zero is what makes the two texts different.
+		versionRunes := append([]rune(strings.Repeat("序", testChapterBase)), []rune(testText)...)
+		if *source.StartOffset < 0 || *source.EndOffset > len(versionRunes) || *source.StartOffset > *source.EndOffset {
+			t.Fatalf("evidence offsets %d..%d are outside the version's text, which holds %d characters",
+				*source.StartOffset, *source.EndOffset, len(versionRunes))
 		}
-		excerpt := string(runes[*source.StartOffset:*source.EndOffset])
+		excerpt := string(versionRunes[*source.StartOffset:*source.EndOffset])
 		if strings.TrimSpace(excerpt) == "" {
 			t.Fatalf("evidence offsets %d..%d point at nothing", *source.StartOffset, *source.EndOffset)
+		}
+		// And the range must be inside the chapter, not merely inside the version:
+		// an offset that landed in the text before the chapter would be a citation
+		// from a passage this extraction never read.
+		if *source.StartOffset < testChapterBase {
+			t.Fatalf("evidence offset %d is before the chapter, which starts at %d — the span is not in version coordinates",
+				*source.StartOffset, testChapterBase)
 		}
 	}
 }
 
 // TestEvidenceOffsetsAreCharactersNotBytes is the offset rule, tested where it
 // would go wrong: Chinese text, where a byte offset is three times a character
-// offset and the two agree only at the start of the text.
+// offset.
+//
+// The bounds are checked against the VERSION, because that is the text the
+// offsets index. An earlier version of this test compared against the chapter and
+// so would have accepted any offset up to the chapter's length — the wrong
+// comparison, agreeing with the wrong write. The base is non-zero, which is what
+// makes a byte offset distinguishable from a rune one here: at a base of zero the
+// first name's byte and rune offsets are both zero and the distinction vanishes.
 func TestEvidenceOffsetsAreCharactersNotBytes(t *testing.T) {
 	harness := newHarness(t, MockNormal)
 	if _, err := harness.service.ExtractChapterEventCandidates(context.Background(), testChapter); err != nil {
 		t.Fatal(err)
 	}
-	runes := []rune(testText)
+	// The version's text as the reader would produce it: whatever precedes the
+	// chapter, then the chapter's own slice.
+	versionRunes := append([]rune(strings.Repeat("序", testChapterBase)), []rune(testText)...)
 	spanned := 0
 	for _, source := range harness.story.factSources {
 		if source.StartOffset == nil || source.EndOffset == nil {
 			continue
 		}
 		spanned++
-		// The slice must be valid rune arithmetic. A byte offset used as a rune
-		// index would land past the end for the third name in this text, so the
-		// bound check below is what catches it.
-		if *source.EndOffset > len(runes) {
-			t.Fatalf("an offset of %d exceeds the chapter's %d characters, so a byte offset was used as a rune offset",
-				*source.EndOffset, len(runes))
+		// The offsets must be valid rune positions in the version. A byte offset
+		// used as a rune index would overshoot for a name late in the chapter —
+		// three times its rune position, plus the base — so the bound below is what
+		// catches it, and the chapter's own range is what makes the check exact
+		// rather than merely plausible.
+		if *source.EndOffset > len(versionRunes) {
+			t.Fatalf("an offset of %d exceeds the version's %d characters, so a byte offset was used as a rune offset",
+				*source.EndOffset, len(versionRunes))
+		}
+		if *source.StartOffset < testChapterBase || *source.EndOffset > testChapterBase+len([]rune(testText)) {
+			t.Fatalf("the span %d..%d is not inside the chapter's range %d..%d",
+				*source.StartOffset, *source.EndOffset, testChapterBase, testChapterBase+len([]rune(testText)))
 		}
 	}
 	if spanned == 0 {
@@ -701,43 +754,77 @@ func TestExtractionStoresAliasesAndParticipation(t *testing.T) {
 }
 
 // TestFindSpanIsCharactersAndAbsenceIsRecorded covers the offset helper directly,
-// including the case where the proposed name is not in the text.
+// including the coordinate system it returns in.
+//
+// The returned span is VERSION-absolute, not chapter-local: the caller passes the
+// chapter's base and the helper adds it. That distinction is the whole point of
+// the base argument, and a chapter starting at zero would hide it, so these cases
+// all use a non-zero base.
 func TestFindSpanIsCharactersAndAbsenceIsRecorded(t *testing.T) {
-	text := "米拉走进大厅"
-	// 米 is the first character, so its span is 0..1.
-	first := findSpan(text, "米拉")
-	if first.start == nil || *first.start != 0 || *first.end != 2 {
-		t.Fatalf("the first name resolved to %+v, want 0..2", first)
+	const text = "米拉走进大厅"
+	const base = 1000
+	// 米 is the first character of the chapter, which is at 1000 in the version.
+	first := findSpan(text, "米拉", base)
+	if first.start == nil || *first.start != base || *first.end != base+2 {
+		t.Fatalf("the first name resolved to %+v, want %d..%d", first, base, base+2)
 	}
 	// A name that appears TWICE resolves to its first appearance. The choice
 	// matters: a later occurrence is inside a different passage, and evidence
 	// pointing at the wrong passage is a citation that does not support the fact
 	// it is attached to. This case is here because a mutation swapping first for
 	// last left the whole suite green until it existed.
-	repeated := findSpan("米拉说。米拉又离开了。", "米拉")
-	if repeated.start == nil || *repeated.start != 0 || *repeated.end != 2 {
-		t.Fatalf("a repeated name resolved to %v, want its first appearance at 0", repeated.start)
+	repeated := findSpan("米拉说。米拉又离开了。", "米拉", base)
+	if repeated.start == nil || *repeated.start != base {
+		t.Fatalf("a repeated name resolved to %v, want its first appearance at %d", repeated.start, base)
 	}
-	// 大厅 starts at character 4. A byte offset would say 12.
-	last := findSpan(text, "大厅")
-	if last.start == nil || *last.start != 4 {
-		t.Fatalf("a later name resolved to %v, want 4 — a byte offset would be 12", last.start)
+	// 大厅 starts at character 4 of the chapter, so at base+4 of the version. A
+	// byte offset would say base+12.
+	last := findSpan(text, "大厅", base)
+	if last.start == nil || *last.start != base+4 {
+		t.Fatalf("a later name resolved to %v, want %d — a byte offset would be %d", last.start, base+4, base+12)
+	}
+	// A base of zero is the degenerate case the defect hid behind, so it is
+	// checked to keep working: there the two systems agree by construction.
+	atZero := findSpan(text, "米拉", 0)
+	if atZero.start == nil || *atZero.start != 0 {
+		t.Fatalf("a zero base resolved to %v, want 0", atZero.start)
 	}
 	// A name the text does not contain has no span rather than a guessed one.
-	absent := findSpan(text, "不存在")
+	absent := findSpan(text, "不存在", base)
 	if absent.start != nil || absent.end != nil {
 		t.Fatalf("an absent name gained a span: %+v", absent)
 	}
 	// The empty name has none either.
-	if span := findSpan(text, "   "); span.start != nil {
+	if blank := findSpan(text, "   ", base); blank.start != nil {
 		t.Fatal("a blank name gained a span")
 	}
-	// The span hashes the passage, and the hash changes when the text does.
-	hash := excerptHash(text, first)
-	if hash == "" || hash == excerptHash(text, last) {
-		t.Fatalf("two different passages hashed the same: %q", hash)
+
+	// The hash covers the passage the offsets point at, so it must be computed
+	// with the base subtracted. Hashing the untranslated range would read the
+	// wrong passage for any chapter not starting at zero — the same confusion in
+	// a second place — so the check is that the hash of a shifted span differs
+	// from the hash of an unshifted one and that a round trip recovers the text.
+	chapter := ChapterText{Text: text, BaseOffset: base}
+	hash := excerptHash(chapter, first)
+	if hash == "" {
+		t.Fatal("the passage hash is empty")
 	}
-	if excerptHash(text, absent) == excerptHash(text, first) {
+	if hash == excerptHash(chapter, last) {
+		t.Fatal("two different passages hashed the same")
+	}
+	// The hash of the passage must equal the hash of the text it names, which is
+	// what proves the base was subtracted rather than ignored.
+	expected := sha256.Sum256([]byte("米拉"))
+	if hash != hex.EncodeToString(expected[:]) {
+		t.Fatalf("the hash does not cover the passage the offsets name")
+	}
+	// A chapter that starts at zero cannot detect the mistake, so the zero-base
+	// case is asserted to agree with the general one rather than being skipped.
+	zeroChapter := ChapterText{Text: text, BaseOffset: 0}
+	if excerptHash(zeroChapter, findSpan(text, "米拉", 0)) != hash {
+		t.Fatal("the same passage hashed differently at base 0, so the base is not being applied consistently")
+	}
+	if excerptHash(chapter, absent) == hash {
 		t.Fatal("a whole-chapter hash matched a passage hash")
 	}
 }

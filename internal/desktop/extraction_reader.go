@@ -68,11 +68,25 @@ func (r *chapterTextReader) ChapterWithText(ctx context.Context, chapterID strin
 	if err != nil {
 		return appextraction.ChapterText{}, err
 	}
+	// The chapter's start offset is reported as the base, because the text above
+	// begins there in the version. Anything the extraction locates inside that
+	// text is therefore chapter local and has to be shifted by this much before it
+	// can be stored as evidence — section 6.6's offsets index the version.
+	//
+	// A negative start cannot survive import (the schema's CHECK is >= 0), but the
+	// value is clamped anyway rather than trusted: a negative base would shift a
+	// span below zero and the evidence write would be refused with a message about
+	// offsets rather than about the row that was actually wrong.
+	baseOffset := chapter.StartOffset
+	if baseOffset < 0 {
+		baseOffset = 0
+	}
 	return appextraction.ChapterText{
 		Chapter:                 chapter,
 		ProjectID:               document.ProjectID,
 		SourceDocumentVersionID: version.ID,
 		Text:                    text,
+		BaseOffset:              baseOffset,
 		Language:                languageOf(document.Name, chapter.Title),
 	}, nil
 }
