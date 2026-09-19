@@ -13,6 +13,8 @@ import (
 	"context"
 	"time"
 
+	eventsapp "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/events"
+	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/event"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/staleness"
 )
 
@@ -107,6 +109,24 @@ type DependentFinder interface {
 	FindDependents(ctx context.Context, artifactType, upstreamType staleness.ArtifactType, upstreamID string) ([]DependentRef, error)
 }
 
+// EventRecorder builds and writes domain events for the commands that emit them.
+//
+// Two paths, and the difference is deliberate (ADR-0009):
+//
+//   - Build assembles an event for a command that records it inside its own
+//     transaction. An approval uses this, and refuses without a recorder,
+//     because its event is a governance record rather than a notification.
+//   - RecordBestEffort writes a notification event and reports no error. The
+//     command's own write has already succeeded, so failing it because the
+//     announcement did not land would be the wrong trade.
+//
+// The port is optional: a Service composed without a recorder still serves every
+// command, and only the transactional path refuses.
+type EventRecorder interface {
+	Build(ctx context.Context, draft eventsapp.Draft) (event.Event, error)
+	RecordBestEffort(ctx context.Context, draft eventsapp.Draft)
+}
+
 // Service holds the staleness commands and queries.
 type Service struct {
 	marks      MarkRepository
@@ -114,6 +134,7 @@ type Service struct {
 	projects   ProjectEntityResolver
 	clock      Clock
 	ids        IDGenerator
+	events     EventRecorder
 }
 
 // Options configures a Service.
@@ -128,4 +149,6 @@ type Options struct {
 	Projects ProjectEntityResolver
 	Clock    Clock
 	IDs      IDGenerator
+	// Events enables the propagation to announce the marks it wrote.
+	Events EventRecorder
 }

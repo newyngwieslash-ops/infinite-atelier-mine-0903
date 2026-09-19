@@ -11,6 +11,9 @@ package workflow
 
 import (
 	"context"
+
+	eventsapp "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/events"
+	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/event"
 	"time"
 
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/versioning"
@@ -99,6 +102,24 @@ type EventRepository interface {
 	ListEvents(ctx context.Context, workflowRunID string) ([]workflow.WorkflowEvent, error)
 }
 
+// EventRecorder builds and writes domain events for the commands that emit them.
+//
+// Two paths, and the difference is deliberate (ADR-0009):
+//
+//   - Build assembles an event for a command that records it inside its own
+//     transaction. An approval uses this, and refuses without a recorder,
+//     because its event is a governance record rather than a notification.
+//   - RecordBestEffort writes a notification event and reports no error. The
+//     command's own write has already succeeded, so failing it because the
+//     announcement did not land would be the wrong trade.
+//
+// The port is optional: a Service composed without a recorder still serves every
+// command, and only the transactional path refuses.
+type EventRecorder interface {
+	Build(ctx context.Context, draft eventsapp.Draft) (event.Event, error)
+	RecordBestEffort(ctx context.Context, draft eventsapp.Draft)
+}
+
 // Service holds the workflow commands and queries.
 type Service struct {
 	runs      RunRepository
@@ -108,6 +129,7 @@ type Service struct {
 	events    EventRepository
 	clock     Clock
 	ids       IDGenerator
+	recorder  EventRecorder
 }
 
 // Options configures a Service.
@@ -119,4 +141,7 @@ type Options struct {
 	Events    EventRepository
 	Clock     Clock
 	IDs       IDGenerator
+	// Recorder enables the section 17 domain events. A nil value leaves the
+	// commands working and their announcements unwritten.
+	Recorder EventRecorder
 }

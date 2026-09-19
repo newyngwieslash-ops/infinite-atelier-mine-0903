@@ -7,7 +7,9 @@ import (
 	"context"
 	"time"
 
+	eventsapp "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/events"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/asset"
+	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/event"
 )
 
 // Clock abstracts time so tests are deterministic.
@@ -60,11 +62,30 @@ type Repository interface {
 	CountUsages(ctx context.Context, versionID string) (int, error)
 }
 
+// EventRecorder builds and writes domain events for the commands that emit them.
+//
+// Two paths, and the difference is deliberate (ADR-0009):
+//
+//   - Build assembles an event for a command that records it inside its own
+//     transaction. An approval uses this, and refuses without a recorder,
+//     because its event is a governance record rather than a notification.
+//   - RecordBestEffort writes a notification event and reports no error. The
+//     command's own write has already succeeded, so failing it because the
+//     announcement did not land would be the wrong trade.
+//
+// The port is optional: a Service composed without a recorder still serves every
+// command, and only the transactional path refuses.
+type EventRecorder interface {
+	Build(ctx context.Context, draft eventsapp.Draft) (event.Event, error)
+	RecordBestEffort(ctx context.Context, draft eventsapp.Draft)
+}
+
 // Service holds the asset commands and queries.
 type Service struct {
 	repository Repository
 	clock      Clock
 	ids        IDGenerator
+	events     EventRecorder
 }
 
 // Options configures a Service.
@@ -72,16 +93,31 @@ type Options struct {
 	Repository Repository
 	Clock      Clock
 	IDs        IDGenerator
+	// Events enables the commands that announce an asset version change.
+	Events EventRecorder
 }
 
 // NewService builds the asset service.
 func NewService(options Options) *Service {
-	return &Service{repository: options.Repository, clock: options.Clock, ids: options.IDs}
+	return &Service{repository: options.Repository, clock: options.Clock, ids: options.IDs, events: options.Events}
 }
 
 // Available reports whether the service can operate.
 func (s *Service) Available() bool {
 	return s != nil && s.repository != nil && s.ids != nil
+}
+
+// recordEvent announces something that happened, if the service has a recorder.
+//
+// The nil check is not defensive padding: the recorder is an interface, so a
+// Service composed without one holds a nil interface and calling a method on it
+// panics. This is the one place that check lives, so no emit site has to repeat
+// it and no emit site can forget it.
+func (s *Service) recordEvent(ctx context.Context, draft eventsapp.Draft) {
+	if s == nil || s.events == nil {
+		return
+	}
+	s.events.RecordBestEffort(ctx, draft)
 }
 
 func (s *Service) now() time.Time {
@@ -147,6 +183,15 @@ func (s *Service) CreateAsset(ctx context.Context, request CreateAssetRequest) (
 		// rather than presenting an asset nothing can use.
 		return record, asset.Version{}, err
 	}
+	// Section 17's AssetVersionCreated. Best effort: the asset and its first
+	// version are committed, so the caller must not be told the command failed
+	// because the announcement did not land.
+	s.recordEvent(ctx, eventsapp.Draft{
+		Type:          event.AssetVersionCreated,
+		AggregateType: event.AggregateAsset,
+		AggregateID:   record.ID,
+		ProjectID:     record.ProjectID,
+	})
 	return record, version, nil
 }
 

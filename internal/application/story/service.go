@@ -2,6 +2,8 @@ package story
 
 import (
 	"context"
+	eventsapp "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/events"
+	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/event"
 	"strings"
 	"time"
 
@@ -10,13 +12,26 @@ import (
 
 // NewService builds the story service.
 func NewService(options Options) *Service {
-	return &Service{repository: options.Repository, clock: options.Clock, ids: options.IDs}
+	return &Service{repository: options.Repository, clock: options.Clock, ids: options.IDs, events: options.Events}
 }
 
 // Available reports whether the service can operate. An unattached binding
 // fails closed rather than panicking.
 func (s *Service) Available() bool {
 	return s != nil && s.repository != nil && s.ids != nil
+}
+
+// recordEvent announces something that happened, if the service has a recorder.
+//
+// The nil check is not defensive padding: the recorder is an interface, so a
+// Service composed without one holds a nil interface and calling a method on it
+// panics. This is the one place that check lives, so no emit site has to repeat
+// it and no emit site can forget it.
+func (s *Service) recordEvent(ctx context.Context, draft eventsapp.Draft) {
+	if s == nil || s.events == nil {
+		return
+	}
+	s.events.RecordBestEffort(ctx, draft)
 }
 
 func (s *Service) now() time.Time {
@@ -70,6 +85,13 @@ func (s *Service) CreateSourceDocument(ctx context.Context, request CreateSource
 	if err := s.repository.CreateSourceDocument(ctx, record); err != nil {
 		return storydomain.SourceDocument{}, err
 	}
+	// Section 17's SourceDocumentImported. Best effort: the row is committed, so the caller must not be told the command failed because the announcement did not land.
+	s.recordEvent(ctx, eventsapp.Draft{
+		Type:          event.SourceDocumentImported,
+		AggregateType: event.AggregateSourceDocument,
+		AggregateID:   record.ID,
+		ProjectID:     record.ProjectID,
+	})
 	return record, nil
 }
 
@@ -316,6 +338,13 @@ func (s *Service) CreateStoryEntity(ctx context.Context, request CreateStoryEnti
 	if err := s.repository.CreateStoryEntity(ctx, record); err != nil {
 		return storydomain.StoryEntity{}, err
 	}
+	// Section 17's StoryFactAccepted. Best effort: the row is committed, so the caller must not be told the command failed because the announcement did not land.
+	s.recordEvent(ctx, eventsapp.Draft{
+		Type:          event.StoryFactAccepted,
+		AggregateType: event.AggregateStoryEntity,
+		AggregateID:   record.ID,
+		ProjectID:     record.ProjectID,
+	})
 	return record, nil
 }
 
@@ -474,6 +503,13 @@ func (s *Service) CreateStoryEvent(ctx context.Context, request CreateStoryEvent
 	if err := s.repository.CreateStoryEvent(ctx, record); err != nil {
 		return storydomain.StoryEvent{}, err
 	}
+	// Section 17's StoryFactAccepted. Best effort: the row is committed, so the caller must not be told the command failed because the announcement did not land.
+	s.recordEvent(ctx, eventsapp.Draft{
+		Type:          event.StoryFactAccepted,
+		AggregateType: event.AggregateStoryEvent,
+		AggregateID:   record.ID,
+		ProjectID:     record.ProjectID,
+	})
 	return record, nil
 }
 
@@ -632,6 +668,13 @@ func (s *Service) OpenConflict(ctx context.Context, request OpenConflictRequest)
 	if err := s.repository.CreateStoryConflict(ctx, record); err != nil {
 		return storydomain.StoryFactConflict{}, err
 	}
+	// Section 17's StoryFactConflictOpened. Best effort: the row is committed, so the caller must not be told the command failed because the announcement did not land.
+	s.recordEvent(ctx, eventsapp.Draft{
+		Type:          event.StoryFactConflictOpened,
+		AggregateType: event.AggregateStoryConflict,
+		AggregateID:   record.ID,
+		ProjectID:     record.ProjectID,
+	})
 	return record, nil
 }
 

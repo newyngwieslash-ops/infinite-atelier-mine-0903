@@ -153,6 +153,7 @@ type SettingsRepository interface {
 // is refused, because the governance record is what a later audit reads.
 type EventRecorder interface {
 	Build(ctx context.Context, draft eventsapp.Draft) (event.Event, error)
+	RecordBestEffort(ctx context.Context, draft eventsapp.Draft)
 }
 
 type Service struct {

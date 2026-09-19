@@ -155,6 +155,15 @@ func (s *Service) CreateDramaProject(ctx context.Context, request CreateDramaPro
 			return record, err
 		}
 	}
+	// Section 17's ProjectCreated. Best effort: the project, its settings and its
+	// canvas are committed, so the caller must not be told the command failed
+	// because the announcement did not land.
+	s.recordEvent(ctx, eventsapp.Draft{
+		Type:          event.ProjectCreated,
+		AggregateType: event.AggregateProject,
+		AggregateID:   record.ID,
+		ProjectID:     record.ID,
+	})
 	return record, nil
 }
 
@@ -224,6 +233,13 @@ func (s *Service) UpdateSettings(ctx context.Context, request UpdateSettingsRequ
 		return project.Settings{}, err
 	}
 	record.Revision = request.Revision + 1
+	// Section 17's ProjectSettingsChanged. Best effort: the row is committed, so the caller must not be told the command failed because the announcement did not land.
+	s.recordEvent(ctx, eventsapp.Draft{
+		Type:          event.ProjectSettingsChanged,
+		AggregateType: event.AggregateProject,
+		AggregateID:   record.ProjectID,
+		ProjectID:     record.ProjectID,
+	})
 	return record, nil
 }
 
@@ -382,6 +398,13 @@ func (s *Service) UpdateRule(ctx context.Context, request UpdateRuleRequest) (pr
 		return project.Rule{}, err
 	}
 	record.Revision = request.Revision + 1
+	// Section 17's ProjectRuleLocked. Best effort: the row is committed, so the caller must not be told the command failed because the announcement did not land.
+	s.recordEvent(ctx, eventsapp.Draft{
+		Type:          event.ProjectRuleLocked,
+		AggregateType: event.AggregateProject,
+		AggregateID:   record.ProjectID,
+		ProjectID:     record.ProjectID,
+	})
 	return record, nil
 }
 

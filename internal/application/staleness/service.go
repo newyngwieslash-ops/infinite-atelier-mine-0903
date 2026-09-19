@@ -2,6 +2,8 @@ package staleness
 
 import (
 	"context"
+	eventsapp "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/events"
+	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/event"
 	"strings"
 	"time"
 
@@ -17,6 +19,7 @@ func NewService(options Options) *Service {
 		projects:   options.Projects,
 		clock:      options.Clock,
 		ids:        options.IDs,
+		events:     options.Events,
 	}
 }
 
@@ -24,6 +27,19 @@ func NewService(options Options) *Service {
 // unattached binding fails closed rather than panicking.
 func (s *Service) Available() bool {
 	return s != nil && s.marks != nil && s.dependents != nil && s.ids != nil
+}
+
+// recordEvent announces something that happened, if the service has a recorder.
+//
+// The nil check is not defensive padding: the recorder is an interface, so a
+// Service composed without one holds a nil interface and calling a method on it
+// panics. This is the one place that check lives, so no emit site has to repeat
+// it and no emit site can forget it.
+func (s *Service) recordEvent(ctx context.Context, draft eventsapp.Draft) {
+	if s == nil || s.events == nil {
+		return
+	}
+	s.events.RecordBestEffort(ctx, draft)
 }
 
 func (s *Service) now() time.Time {
@@ -84,6 +100,15 @@ func (s *Service) MarkStale(ctx context.Context, request MarkStaleRequest) (stal
 	if err := s.marks.UpsertMark(ctx, mark, s.now()); err != nil {
 		return staleness.Mark{}, err
 	}
+	// Section 17's ArtifactMarkedStale. Best effort: the row is committed,
+	// so the caller must not be told the command failed because the
+	// announcement did not land.
+	s.recordEvent(ctx, eventsapp.Draft{
+		Type:          event.ArtifactMarkedStale,
+		AggregateType: event.AggregateStaleness,
+		AggregateID:   mark.ArtifactID,
+		ProjectID:     mark.ProjectID,
+	})
 	return mark, nil
 }
 

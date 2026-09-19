@@ -5,6 +5,8 @@ import (
 	"strings"
 	"time"
 
+	eventsapp "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/events"
+	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/event"
 	scriptdomain "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/script"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/versioning"
 )
@@ -18,6 +20,19 @@ func NewService(options Options) *Service {
 // fails closed rather than panicking.
 func (s *Service) Available() bool {
 	return s != nil && s.repository != nil && s.ids != nil
+}
+
+// recordEvent announces something that happened, if the service has a recorder.
+//
+// The nil check is not defensive padding: the recorder is an interface, so a
+// Service composed without one holds a nil interface and calling a method on it
+// panics. This is the one place that check lives, so no emit site has to repeat
+// it and no emit site can forget it.
+func (s *Service) recordEvent(ctx context.Context, draft eventsapp.Draft) {
+	if s == nil || s.events == nil {
+		return
+	}
+	s.events.RecordBestEffort(ctx, draft)
 }
 
 func (s *Service) now() time.Time {
@@ -84,6 +99,15 @@ func (s *Service) CreateEpisode(ctx context.Context, request CreateEpisodeReques
 	if err := s.repository.CreateEpisode(ctx, record); err != nil {
 		return scriptdomain.Episode{}, err
 	}
+	// Section 17's EpisodeCreated. Best effort: the episode is committed and the
+	// caller must not be told the command failed because the announcement did
+	// not land. ADR-0009 records why this is not the transactional path.
+	s.recordEvent(ctx, eventsapp.Draft{
+		Type:          event.EpisodeCreated,
+		AggregateType: event.AggregateEpisode,
+		AggregateID:   record.ID,
+		ProjectID:     record.ProjectID,
+	})
 	return record, nil
 }
 

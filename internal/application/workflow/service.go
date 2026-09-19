@@ -2,6 +2,8 @@ package workflow
 
 import (
 	"context"
+	eventsapp "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/events"
+	domainevent "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/event"
 	"strings"
 	"time"
 
@@ -37,11 +39,24 @@ func NewService(options Options) *Service {
 		events:    options.Events,
 		clock:     options.Clock,
 		ids:       options.IDs,
+		recorder:  options.Recorder,
 	}
 }
 
 // Available reports whether the service has the dependencies it needs. An
 // unattached binding fails closed rather than panicking.
+// recordEvent announces something that happened, if the service has a recorder.
+//
+// The nil check is not defensive padding: the recorder is an interface, so a
+// Service composed without one holds a nil interface and calling a method on it
+// panics. This is the one place that check lives.
+func (s *Service) recordEvent(ctx context.Context, draft eventsapp.Draft) {
+	if s == nil || s.recorder == nil {
+		return
+	}
+	s.recorder.RecordBestEffort(ctx, draft)
+}
+
 func (s *Service) Available() bool {
 	return s != nil && s.runs != nil && s.stages != nil && s.reviews != nil && s.decisions != nil && s.events != nil && s.ids != nil
 }
@@ -129,6 +144,17 @@ func (s *Service) CreateRun(ctx context.Context, request CreateRunRequest) (work
 	if err := s.runs.CreateRun(ctx, record, event); err != nil {
 		return workflow.WorkflowRun{}, err
 	}
+	// Section 17's WorkflowStarted, which is a domain event and a different
+	// thing from the workflow.WorkflowEvent written above: that one is the run's
+	// own audit row and commits with the run, while this one is addressed to
+	// whoever reads the project's stream. Best effort, because the run is
+	// already committed either way.
+	s.recordEvent(ctx, eventsapp.Draft{
+		Type:          domainevent.WorkflowStarted,
+		AggregateType: domainevent.AggregateWorkflow,
+		AggregateID:   record.ID,
+		ProjectID:     record.ProjectID,
+	})
 	return record, nil
 }
 

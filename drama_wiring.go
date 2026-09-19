@@ -69,6 +69,7 @@ func composeDrama(handle *database.Handle) *dramaWiring {
 			Repository: storyRepository,
 			Clock:      clock,
 			IDs:        ids,
+			Events:     eventService,
 		}),
 		script: appscript.NewService(appscript.Options{
 			Repository: scriptRepository,
@@ -93,6 +94,7 @@ func composeDrama(handle *database.Handle) *dramaWiring {
 			Events:    workflowRepository,
 			Clock:     clock,
 			IDs:       ids,
+			Recorder:  eventService,
 		}),
 		// The propagator needs the finder to resolve references and the project
 		// resolver to keep a mark inside the project that asked for it; both
@@ -103,6 +105,7 @@ func composeDrama(handle *database.Handle) *dramaWiring {
 			Projects:   database.NewProjectResolver(connection),
 			Clock:      clock,
 			IDs:        ids,
+			Events:     eventService,
 		}),
 		// WP-04 shipped this service with no composition root, recording that
 		// it "exists for WP-05". This is that root.
@@ -110,6 +113,7 @@ func composeDrama(handle *database.Handle) *dramaWiring {
 			Repository: database.NewAssetRepository(connection),
 			Clock:      clock,
 			IDs:        ids,
+			Events:     eventService,
 		}),
 		events: eventService,
 	}
