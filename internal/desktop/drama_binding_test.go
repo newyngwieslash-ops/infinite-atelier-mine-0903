@@ -2428,3 +2428,54 @@ func (dramaTestRecorder) Build(_ context.Context, draft eventsapp.Draft) (event.
 }
 
 func (dramaTestRecorder) RecordBestEffort(_ context.Context, _ eventsapp.Draft) {}
+
+// The three methods the WP-06 story port additions require.
+func (s *dramaStore) GetSourceDocumentVersion(_ context.Context, id string) (storydomain.SourceDocumentVersion, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	version, ok := s.versions[id]
+	if !ok {
+		return storydomain.SourceDocumentVersion{}, storydomain.NotFoundError()
+	}
+	return version, nil
+}
+
+func (s *dramaStore) FindVersionBySourceHash(_ context.Context, projectID, sourceHash string) (storydomain.SourceDocumentVersion, string, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if sourceHash == "" {
+		return storydomain.SourceDocumentVersion{}, "", false, nil
+	}
+	for id, version := range s.versions {
+		if version.SourceHash != sourceHash {
+			continue
+		}
+		document, ok := s.documents[version.SourceDocumentID]
+		if !ok || document.ProjectID != projectID {
+			continue
+		}
+		return s.versions[id], document.Name, true, nil
+	}
+	return storydomain.SourceDocumentVersion{}, "", false, nil
+}
+
+func (s *dramaStore) ConfirmChapters(_ context.Context, sourceDocumentVersionID string, record event.Event) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.failNext != nil {
+		return s.failNext
+	}
+	for id, chapter := range s.chapters {
+		if chapter.SourceDocumentVersionID != sourceDocumentVersionID {
+			continue
+		}
+		if chapter.Status != storydomain.ChapterDetected {
+			continue
+		}
+		chapter.Status = storydomain.ChapterConfirmed
+		chapter.Revision++
+		s.chapters[id] = chapter
+	}
+	s.recorded = append(s.recorded, record)
+	return nil
+}

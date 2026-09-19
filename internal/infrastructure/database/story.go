@@ -3,8 +3,10 @@ package database
 import (
 	"context"
 	"database/sql"
+	"strings"
 
 	storyapp "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/story"
+	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/event"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/story"
 )
 
@@ -125,9 +127,9 @@ func (r *StoryRepository) UpdateSourceDocument(ctx context.Context, record story
 	return nil
 }
 
-const sourceDocumentVersionSelectColumns = `SELECT id, source_document_id, version_number, physical_file_id,
-	normalized_text_file_id, content_hash, mime_type, encoding, char_count, import_metadata_json,
-	created_by_type, created_at FROM source_document_versions`
+const sourceDocumentVersionSelectColumns = `SELECT id, source_document_id, version_number, source_hash,
+	physical_file_id, normalized_text_file_id, content_hash, mime_type, encoding, char_count,
+	import_metadata_json, created_by_type, created_at FROM source_document_versions`
 
 // CreateSourceDocumentVersion stores one import of a document.
 func (r *StoryRepository) CreateSourceDocumentVersion(ctx context.Context, version story.SourceDocumentVersion) error {
@@ -136,10 +138,11 @@ func (r *StoryRepository) CreateSourceDocumentVersion(ctx context.Context, versi
 		return storageError("STORY_STORE_UNAVAILABLE", "The story store is unavailable.", nil)
 	}
 	_, err := conn.ExecContext(ctx, `INSERT INTO source_document_versions
-		(id, source_document_id, version_number, physical_file_id, normalized_text_file_id, content_hash,
+		(id, source_document_id, version_number, source_hash, physical_file_id, normalized_text_file_id, content_hash,
 		 mime_type, encoding, char_count, import_metadata_json, created_by_type, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		version.ID, version.SourceDocumentID, version.VersionNumber, version.PhysicalFileID,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		version.ID, version.SourceDocumentID, version.VersionNumber, version.SourceHash,
+		version.PhysicalFileID,
 		version.NormalizedTextFileID, version.ContentHash, version.MIMEType, version.Encoding,
 		version.CharCount, version.ImportMetadataJSON, string(version.CreatedByType),
 		formatTime(version.CreatedAt))
@@ -176,7 +179,7 @@ func (r *StoryRepository) MaxSourceDocumentVersionNumber(ctx context.Context, so
 }
 
 const chapterSelectColumns = `SELECT id, source_document_version_id, ordinal, title, start_offset, end_offset,
-	content_hash, status, created_at, updated_at, revision FROM chapters`
+	content_hash, source_kind, status, created_at, updated_at, revision FROM chapters`
 
 // CreateChapter stores a chapter of a document version.
 func (r *StoryRepository) CreateChapter(ctx context.Context, chapter story.Chapter) error {
@@ -185,11 +188,11 @@ func (r *StoryRepository) CreateChapter(ctx context.Context, chapter story.Chapt
 		return storageError("STORY_STORE_UNAVAILABLE", "The story store is unavailable.", nil)
 	}
 	_, err := conn.ExecContext(ctx, `INSERT INTO chapters
-		(id, source_document_version_id, ordinal, title, start_offset, end_offset, content_hash, status,
+		(id, source_document_version_id, ordinal, title, start_offset, end_offset, content_hash, source_kind, status,
 		 created_at, updated_at, revision)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		chapter.ID, chapter.SourceDocumentVersionID, chapter.Ordinal, chapter.Title,
-		chapter.StartOffset, chapter.EndOffset, chapter.ContentHash, string(chapter.Status),
+		chapter.StartOffset, chapter.EndOffset, chapter.ContentHash, string(chapter.SourceKind), string(chapter.Status),
 		formatTime(chapter.CreatedAt), formatTime(chapter.UpdatedAt), chapter.Revision)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -558,12 +561,13 @@ func scanSourceDocuments(rows *sql.Rows) ([]story.SourceDocument, error) {
 // scanChapter reads one chapter row.
 func scanChapter(row rowScanner) (story.Chapter, error) {
 	var chapter story.Chapter
-	var status, createdAt, updatedAt string
+	var sourceKind, status, createdAt, updatedAt string
 	if err := row.Scan(&chapter.ID, &chapter.SourceDocumentVersionID, &chapter.Ordinal, &chapter.Title,
-		&chapter.StartOffset, &chapter.EndOffset, &chapter.ContentHash, &status, &createdAt, &updatedAt,
+		&chapter.StartOffset, &chapter.EndOffset, &chapter.ContentHash, &sourceKind, &status, &createdAt, &updatedAt,
 		&chapter.Revision); err != nil {
 		return story.Chapter{}, err
 	}
+	chapter.SourceKind = story.ChapterSourceKind(sourceKind)
 	chapter.Status = story.ChapterStatus(status)
 	chapter.CreatedAt = parseTime(createdAt)
 	chapter.UpdatedAt = parseTime(updatedAt)
@@ -684,3 +688,155 @@ func scanStoryConflict(row rowScanner) (story.StoryFactConflict, error) {
 
 // Ensure the repository satisfies the application port.
 var _ storyapp.Repository = (*StoryRepository)(nil)
+
+// scanSourceDocumentVersion reads one version row.
+func scanSourceDocumentVersion(row rowScanner) (story.SourceDocumentVersion, error) {
+	var version story.SourceDocumentVersion
+	var createdByType, createdAt string
+	if err := row.Scan(&version.ID, &version.SourceDocumentID, &version.VersionNumber, &version.SourceHash,
+		&version.PhysicalFileID, &version.NormalizedTextFileID, &version.ContentHash, &version.MIMEType,
+		&version.Encoding, &version.CharCount, &version.ImportMetadataJSON, &createdByType,
+		&createdAt); err != nil {
+		return story.SourceDocumentVersion{}, err
+	}
+	version.CreatedByType = story.CreatedByType(createdByType)
+	version.CreatedAt = parseTime(createdAt)
+	return version, nil
+}
+
+// GetSourceDocumentVersion returns one version by id.
+func (r *StoryRepository) GetSourceDocumentVersion(ctx context.Context, id string) (story.SourceDocumentVersion, error) {
+	conn := r.conn()
+	if conn == nil {
+		return story.SourceDocumentVersion{}, storageError("STORY_STORE_UNAVAILABLE", "The story store is unavailable.", nil)
+	}
+	row := conn.QueryRowContext(ctx, sourceDocumentVersionSelectColumns+` WHERE id = ?`, id)
+	version, err := scanSourceDocumentVersion(row)
+	if err == sql.ErrNoRows {
+		return story.SourceDocumentVersion{}, story.NotFoundError()
+	}
+	if err != nil {
+		return story.SourceDocumentVersion{}, storageError("STORY_READ_FAILED", "The document version could not be read.", err)
+	}
+	return version, nil
+}
+
+// FindVersionBySourceHash returns the newest version in a project whose original
+// upload has this hash, with its document's name.
+//
+// The comparison is against source_hash rather than content_hash because PRD
+// FR-020's warning is about the FILE a user is importing, and the same file
+// re-exported with different line endings normalizes to a different content
+// hash. Nothing has a reason to match an empty hash: a pasted document has no
+// original file, so the caller is expected not to ask, and this refuses rather
+// than returning an arbitrary row.
+func (r *StoryRepository) FindVersionBySourceHash(ctx context.Context, projectID, sourceHash string) (story.SourceDocumentVersion, string, bool, error) {
+	conn := r.conn()
+	if conn == nil {
+		return story.SourceDocumentVersion{}, "", false, storageError("STORY_STORE_UNAVAILABLE", "The story store is unavailable.", nil)
+	}
+	if strings.TrimSpace(sourceHash) == "" {
+		return story.SourceDocumentVersion{}, "", false, nil
+	}
+	// The join carries the document's name so the caller can name what it found
+	// without a second read, and the project filter is what keeps the check
+	// inside one drama.
+	query := `SELECT ` + versionColumnsForJoin + `, source_documents.name
+		FROM source_document_versions
+		JOIN source_documents ON source_documents.id = source_document_versions.source_document_id
+		WHERE source_documents.project_id = ? AND source_document_versions.source_hash = ?
+		ORDER BY source_document_versions.created_at DESC, source_document_versions.id DESC
+		LIMIT 1`
+	row := conn.QueryRowContext(ctx, query, projectID, sourceHash)
+	var version story.SourceDocumentVersion
+	var documentName, createdByType, createdAt string
+	err := row.Scan(&version.ID, &version.SourceDocumentID, &version.VersionNumber, &version.SourceHash,
+		&version.PhysicalFileID, &version.NormalizedTextFileID, &version.ContentHash, &version.MIMEType,
+		&version.Encoding, &version.CharCount, &version.ImportMetadataJSON, &createdByType,
+		&createdAt, &documentName)
+	if err == sql.ErrNoRows {
+		return story.SourceDocumentVersion{}, "", false, nil
+	}
+	if err != nil {
+		return story.SourceDocumentVersion{}, "", false, storageError("STORY_READ_FAILED", "The imported documents could not be read.", err)
+	}
+	version.CreatedByType = story.CreatedByType(createdByType)
+	version.CreatedAt = parseTime(createdAt)
+	return version, documentName, true, nil
+}
+
+// ConfirmChapters marks a version's boundaries confirmed and records the
+// governance event in the same transaction.
+//
+// One transaction because the two are one act: a status change with no record of
+// who confirmed it, or a record of a confirmation that rolled back, are both
+// worse than a clean failure (ADR-0009).
+//
+// The UPDATE is guarded on status so an 'edited' boundary survives: a user who
+// changed a boundary already made a stronger statement than 'confirmed', and
+// overwriting the status would discard that.
+func (r *StoryRepository) ConfirmChapters(ctx context.Context, sourceDocumentVersionID string, record event.Event) error {
+	if r == nil || r.db == nil {
+		return storageError("STORY_STORE_UNAVAILABLE", "The story store is unavailable.", nil)
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return storageError("STORY_TX_FAILED", "The confirmation could not be started.", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+	conn := connection(r.db, tx)
+
+	if _, err := conn.ExecContext(ctx, `UPDATE chapters SET status = 'confirmed', updated_at = ?, revision = revision + 1
+		WHERE source_document_version_id = ? AND status = 'detected'`,
+		formatTime(record.OccurredAt), sourceDocumentVersionID); err != nil {
+		return storageError("STORY_WRITE_FAILED", "The chapters could not be confirmed.", err)
+	}
+	if err := insertDomainEvent(ctx, conn, record); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return storageError("STORY_TX_FAILED", "The confirmation could not be committed.", err)
+	}
+	committed = true
+	return nil
+}
+
+// versionColumnsForJoin is the version column list qualified for a join, so the
+// same columns can be read through source_documents without ambiguity.
+const versionColumnsForJoin = `source_document_versions.id, source_document_versions.source_document_id,
+	source_document_versions.version_number, source_document_versions.source_hash,
+	source_document_versions.physical_file_id, source_document_versions.normalized_text_file_id,
+	source_document_versions.content_hash, source_document_versions.mime_type, source_document_versions.encoding,
+	source_document_versions.char_count, source_document_versions.import_metadata_json,
+	source_document_versions.created_by_type, source_document_versions.created_at`
+
+// insertDomainEvent records a §17 event inside a caller's transaction.
+//
+// The version_approval path has its own copy of this statement because it writes
+// through a table name it composes; this one is shared by the story commands
+// that record an event with their change.
+func insertDomainEvent(ctx context.Context, conn querier, record event.Event) error {
+	_, err := conn.ExecContext(ctx, `INSERT INTO domain_events
+		(id, event_type, schema_version, aggregate_type, aggregate_id, project_id,
+		 occurred_at, trace_id, payload_json, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		record.EventID, string(record.EventType), record.SchemaVersion,
+		string(record.AggregateType), record.AggregateID, record.ProjectID,
+		formatTime(record.OccurredAt), record.TraceID, record.Payload,
+		formatTime(record.OccurredAt))
+	if err != nil {
+		if isUniqueViolation(err) {
+			return event.ConflictError("That event has already been recorded.")
+		}
+		if isForeignKeyViolation(err) {
+			return event.InvalidError("That project does not exist.")
+		}
+		return storageError("EVENT_WRITE_FAILED", "The event could not be recorded.", err)
+	}
+	return nil
+}

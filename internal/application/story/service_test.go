@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/event"
 	storydomain "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/story"
 )
 
@@ -43,6 +44,9 @@ type memoryStore struct {
 	chapters  map[string]storydomain.Chapter
 	entities  map[string]storydomain.StoryEntity
 	events    map[string]storydomain.StoryEvent
+	// recorded holds the domain events the story commands wrote, which is a
+	// different thing from the story events above.
+	recorded  []event.Event
 	relations map[string]storydomain.StoryRelation
 	conflicts map[string]storydomain.StoryFactConflict
 	// failCreate makes the next write fail, so a storage failure is testable.
@@ -768,4 +772,59 @@ func itoa(value int) string {
 		value /= 10
 	}
 	return digits
+}
+
+// The three methods the WP-06 port additions require. They mirror the real
+// repository's semantics rather than mocking them: a confirmation moves only
+// the boundaries that are still 'detected', and the event is written with them.
+func (s *memoryStore) GetSourceDocumentVersion(_ context.Context, id string) (storydomain.SourceDocumentVersion, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	version, ok := s.versions[id]
+	if !ok {
+		return storydomain.SourceDocumentVersion{}, storydomain.NotFoundError()
+	}
+	return version, nil
+}
+
+func (s *memoryStore) FindVersionBySourceHash(_ context.Context, projectID, sourceHash string) (storydomain.SourceDocumentVersion, string, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if sourceHash == "" {
+		return storydomain.SourceDocumentVersion{}, "", false, nil
+	}
+	for id, version := range s.versions {
+		if version.SourceHash != sourceHash {
+			continue
+		}
+		document, ok := s.documents[version.SourceDocumentID]
+		if !ok || document.ProjectID != projectID {
+			continue
+		}
+		return s.versions[id], document.Name, true, nil
+	}
+	return storydomain.SourceDocumentVersion{}, "", false, nil
+}
+
+func (s *memoryStore) ConfirmChapters(_ context.Context, sourceDocumentVersionID string, record event.Event) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.failCreate != nil {
+		return s.failCreate
+	}
+	for id, chapter := range s.chapters {
+		if chapter.SourceDocumentVersionID != sourceDocumentVersionID {
+			continue
+		}
+		// An edited boundary keeps its status: it already carries a stronger
+		// statement than confirmed.
+		if chapter.Status != storydomain.ChapterDetected {
+			continue
+		}
+		chapter.Status = storydomain.ChapterConfirmed
+		chapter.Revision++
+		s.chapters[id] = chapter
+	}
+	s.recorded = append(s.recorded, record)
+	return nil
 }

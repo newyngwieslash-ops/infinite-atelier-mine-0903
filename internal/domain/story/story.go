@@ -159,9 +159,19 @@ type SourceDocumentVersion struct {
 	// recorded before its digest is computed, in which case the duplicate check
 	// simply cannot run yet.
 	ContentHash string
-	MIMEType    string
-	Encoding    string
-	CharCount   int
+	// SourceHash is the digest of the ORIGINAL upload, as distinct from
+	// ContentHash, which is the digest of the normalized text.
+	//
+	// The two answer different questions. PRD FR-020 requires a duplicate-import
+	// warning, and the file a user is about to import is the one they need to be
+	// told about: the same file re-exported with different line endings has the
+	// same SourceHash and a different ContentHash, so a check on ContentHash
+	// alone would miss exactly the case the warning exists for. Optional,
+	// because a pasted document has no original file.
+	SourceHash string
+	MIMEType   string
+	Encoding   string
+	CharCount  int
 	// ImportMetadataJSON carries parser settings. It is display metadata, not
 	// state: §2.6 forbids JSON standing in for a queryable fact, and nothing
 	// here is queried.
@@ -214,6 +224,13 @@ func (v SourceDocumentVersion) Validate() error {
 	if v.ContentHash != "" && !isLowerHexDigest(v.ContentHash) {
 		return InvalidError("The content hash must be a SHA-256 digest or empty.")
 	}
+	// The same rule for the hash of the original upload. It is validated
+	// separately because it is a different column with a different meaning, and
+	// a caller that computed one and not the other must not be able to store a
+	// malformed value in the one it did compute.
+	if v.SourceHash != "" && !isLowerHexDigest(v.SourceHash) {
+		return InvalidError("The source hash must be a SHA-256 digest or empty.")
+	}
 	if v.CharCount < 0 {
 		return InvalidError("A character count cannot be negative.")
 	}
@@ -241,6 +258,40 @@ const (
 
 // ChapterStatuses lists the documented chapter statuses in the schema's order.
 var ChapterStatuses = []ChapterStatus{ChapterDetected, ChapterConfirmed, ChapterEdited}
+
+// ChapterSourceKind records how a chapter boundary was decided.
+//
+// It mirrors the importing domain's ChapterSource, which is where the detector
+// that produces the values lives. The two are separate types because this one is
+// the persisted vocabulary that migration 000014 pins in a CHECK, while that one
+// is the detector's output; a shared alias would couple the schema to a
+// detector's internals.
+type ChapterSourceKind string
+
+const (
+	// ChapterFromHeading is a Markdown ATX heading.
+	ChapterFromHeading ChapterSourceKind = "heading"
+	// ChapterFromPattern is a text pattern: 第N章, Chapter N.
+	ChapterFromPattern ChapterSourceKind = "regex"
+	// ChapterWholeDocument is the single implicit boundary a document with no
+	// markers gets.
+	ChapterWholeDocument ChapterSourceKind = "whole"
+	// ChapterManual is a boundary the user created or edited.
+	ChapterManual ChapterSourceKind = "manual"
+)
+
+// ChapterSourceKinds lists the documented sources in the schema's order.
+var ChapterSourceKinds = []ChapterSourceKind{ChapterFromHeading, ChapterFromPattern, ChapterWholeDocument, ChapterManual}
+
+// IsValidChapterSourceKind reports whether a chapter source may be persisted.
+func IsValidChapterSourceKind(value ChapterSourceKind) bool {
+	for _, candidate := range ChapterSourceKinds {
+		if candidate == value {
+			return true
+		}
+	}
+	return false
+}
 
 // IsValidChapterStatus reports whether a chapter status may be persisted.
 func IsValidChapterStatus(value ChapterStatus) bool {
@@ -270,10 +321,15 @@ type Chapter struct {
 	// but a present value must be a digest — a fragment would make two chapters'
 	// hashes incomparable.
 	ContentHash string
-	Status      ChapterStatus
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
-	Revision    int64
+	// SourceKind records how the boundary was decided. It is a column rather
+	// than display metadata because §2.6 forbids carrying a queryable state in
+	// JSON, and "did a person edit this" is one: the import report and the
+	// staleness walk both ask it.
+	SourceKind ChapterSourceKind
+	Status     ChapterStatus
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
+	Revision   int64
 }
 
 // Validate checks a chapter before it is stored.
@@ -295,6 +351,9 @@ func (c Chapter) Validate() error {
 	}
 	if !IsValidChapterStatus(c.Status) {
 		return InvalidError("The chapter status is not recognised.")
+	}
+	if !IsValidChapterSourceKind(c.SourceKind) {
+		return InvalidError("The chapter source is not recognised.")
 	}
 	return nil
 }

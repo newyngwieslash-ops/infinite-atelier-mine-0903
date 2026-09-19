@@ -40,9 +40,20 @@ type SourceDocumentRepository interface {
 	// CreateSourceDocumentVersion stores one import of a document. A duplicate
 	// (document, version number) pair is a conflict.
 	CreateSourceDocumentVersion(ctx context.Context, version storydomain.SourceDocumentVersion) error
+	// GetSourceDocumentVersion returns one version by id.
+	GetSourceDocumentVersion(ctx context.Context, id string) (storydomain.SourceDocumentVersion, error)
 	// MaxSourceDocumentVersionNumber reports the highest version number a
 	// document has, or zero when it has none.
 	MaxSourceDocumentVersionNumber(ctx context.Context, sourceDocumentID string) (int, error)
+	// FindVersionBySourceHash returns the newest version in a project whose
+	// original upload has this hash, with the name of the document it belongs
+	// to. The final result is false when none does.
+	//
+	// It exists for PRD FR-020's duplicate warning. The check is scoped to a
+	// project because the same file imported into two dramas is two documents
+	// rather than a duplicate: a cross-project match would warn a user about
+	// someone else's story.
+	FindVersionBySourceHash(ctx context.Context, projectID, sourceHash string) (storydomain.SourceDocumentVersion, string, bool, error)
 }
 
 // ChapterRepository persists chapters of a document version.
@@ -56,6 +67,14 @@ type ChapterRepository interface {
 	ListChapters(ctx context.Context, sourceDocumentVersionID string) ([]storydomain.Chapter, error)
 	// UpdateChapter persists a change guarded by the expected revision.
 	UpdateChapter(ctx context.Context, chapter storydomain.Chapter, expectedRevision int64) error
+	// ConfirmChapters marks a version's boundaries confirmed and records the
+	// governance event in the same transaction.
+	//
+	// One call rather than a loop of updates, because the event records ONE
+	// decision ("the user confirmed these boundaries") while the writes are
+	// many. Splitting them would let the record claim a confirmation that only
+	// partially landed.
+	ConfirmChapters(ctx context.Context, sourceDocumentVersionID string, record event.Event) error
 }
 
 // StoryEntityRepository persists story entities.

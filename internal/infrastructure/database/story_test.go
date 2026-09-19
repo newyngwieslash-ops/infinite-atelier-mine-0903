@@ -158,19 +158,13 @@ func TestStoryRepositoryVersionAndChapterRoundTrip(t *testing.T) {
 		t.Fatalf("CreateSourceDocumentVersion: %v", err)
 	}
 
-	// There is no version read port: the version is an import record the story
-	// graph only ever counts. Reading it back with the repository's own select
-	// list is what proves every column was written and maps back.
-	row := db.QueryRowContext(ctx, sourceDocumentVersionSelectColumns+` WHERE id = ?`, version.ID)
-	var loaded story.SourceDocumentVersion
-	var createdByType, createdAt string
-	if err := row.Scan(&loaded.ID, &loaded.SourceDocumentID, &loaded.VersionNumber, &loaded.PhysicalFileID,
-		&loaded.NormalizedTextFileID, &loaded.ContentHash, &loaded.MIMEType, &loaded.Encoding,
-		&loaded.CharCount, &loaded.ImportMetadataJSON, &createdByType, &createdAt); err != nil {
+	// WP-06 gave the version a read port, so the round trip goes through it
+	// rather than through a hand-rolled scan: the point is that the production
+	// read path maps every column back, not that the test can.
+	loaded, err := repo.GetSourceDocumentVersion(ctx, version.ID)
+	if err != nil {
 		t.Fatalf("reading the version back: %v", err)
 	}
-	loaded.CreatedByType = story.CreatedByType(createdByType)
-	loaded.CreatedAt = parseTime(createdAt)
 	if loaded.PhysicalFileID != testHashA || loaded.NormalizedTextFileID != testHashB || loaded.ContentHash != testHashC {
 		t.Fatalf("file references round-tripped wrong: %+v", loaded)
 	}
@@ -205,6 +199,7 @@ func TestStoryRepositoryVersionAndChapterRoundTrip(t *testing.T) {
 		StartOffset:             0,
 		EndOffset:               1000,
 		ContentHash:             testHashC,
+		SourceKind:              story.ChapterFromPattern,
 		Status:                  story.ChapterDetected,
 		CreatedAt:               fixedClock()(),
 		UpdatedAt:               fixedClock()(),
@@ -430,7 +425,7 @@ func TestStoryRepositoryUpdateGuardsRevision(t *testing.T) {
 	// stored cannot be pointed at from a chapter row.
 	chapter := story.Chapter{
 		ID: "chapter-1", SourceDocumentVersionID: "version-x", Ordinal: 1,
-		StartOffset: 0, EndOffset: 10, Status: story.ChapterDetected,
+		StartOffset: 0, EndOffset: 10, SourceKind: story.ChapterFromPattern, Status: story.ChapterDetected,
 		CreatedAt: now, UpdatedAt: now, Revision: 1,
 	}
 	if err := repo.CreateChapter(ctx, chapter); err == nil {
@@ -455,7 +450,7 @@ func TestStoryRepositoryChapterAndEventUpdatesRoundTrip(t *testing.T) {
 
 	chapter := story.Chapter{
 		ID: "chapter-1", SourceDocumentVersionID: version.ID, Ordinal: 1, Title: "One",
-		StartOffset: 0, EndOffset: 100, Status: story.ChapterDetected,
+		StartOffset: 0, EndOffset: 100, SourceKind: story.ChapterFromPattern, Status: story.ChapterDetected,
 		CreatedAt: now, UpdatedAt: now, Revision: 1,
 	}
 	if err := repo.CreateChapter(ctx, chapter); err != nil {
@@ -563,7 +558,7 @@ func TestStoryRepositoryUniqueViolationIsAConflict(t *testing.T) {
 	// And the (version, ordinal) pair on chapters.
 	chapter := story.Chapter{
 		ID: "chapter-1", SourceDocumentVersionID: version.ID, Ordinal: 1,
-		StartOffset: 0, EndOffset: 10, Status: story.ChapterDetected,
+		StartOffset: 0, EndOffset: 10, SourceKind: story.ChapterFromPattern, Status: story.ChapterDetected,
 		CreatedAt: fixedClock()(), UpdatedAt: fixedClock()(), Revision: 1,
 	}
 	if err := repo.CreateChapter(ctx, chapter); err != nil {

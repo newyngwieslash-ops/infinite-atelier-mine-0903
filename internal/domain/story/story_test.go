@@ -396,6 +396,7 @@ func TestChapterValidate(t *testing.T) {
 		Title:                   "Chapter One",
 		StartOffset:             0,
 		EndOffset:               1000,
+		SourceKind:              ChapterFromPattern,
 		Status:                  ChapterDetected,
 	}
 	if err := base.Validate(); err != nil {
@@ -413,6 +414,8 @@ func TestChapterValidate(t *testing.T) {
 		{"end before start", func(c *Chapter) { c.StartOffset = 500; c.EndOffset = 499 }},
 		{"content hash is not a digest", func(c *Chapter) { c.ContentHash = "deadbeef" }},
 		{"unknown status", func(c *Chapter) { c.Status = "guessed" }},
+		{"unknown source kind", func(c *Chapter) { c.SourceKind = "guessed" }},
+		{"empty source kind", func(c *Chapter) { c.SourceKind = "" }},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -983,5 +986,54 @@ func TestErrorCategories(t *testing.T) {
 	}
 	if storage.Unwrap() == nil {
 		t.Fatal("a storage error must keep its cause")
+	}
+}
+
+// TestChapterSourceKindVocabulary pins the values migration 000014 constrains.
+func TestChapterSourceKindVocabulary(t *testing.T) {
+	for _, kind := range []ChapterSourceKind{ChapterFromHeading, ChapterFromPattern, ChapterWholeDocument, ChapterManual} {
+		if !IsValidChapterSourceKind(kind) {
+			t.Fatalf("documented chapter source %q rejected", kind)
+		}
+	}
+	for _, rejected := range []ChapterSourceKind{"", "Heading", "guess", "detected"} {
+		if IsValidChapterSourceKind(rejected) {
+			t.Fatalf("undocumented chapter source %q accepted", rejected)
+		}
+	}
+	if len(ChapterSourceKinds) != 4 {
+		t.Fatalf("the source set has %d entries, want 4", len(ChapterSourceKinds))
+	}
+}
+
+// TestSourceHashIsValidated proves the second hash column is checked as
+// strictly as the first, since the two are written independently.
+func TestSourceHashIsValidated(t *testing.T) {
+	const digest = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	base := SourceDocumentVersion{
+		ID:                   "docv-1",
+		SourceDocumentID:     "doc-1",
+		VersionNumber:        1,
+		NormalizedTextFileID: digest,
+		ContentHash:          digest,
+		CharCount:            30000,
+		CreatedByType:        CreatedByUser,
+	}
+	base.SourceHash = strings.Repeat("a", 64)
+	if err := base.Validate(); err != nil {
+		t.Fatalf("a valid source hash was rejected: %v", err)
+	}
+	// Empty stays legal: a pasted document has no original file.
+	base.SourceHash = ""
+	if err := base.Validate(); err != nil {
+		t.Fatalf("an empty source hash was rejected: %v", err)
+	}
+	// A malformed one must be refused, which is what stops a caller that
+	// computed only this hash from storing a fragment.
+	for _, rejected := range []string{"deadbeef", strings.Repeat("A", 64), strings.Repeat("z", 64)} {
+		base.SourceHash = rejected
+		if err := base.Validate(); err == nil {
+			t.Fatalf("malformed source hash %q was accepted", rejected)
+		}
 	}
 }

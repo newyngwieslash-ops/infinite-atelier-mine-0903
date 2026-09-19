@@ -97,7 +97,11 @@ func (s *Service) CreateSourceDocument(ctx context.Context, request CreateSource
 
 // AddSourceDocumentVersionRequest carries one import of a document.
 type AddSourceDocumentVersionRequest struct {
-	SourceDocumentID     string
+	SourceDocumentID string
+	// SourceHash is the digest of the original upload. It is separate from
+	// ContentHash so a re-export of the same file can still be recognised as a
+	// duplicate of what was imported before.
+	SourceHash           string
 	PhysicalFileID       string
 	NormalizedTextFileID string
 	ContentHash          string
@@ -147,6 +151,7 @@ func (s *Service) AddSourceDocumentVersion(ctx context.Context, request AddSourc
 		ID:                   id,
 		SourceDocumentID:     document.ID,
 		VersionNumber:        highest + 1,
+		SourceHash:           strings.TrimSpace(request.SourceHash),
 		PhysicalFileID:       strings.TrimSpace(request.PhysicalFileID),
 		NormalizedTextFileID: strings.TrimSpace(request.NormalizedTextFileID),
 		ContentHash:          strings.TrimSpace(request.ContentHash),
@@ -199,6 +204,9 @@ type CreateChapterRequest struct {
 	StartOffset             int
 	EndOffset               int
 	ContentHash             string
+	// SourceKind records how the boundary was decided. The zero value is the
+	// detector's 'regex'; a caller creating a boundary by hand passes 'manual'.
+	SourceKind storydomain.ChapterSourceKind
 	// Status records how the boundary came to be trusted. The zero value is the
 	// import pipeline's 'detected'; a caller correcting a boundary passes
 	// 'edited' or 'confirmed' from the domain vocabulary.
@@ -214,6 +222,13 @@ func (s *Service) CreateChapter(ctx context.Context, request CreateChapterReques
 	if status == "" {
 		status = storydomain.ChapterDetected
 	}
+	// The detector's output is a pattern match, so that is the default. A caller
+	// creating a boundary by hand passes 'manual', and one wrapping a whole
+	// document passes 'whole'.
+	sourceKind := request.SourceKind
+	if sourceKind == "" {
+		sourceKind = storydomain.ChapterFromPattern
+	}
 	id, err := s.ids.New()
 	if err != nil {
 		return storydomain.Chapter{}, storageFailure()
@@ -227,6 +242,7 @@ func (s *Service) CreateChapter(ctx context.Context, request CreateChapterReques
 		StartOffset:             request.StartOffset,
 		EndOffset:               request.EndOffset,
 		ContentHash:             strings.TrimSpace(request.ContentHash),
+		SourceKind:              sourceKind,
 		Status:                  status,
 		CreatedAt:               now,
 		UpdatedAt:               now,
@@ -710,4 +726,99 @@ func (s *Service) ResolveConflict(ctx context.Context, request ResolveConflictRe
 		return storydomain.StoryFactConflict{}, err
 	}
 	return record, nil
+}
+
+// GetSourceDocumentVersion returns one version by id.
+func (s *Service) GetSourceDocumentVersion(ctx context.Context, id string) (storydomain.SourceDocumentVersion, error) {
+	if !s.Available() {
+		return storydomain.SourceDocumentVersion{}, storageFailure()
+	}
+	return s.repository.GetSourceDocumentVersion(ctx, strings.TrimSpace(id))
+}
+
+// SourceHashMatch names the document a duplicate import belongs to.
+type SourceHashMatch struct {
+	Version      storydomain.SourceDocumentVersion
+	DocumentID   string
+	DocumentName string
+}
+
+// FindVersionBySourceHash reports whether a project already holds a document
+// whose original upload has this hash.
+//
+// PRD FR-020 requires a duplicate-import warning, and this is the lookup that
+// drives it. The check is scoped to the project because the same file imported
+// into two dramas is two documents rather than a duplicate: warning a user about
+// a match in someone else's story would be worse than saying nothing.
+//
+// An empty hash returns no match rather than every row with an empty hash. A
+// pasted document has no original file, so "hash is empty" means "cannot be
+// compared", not "matches all the other pasted documents".
+func (s *Service) FindVersionBySourceHash(ctx context.Context, projectID, sourceHash string) (SourceHashMatch, bool, error) {
+	if !s.Available() {
+		return SourceHashMatch{}, false, storageFailure()
+	}
+	trimmedHash := strings.TrimSpace(sourceHash)
+	if trimmedHash == "" {
+		return SourceHashMatch{}, false, nil
+	}
+	version, documentName, found, err := s.repository.FindVersionBySourceHash(ctx, strings.TrimSpace(projectID), trimmedHash)
+	if err != nil {
+		return SourceHashMatch{}, false, err
+	}
+	if !found {
+		return SourceHashMatch{}, false, nil
+	}
+	return SourceHashMatch{
+		Version:      version,
+		DocumentID:   version.SourceDocumentID,
+		DocumentName: documentName,
+	}, true, nil
+}
+
+// ConfirmChaptersRequest confirms every boundary of a version.
+type ConfirmChaptersRequest struct {
+	SourceDocumentVersionID string
+	// Event is the governance record of the decision, built by the caller
+	// because only it knows the project and the trace. It is written in the same
+	// transaction as the status changes, so a confirmation nobody can audit does
+	// not happen.
+	Event event.Event
+}
+
+// ConfirmChapters moves a version's detected boundaries to confirmed.
+//
+// DOMAIN_MODEL section 5.3 makes a user confirmation what takes a boundary out
+// of 'detected', and §16 names this command. The two writes — the statuses and
+// the event — go through one repository call because they are one act.
+//
+// An 'edited' boundary is left alone: it already carries a stronger statement
+// than 'confirmed', and rewriting it would discard the fact that a person
+// changed it. The returned list reflects that, so a caller can see which
+// boundaries it actually confirmed.
+func (s *Service) ConfirmChapters(ctx context.Context, request ConfirmChaptersRequest) ([]storydomain.Chapter, error) {
+	if !s.Available() {
+		return nil, storageFailure()
+	}
+	versionID := strings.TrimSpace(request.SourceDocumentVersionID)
+	if versionID == "" {
+		return nil, storydomain.InvalidError("A confirmation must name a document version.")
+	}
+	chapters, err := s.repository.ListChapters(ctx, versionID)
+	if err != nil {
+		return nil, err
+	}
+	if len(chapters) == 0 {
+		return nil, storydomain.InvalidError("There are no chapter boundaries to confirm.")
+	}
+	if err := s.repository.ConfirmChapters(ctx, versionID, request.Event); err != nil {
+		return nil, err
+	}
+	// Re-read so the caller sees what the store holds rather than what this
+	// method hoped it would hold.
+	confirmed, err := s.repository.ListChapters(ctx, versionID)
+	if err != nil {
+		return nil, err
+	}
+	return confirmed, nil
 }
