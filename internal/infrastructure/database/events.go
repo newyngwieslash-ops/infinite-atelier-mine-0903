@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 
+	events "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/events"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/event"
 )
 
@@ -73,20 +74,13 @@ func (r *EventRepository) Append(ctx context.Context, record event.Event) error 
 	return nil
 }
 
-// ListFilter narrows an event query. Zero values mean "no constraint".
-type ListFilter struct {
-	// ProjectID scopes the stream, which every drama query is scoped by.
-	ProjectID string
-	// AggregateType and AggregateID narrow to one subject's history.
-	AggregateType string
-	AggregateID   string
-	// EventType narrows to one kind of event.
-	EventType string
-	// TraceID narrows to the events of one action.
-	TraceID string
-	// Limit caps the result. The application layer clamps it.
-	Limit int
-}
+// ListFilter is the application layer's event query shape.
+//
+// It is an alias rather than a second struct with the same fields: the port
+// declares the query, and a repository that declared its own would be a second
+// definition to keep in step. A caller in this package writes ListFilter and
+// means the application's.
+type ListFilter = events.ListFilter
 
 // ListEvents returns events newest first.
 func (r *EventRepository) ListEvents(ctx context.Context, filter ListFilter) ([]event.Event, error) {

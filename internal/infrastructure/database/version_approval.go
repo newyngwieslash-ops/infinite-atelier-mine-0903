@@ -10,7 +10,11 @@ import (
 )
 
 // This file implements the one approval switch that DOMAIN_MODEL §2.5 defines
-// for every version family, rather than eight near-copies of it.
+// for every version family, rather than eight near-copies of it. There is
+// exactly ONE implementation below (approveVersionWithEvent) and every family
+// calls it: an earlier revision of this file carried a second, event-less copy
+// that nothing called, which is precisely the drift this arrangement exists to
+// prevent, and it was removed.
 //
 // Eight families are versioned and each needs the same three steps: read the
 // version, run versioning.CanApprove, and in ONE transaction supersede the
@@ -51,83 +55,6 @@ var (
 	familyStoryboardVersions    = approvalFamily{table: "storyboard_versions", parentColumn: "storyboard_id"}
 	familyStoryboardPanels      = approvalFamily{table: "storyboard_panel_versions", parentColumn: "storyboard_item_id"}
 )
-
-// ApproveVersion switches which version of a parent is approved.
-//
-// Steps, in this order and in one transaction:
-//
-//  1. If a version of this parent is currently approved and it is not the target,
-//     set it superseded. The update matches on `status = 'approved'` so two
-//     concurrent approvals cannot both believe they superseded it: the loser's
-//     update affects no row and is reported as a conflict.
-//  2. Set the target approved, matching on the status the caller read. A
-//     mismatch means another writer moved the row, which is a conflict rather
-//     than a silent overwrite.
-//
-// The commit happens after both, so a failure leaves the previous approval in
-// force rather than a parent with none.
-func approveVersion(ctx context.Context, db *sql.DB, family approvalFamily, versionID, parentID string, expectedStatus versioning.Status, now string) error {
-	if db == nil {
-		return storageError("VERSION_STORE_UNAVAILABLE", "The version store is unavailable.", nil)
-	}
-	if family.table == "" || family.parentColumn == "" {
-		// Reaching here means a caller passed a family that was never declared,
-		// which is a programming error rather than a user-visible one.
-		return storageError("VERSION_STORE_UNAVAILABLE", "The version store is unavailable.", fmt.Errorf("unknown approval family"))
-	}
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		return storageError("VERSION_TX_FAILED", "The approval could not be started.", err)
-	}
-	committed := false
-	defer func() {
-		if !committed {
-			// A rollback after a successful commit is a no-op, so this is safe
-			// on every path and is what keeps the two writes atomic.
-			_ = tx.Rollback()
-		}
-	}()
-	conn := connection(db, tx)
-
-	// Step 1: retire the current approval. The subquery is the same row the
-	// partial unique index constrains, so if nothing is approved it matches
-	// nothing and the DELETE-style no-op is silent.
-	supersede := fmt.Sprintf(`UPDATE %s SET status = 'superseded'
-		WHERE %s = ? AND status = 'approved' AND id <> ?`, family.table, family.parentColumn)
-	if _, err := conn.ExecContext(ctx, supersede, parentID, versionID); err != nil {
-		if isUniqueViolation(err) {
-			return versioning.ConflictError("Another version of this parent was approved at the same time. Reload and try again.")
-		}
-		return storageError("VERSION_WRITE_FAILED", "The previous approval could not be superseded.", err)
-	}
-
-	// Step 2: approve the target, guarded by the status the caller read.
-	approve := fmt.Sprintf(`UPDATE %s SET status = 'approved'
-		WHERE id = ? AND status = ?`, family.table)
-	result, err := conn.ExecContext(ctx, approve, versionID, string(expectedStatus))
-	if err != nil {
-		if isUniqueViolation(err) {
-			// The partial unique index refused a second approved row, which
-			// means step 1 did not retire the previous one. Reporting a conflict
-			// is what makes the caller reload rather than believe it succeeded.
-			return versioning.ConflictError("This parent already has an approved version. Reload and try again.")
-		}
-		return storageError("VERSION_WRITE_FAILED", "The version could not be approved.", err)
-	}
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return storageError("VERSION_WRITE_FAILED", "The version could not be approved.", err)
-	}
-	if affected == 0 {
-		return versioning.ConflictError("This version changed in another window. Reload it and try again.")
-	}
-
-	if err := tx.Commit(); err != nil {
-		return storageError("VERSION_TX_FAILED", "The approval could not be committed.", err)
-	}
-	committed = true
-	return nil
-}
 
 // CurrentApprovedVersionID returns the id of the approved version of a parent,
 // or "" when none is approved.

@@ -127,7 +127,7 @@ func (s *Service) Record(ctx context.Context, draft Draft) (event.Event, error) 
 	if !s.Available() {
 		return event.Event{}, storageFailure()
 	}
-	record, err := s.Build(draft)
+	record, err := s.Build(ctx, draft)
 	if err != nil {
 		return event.Event{}, err
 	}
@@ -141,7 +141,7 @@ func (s *Service) Record(ctx context.Context, draft Draft) (event.Event, error) 
 //
 // A command that records its event inside its own transaction builds it here,
 // so the envelope rules are applied once rather than per repository.
-func (s *Service) Build(draft Draft) (event.Event, error) {
+func (s *Service) Build(_ context.Context, draft Draft) (event.Event, error) {
 	if !s.Available() {
 		return event.Event{}, storageFailure()
 	}
