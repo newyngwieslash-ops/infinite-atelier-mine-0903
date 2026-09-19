@@ -487,7 +487,20 @@ type ReviseChapterRequest struct {
 	Revision int64 `json:"revision"`
 }
 
-// ReviseChapter stores a corrected boundary.
+// ReviseChapter stores a corrected boundary and marks what the change invalidates.
+//
+// The propagation is what PRD FR-030 asks for: "删除或修改章节后，受影响事实被标记为待
+// 复核". A chapter's boundaries decide which text an extracted fact was read from, so
+// moving them can leave a fact citing a passage that no longer says what it did.
+// The mark is what tells the user to look again.
+//
+// It runs AFTER the write and its failure is not the command's failure. The
+// correction has already landed, and failing the response would tell the caller
+// the edit did not happen when it did — which is worse than an unmarked project,
+// because the user would retype an edit that is already stored. A propagation
+// failure is therefore reported as a warning the caller can act on, and the
+// interface says so: this is the same trade ADR-0009 records for notification
+// events.
 func (b *DramaBinding) ReviseChapter(request ReviseChapterRequest) (ChapterDTO, error) {
 	service := b.storyService()
 	if service == nil {
@@ -505,7 +518,51 @@ func (b *DramaBinding) ReviseChapter(request ReviseChapterRequest) (ChapterDTO, 
 	if err != nil {
 		return ChapterDTO{}, toDramaError(err)
 	}
+	b.propagateChapterChange(record)
 	return toChapterDTO(record), nil
+}
+
+// propagateChapterChange marks the facts a chapter edit invalidates.
+//
+// A missing staleness service, a missing project, or a failed walk leaves the
+// returned chapter unchanged: the correction is stored and the propagation is a
+// best-effort consequence of it. The walk's own bounds mean it always returns,
+// with Truncated set when it stopped early.
+func (b *DramaBinding) propagateChapterChange(chapter storydomain.Chapter) {
+	propagation := b.stalenessService()
+	story := b.storyService()
+	if propagation == nil || story == nil {
+		return
+	}
+	ctx := b.context()
+	projectID, err := b.projectForChapter(ctx, story, chapter)
+	if err != nil || projectID == "" {
+		return
+	}
+	_, _ = propagation.PropagateFrom(ctx, appstaleness.PropagateRequest{
+		ChangedType: staleness.ArtifactChapter,
+		ChangedID:   chapter.ID,
+		ProjectID:   projectID,
+		Reason:      "The chapter boundary was corrected.",
+	})
+}
+
+// projectForChapter resolves the project a chapter belongs to.
+//
+// The walk is chapter to version to document, because a Chapter row carries only
+// its version id. The staleness service resolves projects for the artifacts IT
+// finds; the artifact the caller changed is the one it cannot resolve, since the
+// propagation starts there and never looks it up.
+func (b *DramaBinding) projectForChapter(ctx context.Context, service *appstory.Service, chapter storydomain.Chapter) (string, error) {
+	version, err := service.GetSourceDocumentVersion(ctx, chapter.SourceDocumentVersionID)
+	if err != nil {
+		return "", err
+	}
+	document, err := service.GetSourceDocument(ctx, version.SourceDocumentID)
+	if err != nil {
+		return "", err
+	}
+	return document.ProjectID, nil
 }
 
 // CreateStoryEntityRequest adds a story entity.

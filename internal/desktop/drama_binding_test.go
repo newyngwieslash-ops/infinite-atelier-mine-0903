@@ -34,31 +34,34 @@ import (
 type dramaStore struct {
 	mu sync.Mutex
 
-	documents  map[string]storydomain.SourceDocument
-	versions   map[string]storydomain.SourceDocumentVersion
-	chapters   map[string]storydomain.Chapter
-	entities   map[string]storydomain.StoryEntity
-	events     map[string]storydomain.StoryEvent
-	relations  map[string]storydomain.StoryRelation
-	conflicts  map[string]storydomain.StoryFactConflict
-	episodes   map[string]scriptdomain.Episode
-	skeletons  map[string]scriptdomain.StorySkeletonVersion
-	strategies map[string]scriptdomain.AdaptationStrategyVersion
-	scripts    map[string]scriptdomain.Script
-	scriptVers map[string]scriptdomain.ScriptVersion
-	scenes     map[string]scriptdomain.Scene
-	shots      map[string]scriptdomain.Shot
-	plans      map[string]storyboard.DirectorPlanVersion
-	boards     map[string]storyboard.Storyboard
-	boardVers  map[string]storyboard.StoryboardVersion
-	items      map[string]storyboard.StoryboardItem
-	panels     map[string]storyboard.StoryboardPanelVersion
-	runs       map[string]workflow.WorkflowRun
-	stages     map[string]workflow.StageRun
-	reports    map[string]workflow.ReviewReport
-	issues     map[string][]workflow.ReviewIssue
-	decisions  map[string]workflow.UserGateDecision
-	audit      map[string][]workflow.WorkflowEvent
+	documents    map[string]storydomain.SourceDocument
+	versions     map[string]storydomain.SourceDocumentVersion
+	chapters     map[string]storydomain.Chapter
+	entities     map[string]storydomain.StoryEntity
+	events       map[string]storydomain.StoryEvent
+	relations    map[string]storydomain.StoryRelation
+	conflicts    map[string]storydomain.StoryFactConflict
+	aliases      map[string]storydomain.StoryEntityAlias
+	participants map[string]storydomain.StoryEventParticipant
+	factSources  map[string]storydomain.StoryFactSource
+	episodes     map[string]scriptdomain.Episode
+	skeletons    map[string]scriptdomain.StorySkeletonVersion
+	strategies   map[string]scriptdomain.AdaptationStrategyVersion
+	scripts      map[string]scriptdomain.Script
+	scriptVers   map[string]scriptdomain.ScriptVersion
+	scenes       map[string]scriptdomain.Scene
+	shots        map[string]scriptdomain.Shot
+	plans        map[string]storyboard.DirectorPlanVersion
+	boards       map[string]storyboard.Storyboard
+	boardVers    map[string]storyboard.StoryboardVersion
+	items        map[string]storyboard.StoryboardItem
+	panels       map[string]storyboard.StoryboardPanelVersion
+	runs         map[string]workflow.WorkflowRun
+	stages       map[string]workflow.StageRun
+	reports      map[string]workflow.ReviewReport
+	issues       map[string][]workflow.ReviewIssue
+	decisions    map[string]workflow.UserGateDecision
+	audit        map[string][]workflow.WorkflowEvent
 
 	// failNext makes the next write fail, so a storage failure is testable.
 	failNext error
@@ -83,6 +86,9 @@ func newDramaStore() *dramaStore {
 		events:          map[string]storydomain.StoryEvent{},
 		relations:       map[string]storydomain.StoryRelation{},
 		conflicts:       map[string]storydomain.StoryFactConflict{},
+		aliases:         map[string]storydomain.StoryEntityAlias{},
+		participants:    map[string]storydomain.StoryEventParticipant{},
+		factSources:     map[string]storydomain.StoryFactSource{},
 		episodes:        map[string]scriptdomain.Episode{},
 		scripts:         map[string]scriptdomain.Script{},
 		scriptVers:      map[string]scriptdomain.ScriptVersion{},
@@ -2478,4 +2484,255 @@ func (s *dramaStore) ConfirmChapters(_ context.Context, sourceDocumentVersionID 
 	}
 	s.recorded = append(s.recorded, record)
 	return nil
+}
+
+// The child rows and filtered lists the WP-06 port additions require. They mirror
+// the real repository's semantics rather than recording calls, so a binding test
+// that passes here is not passing because the double was permissive.
+
+func (s *dramaStore) CreateStoryEntityAlias(_ context.Context, record storydomain.StoryEntityAlias) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.failNext != nil {
+		return s.failNext
+	}
+	for _, existing := range s.aliases {
+		if existing.StoryEntityID == record.StoryEntityID && existing.Alias == record.Alias {
+			return storydomain.ConflictError("That name is already an alias for this entity.")
+		}
+	}
+	s.aliases[record.ID] = record
+	return nil
+}
+
+func (s *dramaStore) ListStoryEntityAliases(_ context.Context, storyEntityID string) ([]storydomain.StoryEntityAlias, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var records []storydomain.StoryEntityAlias
+	for _, record := range s.aliases {
+		if record.StoryEntityID == storyEntityID {
+			records = append(records, record)
+		}
+	}
+	return records, nil
+}
+
+func (s *dramaStore) CreateStoryEventParticipant(_ context.Context, record storydomain.StoryEventParticipant) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.failNext != nil {
+		return s.failNext
+	}
+	key := record.StoryEventID + "\x00" + record.StoryEntityID + "\x00" + string(record.Role)
+	if _, exists := s.participants[key]; exists {
+		return storydomain.ConflictError("That entity already holds that role in this event.")
+	}
+	s.participants[key] = record
+	return nil
+}
+
+func (s *dramaStore) ListStoryEventParticipants(_ context.Context, storyEventID string) ([]storydomain.StoryEventParticipant, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var records []storydomain.StoryEventParticipant
+	for _, record := range s.participants {
+		if record.StoryEventID == storyEventID {
+			records = append(records, record)
+		}
+	}
+	return records, nil
+}
+
+func (s *dramaStore) CreateStoryFactSource(_ context.Context, record storydomain.StoryFactSource) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.failNext != nil {
+		return s.failNext
+	}
+	s.factSources[record.ID] = record
+	return nil
+}
+
+func (s *dramaStore) ListStoryFactSources(_ context.Context, factType storydomain.FactType, factID string) ([]storydomain.StoryFactSource, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var records []storydomain.StoryFactSource
+	for _, record := range s.factSources {
+		if record.FactType == factType && record.FactID == factID {
+			records = append(records, record)
+		}
+	}
+	return records, nil
+}
+
+func (s *dramaStore) ListStoryEntities(_ context.Context, projectID string, status storydomain.FactStatus) ([]storydomain.StoryEntity, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var records []storydomain.StoryEntity
+	for _, record := range s.entities {
+		if record.ProjectID != projectID || !record.DeletedAt.IsZero() {
+			continue
+		}
+		if status != "" && record.Status != status {
+			continue
+		}
+		records = append(records, record)
+	}
+	return records, nil
+}
+
+func (s *dramaStore) ListStoryEvents(_ context.Context, projectID, chapterID string, status storydomain.FactStatus) ([]storydomain.StoryEvent, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var records []storydomain.StoryEvent
+	for _, record := range s.events {
+		if record.ProjectID != projectID {
+			continue
+		}
+		if chapterID != "" && record.ChapterID != chapterID {
+			continue
+		}
+		if status != "" && record.Status != status {
+			continue
+		}
+		records = append(records, record)
+	}
+	return records, nil
+}
+
+func (s *dramaStore) ListStoryRelations(_ context.Context, projectID string, status storydomain.FactStatus) ([]storydomain.StoryRelation, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var records []storydomain.StoryRelation
+	for _, record := range s.relations {
+		if record.ProjectID != projectID {
+			continue
+		}
+		if status != "" && record.Status != status {
+			continue
+		}
+		records = append(records, record)
+	}
+	return records, nil
+}
+
+// TestReviseChapterMarksTheFactsItInvalidates covers PRD FR-030's rule that a
+// chapter edit makes the facts read from it need review.
+//
+// The propagation engine is exercised against a real database elsewhere
+// (TestPropagationEndToEndAgainstTheDatabase). What was missing until this test
+// is the TRIGGER: nothing called PropagateFrom, so the engine was complete and
+// never ran. The assertion therefore starts from the binding's own command.
+func TestReviseChapterMarksTheFactsItInvalidates(t *testing.T) {
+	fixture := attachDramaFixture()
+	store := fixture.store
+	store.documents["doc-1"] = storydomain.SourceDocument{
+		ID: "doc-1", ProjectID: "project-1", Name: "The Novel",
+		Type: storydomain.DocumentNovel, Status: storydomain.DocumentActive, Revision: 1,
+	}
+	store.versions["version-1"] = storydomain.SourceDocumentVersion{
+		ID: "version-1", SourceDocumentID: "doc-1", VersionNumber: 1,
+		NormalizedTextFileID: strings.Repeat("a", 64), CharCount: 100,
+		CreatedByType: versioning.CreatedByUser,
+	}
+	store.chapters["chapter-1"] = storydomain.Chapter{
+		ID: "chapter-1", SourceDocumentVersionID: "version-1", Ordinal: 1, Title: "One",
+		StartOffset: 0, EndOffset: 100, SourceKind: storydomain.ChapterFromPattern,
+		Status: storydomain.ChapterConfirmed, Revision: 1,
+	}
+	// What the walk should find: one story event holding a chapter reference.
+	store.events["event-1"] = storydomain.StoryEvent{
+		ID: "event-1", ProjectID: "project-1", ChapterID: "chapter-1", Name: "Something happens",
+		Status: storydomain.FactCandidate, SourceScope: storydomain.ScopeOriginal, Revision: 1,
+	}
+	fixture.marks.dependents = []appstaleness.DependentRef{
+		{ArtifactType: staleness.ArtifactStoryEvent, ArtifactID: "event-1"},
+	}
+	fixture.marks.dependentOwner = "project-1"
+
+	revised, err := fixture.binding.ReviseChapter(ReviseChapterRequest{
+		ChapterID: "chapter-1", Title: "One, corrected", StartOffset: 0, EndOffset: 120, Revision: 1,
+	})
+	if err != nil {
+		t.Fatalf("ReviseChapter: %v", err)
+	}
+	if revised.EndOffset != 120 {
+		t.Fatalf("the correction was not stored: end offset %d", revised.EndOffset)
+	}
+	// The mark is what FR-030 asks for: the event that cites this chapter is now
+	// awaiting review.
+	mark, found, err := fixture.marks.GetMark(context.Background(), staleness.ArtifactStoryEvent, "event-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !found {
+		t.Fatal("revising a chapter did not mark the story event that cites it, so the propagation never ran")
+	}
+	if mark.Severity != staleness.SeverityReviewRequired {
+		t.Fatalf("the mark's severity is %q, want review_required", mark.Severity)
+	}
+	if mark.UpstreamType != staleness.ArtifactChapter || mark.UpstreamID != "chapter-1" {
+		t.Fatalf("the mark names %s/%s as upstream, want the chapter that changed", mark.UpstreamType, mark.UpstreamID)
+	}
+	if mark.ProjectID != "project-1" {
+		t.Fatalf("the mark was filed under project %q", mark.ProjectID)
+	}
+}
+
+// TestReviseChapterSucceedsWhenThePropagationFails is the deliberate trade: the
+// correction has already landed, so failing the response would tell the caller
+// the edit did not happen when it did.
+func TestReviseChapterSucceedsWhenThePropagationFails(t *testing.T) {
+	fixture := attachDramaFixture()
+	store := fixture.store
+	store.documents["doc-1"] = storydomain.SourceDocument{ID: "doc-1", ProjectID: "project-1", Revision: 1}
+	store.versions["version-1"] = storydomain.SourceDocumentVersion{ID: "version-1", SourceDocumentID: "doc-1"}
+	store.chapters["chapter-1"] = storydomain.Chapter{
+		ID: "chapter-1", SourceDocumentVersionID: "version-1", Ordinal: 1, Title: "One",
+		StartOffset: 0, EndOffset: 100, SourceKind: storydomain.ChapterFromPattern,
+		Status: storydomain.ChapterConfirmed, Revision: 1,
+	}
+	fixture.marks.dependentOwner = "project-1"
+	fixture.marks.failNext = errors.New("the marks could not be written")
+	fixture.marks.dependents = []appstaleness.DependentRef{
+		{ArtifactType: staleness.ArtifactStoryEvent, ArtifactID: "event-1"},
+	}
+
+	revised, err := fixture.binding.ReviseChapter(ReviseChapterRequest{
+		ChapterID: "chapter-1", Title: "Corrected", StartOffset: 0, EndOffset: 120, Revision: 1,
+	})
+	if err != nil {
+		t.Fatalf("a propagation failure must not fail the correction that already landed: %v", err)
+	}
+	if revised.EndOffset != 120 {
+		t.Fatalf("the correction was lost: end offset %d", revised.EndOffset)
+	}
+}
+
+// TestReviseChapterStillWorksWithoutAStalenessService proves the propagation is
+// an enhancement rather than a dependency: a binding composed without one still
+// stores corrections.
+func TestReviseChapterStillWorksWithoutAStalenessService(t *testing.T) {
+	store := newDramaStore()
+	store.documents["doc-1"] = storydomain.SourceDocument{ID: "doc-1", ProjectID: "project-1", Revision: 1}
+	store.versions["version-1"] = storydomain.SourceDocumentVersion{ID: "version-1", SourceDocumentID: "doc-1"}
+	store.chapters["chapter-1"] = storydomain.Chapter{
+		ID: "chapter-1", SourceDocumentVersionID: "version-1", Ordinal: 1, Title: "One",
+		StartOffset: 0, EndOffset: 100, SourceKind: storydomain.ChapterFromPattern,
+		Status: storydomain.ChapterConfirmed, Revision: 1,
+	}
+	binding := &DramaBinding{}
+	AttachStory(binding, context.Background(), appstory.NewService(appstory.Options{
+		Repository: store, Clock: fixedDramaClock{}, IDs: fixedIDs(),
+	}))
+	// No AttachStaleness.
+	revised, err := binding.ReviseChapter(ReviseChapterRequest{
+		ChapterID: "chapter-1", Title: "Corrected", StartOffset: 0, EndOffset: 120, Revision: 1,
+	})
+	if err != nil {
+		t.Fatalf("ReviseChapter without a staleness service: %v", err)
+	}
+	if revised.EndOffset != 120 {
+		t.Fatalf("the correction was lost: end offset %d", revised.EndOffset)
+	}
 }
