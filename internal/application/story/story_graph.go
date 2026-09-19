@@ -273,3 +273,23 @@ func (s *Service) AddStoryEventParticipant(ctx context.Context, request AddStory
 	}
 	return record, nil
 }
+
+// ListStoryConflicts returns a project's recorded conflicts, newest first.
+//
+// It is the read the conflict queue needs, and the reason WP-05's gap notice
+// mentioned conflicts: OpenConflict and ResolveConflict existed as commands with
+// no way to see what had been recorded, so a user could open a conflict and never
+// find it again. AC-STORY-002 lists 冲突记录 as an acceptance point, and a
+// recorded conflict nobody can list is not a record.
+func (s *Service) ListStoryConflicts(ctx context.Context, projectID string, status storydomain.ConflictStatus) ([]storydomain.StoryFactConflict, error) {
+	if !s.Available() {
+		return nil, storageFailure()
+	}
+	if strings.TrimSpace(projectID) == "" {
+		return nil, storydomain.InvalidError("A project is required.")
+	}
+	if status != "" && !storydomain.IsValidConflictStatus(status) {
+		return nil, storydomain.InvalidError("That conflict status is not recognised.")
+	}
+	return s.repository.ListStoryConflicts(ctx, projectID, status)
+}

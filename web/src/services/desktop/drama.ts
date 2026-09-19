@@ -486,3 +486,32 @@ export const ENTITY_TYPES = [
     "timeline_marker",
 ] as const;
 
+
+// ---------------------------------------------------------------------------
+// Conflicts (section 6.7)
+//
+// WP-05 exposed the commands that open and resolve a conflict and no query that
+// lists them, so a disagreement could be recorded and never found again. These
+// are the list and the two commands that close the loop.
+// ---------------------------------------------------------------------------
+
+/** listStoryConflicts reads a project's recorded conflicts, newest first. */
+export async function listStoryConflicts(projectId: string, status = ""): Promise<desktop.StoryFactConflictDTO[]> {
+    if (!isDramaBindingsAvailable()) return [];
+    const { ListStoryConflicts } = await loadDramaBinding();
+    return ListStoryConflicts(projectId, status);
+}
+
+/** openStoryConflict records a disagreement between two facts. */
+export async function openStoryConflict(request: desktop.OpenStoryConflictRequest): Promise<desktop.StoryFactConflictDTO> {
+    if (!isDramaBindingsAvailable()) throw unavailableError();
+    const { OpenStoryConflict } = await loadDramaBinding();
+    return OpenStoryConflict(request);
+}
+
+/** resolveStoryConflict closes a conflict with a stated resolution. */
+export async function resolveStoryConflict(request: desktop.ResolveStoryConflictRequest): Promise<desktop.StoryFactConflictDTO> {
+    if (!isDramaBindingsAvailable()) throw unavailableError();
+    const { ResolveStoryConflict } = await loadDramaBinding();
+    return ResolveStoryConflict(request);
+}

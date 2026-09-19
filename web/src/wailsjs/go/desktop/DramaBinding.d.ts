@@ -72,6 +72,8 @@ export function ListStageRuns(arg1:string):Promise<Array<desktop.StageRunDTO>>;
 
 export function ListStaleMarks(arg1:string):Promise<Array<desktop.StaleMarkDTO>>;
 
+export function ListStoryConflicts(arg1:string,arg2:string):Promise<Array<desktop.StoryFactConflictDTO>>;
+
 export function ListStoryEntities(arg1:string,arg2:string):Promise<Array<desktop.StoryEntityDTO>>;
 
 export function ListStoryEntityAliases(arg1:string):Promise<Array<desktop.StoryEntityAliasDTO>>;
@@ -92,11 +94,15 @@ export function ListWorkflowRuns(arg1:string):Promise<Array<desktop.WorkflowRunD
 
 export function MarkStale(arg1:desktop.MarkStaleRequest):Promise<desktop.StaleMarkDTO>;
 
+export function OpenStoryConflict(arg1:desktop.OpenStoryConflictRequest):Promise<desktop.StoryFactConflictDTO>;
+
 export function RecordReview(arg1:desktop.RecordReviewRequest):Promise<desktop.ReviewReportDTO>;
 
 export function RejectStoryEntity(arg1:desktop.DecideStoryEntityRequest):Promise<desktop.StoryEntityDTO>;
 
 export function RejectStoryEvent(arg1:desktop.DecideStoryEventRequest):Promise<desktop.StoryEventDTO>;
+
+export function ResolveStoryConflict(arg1:desktop.ResolveStoryConflictRequest):Promise<desktop.StoryFactConflictDTO>;
 
 export function ReviseChapter(arg1:desktop.ReviseChapterRequest):Promise<desktop.ChapterDTO>;
 

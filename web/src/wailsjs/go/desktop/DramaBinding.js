@@ -142,6 +142,10 @@ export function ListStaleMarks(arg1) {
   return window['go']['desktop']['DramaBinding']['ListStaleMarks'](arg1);
 }
 
+export function ListStoryConflicts(arg1, arg2) {
+  return window['go']['desktop']['DramaBinding']['ListStoryConflicts'](arg1, arg2);
+}
+
 export function ListStoryEntities(arg1, arg2) {
   return window['go']['desktop']['DramaBinding']['ListStoryEntities'](arg1, arg2);
 }
@@ -182,6 +186,10 @@ export function MarkStale(arg1) {
   return window['go']['desktop']['DramaBinding']['MarkStale'](arg1);
 }
 
+export function OpenStoryConflict(arg1) {
+  return window['go']['desktop']['DramaBinding']['OpenStoryConflict'](arg1);
+}
+
 export function RecordReview(arg1) {
   return window['go']['desktop']['DramaBinding']['RecordReview'](arg1);
 }
@@ -192,6 +200,10 @@ export function RejectStoryEntity(arg1) {
 
 export function RejectStoryEvent(arg1) {
   return window['go']['desktop']['DramaBinding']['RejectStoryEvent'](arg1);
+}
+
+export function ResolveStoryConflict(arg1) {
+  return window['go']['desktop']['DramaBinding']['ResolveStoryConflict'](arg1);
 }
 
 export function ReviseChapter(arg1) {

@@ -158,6 +158,14 @@ type StoryConflictRepository interface {
 	GetStoryConflict(ctx context.Context, id string) (storydomain.StoryFactConflict, error)
 	// UpdateStoryConflict persists a change guarded by the expected status.
 	UpdateStoryConflict(ctx context.Context, record storydomain.StoryFactConflict, expectedStatus storydomain.ConflictStatus) error
+	// ListStoryConflicts returns a project's recorded conflicts, newest first.
+	//
+	// Newest first rather than oldest, which is the opposite of the other fact
+	// lists, because a conflict is a queue rather than a story: the panel asks
+	// "what needs a decision" and the most recent is the one the user just caused.
+	// An empty status means any, which includes the resolved ones a user may want
+	// to review after the fact.
+	ListStoryConflicts(ctx context.Context, projectID string, status storydomain.ConflictStatus) ([]storydomain.StoryFactConflict, error)
 }
 
 // Repository is everything the story service drives. Infrastructure supplies

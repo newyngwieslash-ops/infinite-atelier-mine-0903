@@ -413,3 +413,113 @@ func TestStoryGraphQueriesFailClosed(t *testing.T) {
 		})
 	}
 }
+
+// TestListStoryConflicts covers the conflict queue AC-STORY-002 names.
+//
+// WP-05 exposed OpenConflict and ResolveConflict with no way to list what had
+// been recorded, so a conflict could be created and never found again. A recorded
+// conflict nobody can list is not a record, which is why this is a scope item
+// rather than a nicety.
+func TestListStoryConflicts(t *testing.T) {
+	store := newMemoryStore()
+	service := newTestService(store)
+	first, _ := seedGraphProject(t, service, store)
+	second, _ := service.CreateStoryEntity(context.Background(), CreateStoryEntityRequest{
+		ProjectID: "project-1", Type: storydomain.EntityLocation, CanonicalName: "The Hall",
+	})
+	ctx := context.Background()
+
+	// An empty list is not an error, which is what the panel's empty state needs.
+	empty, err := service.ListStoryConflicts(ctx, "project-1", "")
+	if err != nil {
+		t.Fatalf("an empty conflict list must not be an error: %v", err)
+	}
+	if len(empty) != 0 {
+		t.Fatalf("a project with no conflicts returned %d", len(empty))
+	}
+
+	opened, err := service.OpenConflict(ctx, OpenConflictRequest{
+		ProjectID:    "project-1",
+		LeftFactType: storydomain.FactEntity, LeftFactID: first.ID,
+		RightFactType: storydomain.FactEntity, RightFactID: second.ID,
+		ConflictType: "name",
+	})
+	if err != nil {
+		t.Fatalf("OpenConflict: %v", err)
+	}
+	if opened.Status != storydomain.ConflictOpen {
+		t.Fatalf("a new conflict is %q, want open", opened.Status)
+	}
+	all, err := service.ListStoryConflicts(ctx, "project-1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 1 || all[0].ID != opened.ID {
+		t.Fatalf("the conflict list returned %+v", all)
+	}
+	// The filter narrows to the open ones, which is the queue the panel shows.
+	open, err := service.ListStoryConflicts(ctx, "project-1", storydomain.ConflictOpen)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(open) != 1 {
+		t.Fatalf("the open filter returned %d", len(open))
+	}
+	resolved, err := service.ListStoryConflicts(ctx, "project-1", storydomain.ConflictResolved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resolved) != 0 {
+		t.Fatalf("the resolved filter returned %d before anything was resolved", len(resolved))
+	}
+
+	// After a resolution the row moves from one filter to the other, and the
+	// resolution is recorded on it rather than only implied by the status.
+	if _, err := service.ResolveConflict(ctx, ResolveConflictRequest{
+		ConflictID: opened.ID, Resolution: "The hall is where Mira lives.", ResolvedBy: "user-1",
+	}); err != nil {
+		t.Fatalf("ResolveConflict: %v", err)
+	}
+	open, err = service.ListStoryConflicts(ctx, "project-1", storydomain.ConflictOpen)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(open) != 0 {
+		t.Fatalf("a resolved conflict still appears in the open queue: %+v", open)
+	}
+	resolved, err = service.ListStoryConflicts(ctx, "project-1", storydomain.ConflictResolved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resolved) != 1 {
+		t.Fatalf("the resolved filter returned %d", len(resolved))
+	}
+	if resolved[0].Resolution == "" || resolved[0].ResolvedBy != "user-1" {
+		t.Fatalf("the resolution was not recorded: %+v", resolved[0])
+	}
+	// A different project sees none of it, which is what keeps one drama's
+	// disagreements out of another's queue.
+	other, err := service.ListStoryConflicts(ctx, "project-2", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(other) != 0 {
+		t.Fatalf("another project saw %d conflicts", len(other))
+	}
+}
+
+// TestListStoryConflictsRejectsAnUnknownStatus keeps the filter to the vocabulary
+// the schema's CHECK accepts, so a typo surfaces as a refusal rather than as an
+// empty queue the user reads as "nothing to resolve".
+func TestListStoryConflictsRejectsAnUnknownStatus(t *testing.T) {
+	service := newTestService(newMemoryStore())
+	ctx := context.Background()
+	for _, status := range []storydomain.ConflictStatus{"pending", "Open", "closed"} {
+		if _, err := service.ListStoryConflicts(ctx, "project-1", status); err == nil {
+			t.Fatalf("the status %q was accepted as a filter", status)
+		}
+	}
+	if _, err := service.ListStoryConflicts(ctx, "  ", ""); err == nil {
+		t.Fatal("an empty project id was accepted")
+	}
+}

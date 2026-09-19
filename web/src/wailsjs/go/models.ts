@@ -1652,6 +1652,28 @@ export namespace desktop {
 		}
 	}
 	
+	export class OpenStoryConflictRequest {
+	    projectId: string;
+	    leftFactType: string;
+	    leftFactId: string;
+	    rightFactType: string;
+	    rightFactId: string;
+	    conflictType?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new OpenStoryConflictRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.projectId = source["projectId"];
+	        this.leftFactType = source["leftFactType"];
+	        this.leftFactId = source["leftFactId"];
+	        this.rightFactType = source["rightFactType"];
+	        this.rightFactId = source["rightFactId"];
+	        this.conflictType = source["conflictType"];
+	    }
+	}
 	export class PrecheckImportRequest {
 	    projectId: string;
 	    format?: string;
@@ -1939,6 +1961,22 @@ export namespace desktop {
 	        this.id = source["id"];
 	        this.name = source["name"];
 	        this.revision = source["revision"];
+	    }
+	}
+	export class ResolveStoryConflictRequest {
+	    conflictId: string;
+	    resolution: string;
+	    resolvedBy: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ResolveStoryConflictRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.conflictId = source["conflictId"];
+	        this.resolution = source["resolution"];
+	        this.resolvedBy = source["resolvedBy"];
 	    }
 	}
 	export class ReviewIssueDTO {
@@ -2458,6 +2496,40 @@ export namespace desktop {
 	        this.stateBefore = source["stateBefore"];
 	        this.stateAfter = source["stateAfter"];
 	        this.createdAt = source["createdAt"];
+	    }
+	}
+	export class StoryFactConflictDTO {
+	    id: string;
+	    projectId: string;
+	    leftFactType: string;
+	    leftFactId: string;
+	    rightFactType: string;
+	    rightFactId: string;
+	    conflictType?: string;
+	    status: string;
+	    resolution?: string;
+	    resolvedBy?: string;
+	    createdAt: string;
+	    resolvedAt?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new StoryFactConflictDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.projectId = source["projectId"];
+	        this.leftFactType = source["leftFactType"];
+	        this.leftFactId = source["leftFactId"];
+	        this.rightFactType = source["rightFactType"];
+	        this.rightFactId = source["rightFactId"];
+	        this.conflictType = source["conflictType"];
+	        this.status = source["status"];
+	        this.resolution = source["resolution"];
+	        this.resolvedBy = source["resolvedBy"];
+	        this.createdAt = source["createdAt"];
+	        this.resolvedAt = source["resolvedAt"];
 	    }
 	}
 	export class StoryFactSourceDTO {

@@ -274,3 +274,31 @@ func intPointer(value sql.NullInt64) *int {
 	out := int(value.Int64)
 	return &out
 }
+
+// ListStoryConflicts returns a project's recorded conflicts, newest first.
+//
+// The story_fact_conflicts table carries no deleted_at column — a conflict's
+// lifecycle is its status, which is what 'resolved' and 'waived' are for — so the
+// only filter is the status.
+func (r *StoryRepository) ListStoryConflicts(ctx context.Context, projectID string, status story.ConflictStatus) ([]story.StoryFactConflict, error) {
+	conn := r.conn()
+	if conn == nil {
+		return nil, storageError("STORY_STORE_UNAVAILABLE", "The story store is unavailable.", nil)
+	}
+	rows, err := conn.QueryContext(ctx, storyConflictSelectColumns+
+		` WHERE project_id = ? AND (? = '' OR status = ?) ORDER BY created_at DESC, id DESC`,
+		projectID, string(status), string(status))
+	if err != nil {
+		return nil, storageError("STORY_READ_FAILED", "The conflicts could not be read.", err)
+	}
+	defer rows.Close()
+	records := []story.StoryFactConflict{}
+	for rows.Next() {
+		record, err := scanStoryConflict(rows)
+		if err != nil {
+			return nil, err
+		}
+		records = append(records, record)
+	}
+	return records, rows.Err()
+}

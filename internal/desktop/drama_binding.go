@@ -897,6 +897,127 @@ func (b *DramaBinding) ListStoryEventParticipants(storyEventID string) ([]StoryE
 	return participants, nil
 }
 
+// StoryFactConflictDTO is the transport view of a recorded disagreement.
+//
+// Both sides are named by fact type and id rather than by a rendered sentence,
+// because a conflict is between two FACTS and the panel resolves it by showing
+// the two rows. A server-rendered description would be a second place the fact's
+// text lives, and it would go stale.
+type StoryFactConflictDTO struct {
+	ID            string `json:"id"`
+	ProjectID     string `json:"projectId"`
+	LeftFactType  string `json:"leftFactType"`
+	LeftFactID    string `json:"leftFactId"`
+	RightFactType string `json:"rightFactType"`
+	RightFactID   string `json:"rightFactId"`
+	ConflictType  string `json:"conflictType,omitempty"`
+	Status        string `json:"status"`
+	Resolution    string `json:"resolution,omitempty"`
+	ResolvedBy    string `json:"resolvedBy,omitempty"`
+	CreatedAt     string `json:"createdAt"`
+	ResolvedAt    string `json:"resolvedAt,omitempty"`
+}
+
+// ListStoryConflicts returns a project's recorded conflicts newest first.
+//
+// WP-05 exposed the commands that open and resolve a conflict and no query that
+// lists them, so a conflict could be created and never found again. AC-STORY-002
+// names 冲突记录 as an acceptance point, and a record nobody can list is not one.
+func (b *DramaBinding) ListStoryConflicts(projectID string, status string) ([]StoryFactConflictDTO, error) {
+	service := b.storyService()
+	if service == nil {
+		return nil, bindingUnavailable()
+	}
+	records, err := service.ListStoryConflicts(b.context(), projectID, storydomain.ConflictStatus(status))
+	if err != nil {
+		return nil, toDramaError(err)
+	}
+	conflicts := make([]StoryFactConflictDTO, 0, len(records))
+	for _, record := range records {
+		conflicts = append(conflicts, StoryFactConflictDTO{
+			ID: record.ID, ProjectID: record.ProjectID,
+			LeftFactType: string(record.LeftFactType), LeftFactID: record.LeftFactID,
+			RightFactType: string(record.RightFactType), RightFactID: record.RightFactID,
+			ConflictType: record.ConflictType, Status: string(record.Status),
+			Resolution: record.Resolution, ResolvedBy: record.ResolvedBy,
+			CreatedAt: record.CreatedAt.UTC().Format(rfc3339),
+			// An unresolved conflict has no resolution time, and the zero value is
+			// rendered as empty rather than as year one, which is what the DTO's
+			// omitempty expects.
+			ResolvedAt: formatOptionalTime(record.ResolvedAt),
+		})
+	}
+	return conflicts, nil
+}
+
+// OpenStoryConflictRequest records a disagreement between two facts.
+type OpenStoryConflictRequest struct {
+	ProjectID     string `json:"projectId"`
+	LeftFactType  string `json:"leftFactType"`
+	LeftFactID    string `json:"leftFactId"`
+	RightFactType string `json:"rightFactType"`
+	RightFactID   string `json:"rightFactId"`
+	ConflictType  string `json:"conflictType,omitempty"`
+}
+
+// OpenStoryConflict records a disagreement.
+func (b *DramaBinding) OpenStoryConflict(request OpenStoryConflictRequest) (StoryFactConflictDTO, error) {
+	service := b.storyService()
+	if service == nil {
+		return StoryFactConflictDTO{}, bindingUnavailable()
+	}
+	record, err := service.OpenConflict(b.context(), appstory.OpenConflictRequest{
+		ProjectID:     request.ProjectID,
+		LeftFactType:  storydomain.FactType(request.LeftFactType),
+		LeftFactID:    request.LeftFactID,
+		RightFactType: storydomain.FactType(request.RightFactType),
+		RightFactID:   request.RightFactID,
+		ConflictType:  request.ConflictType,
+	})
+	if err != nil {
+		return StoryFactConflictDTO{}, toDramaError(err)
+	}
+	return StoryFactConflictDTO{
+		ID: record.ID, ProjectID: record.ProjectID,
+		LeftFactType: string(record.LeftFactType), LeftFactID: record.LeftFactID,
+		RightFactType: string(record.RightFactType), RightFactID: record.RightFactID,
+		ConflictType: record.ConflictType, Status: string(record.Status),
+		CreatedAt: record.CreatedAt.UTC().Format(rfc3339),
+	}, nil
+}
+
+// ResolveStoryConflictRequest records what was decided about a conflict.
+type ResolveStoryConflictRequest struct {
+	ConflictID string `json:"conflictId"`
+	Resolution string `json:"resolution"`
+	ResolvedBy string `json:"resolvedBy"`
+}
+
+// ResolveStoryConflict closes a conflict with a stated resolution.
+func (b *DramaBinding) ResolveStoryConflict(request ResolveStoryConflictRequest) (StoryFactConflictDTO, error) {
+	service := b.storyService()
+	if service == nil {
+		return StoryFactConflictDTO{}, bindingUnavailable()
+	}
+	record, err := service.ResolveConflict(b.context(), appstory.ResolveConflictRequest{
+		ConflictID: request.ConflictID,
+		Resolution: request.Resolution,
+		ResolvedBy: request.ResolvedBy,
+	})
+	if err != nil {
+		return StoryFactConflictDTO{}, toDramaError(err)
+	}
+	return StoryFactConflictDTO{
+		ID: record.ID, ProjectID: record.ProjectID,
+		LeftFactType: string(record.LeftFactType), LeftFactID: record.LeftFactID,
+		RightFactType: string(record.RightFactType), RightFactID: record.RightFactID,
+		ConflictType: record.ConflictType, Status: string(record.Status),
+		Resolution: record.Resolution, ResolvedBy: record.ResolvedBy,
+		CreatedAt:  record.CreatedAt.UTC().Format(rfc3339),
+		ResolvedAt: formatOptionalTime(record.ResolvedAt),
+	}, nil
+}
+
 // StoryFactSourceDTO is the transport view of the evidence a fact cites.
 //
 // It carries the version and the offsets rather than any text: DOMAIN_MODEL
@@ -2818,4 +2939,16 @@ func domainExtractionError(err error) (category string, safeMessage string, ok b
 		return "EXTRACTION_INVALID_OUTPUT", validationErr.Error(), true
 	}
 	return "", "", false
+}
+
+// formatOptionalTime renders a time that may be unset.
+//
+// A conflict that is still open has no resolved_at, and the zero time formats as
+// "0001-01-01T00:00:00Z" — a value a UI would render as a real date. Empty is
+// what the DTO's omitempty expects and what a panel reads as "not yet".
+func formatOptionalTime(value time.Time) string {
+	if value.IsZero() {
+		return ""
+	}
+	return value.UTC().Format(rfc3339)
 }

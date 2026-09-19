@@ -990,3 +990,24 @@ func (s *memoryStore) ListStoryRelations(_ context.Context, projectID string, st
 	sort.Slice(records, func(i, j int) bool { return records[i].ID < records[j].ID })
 	return records, nil
 }
+
+// ListStoryConflicts mirrors the real repository's newest-first order and its
+// status filter, including that an empty status means "any".
+func (s *memoryStore) ListStoryConflicts(_ context.Context, projectID string, status storydomain.ConflictStatus) ([]storydomain.StoryFactConflict, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	records := []storydomain.StoryFactConflict{}
+	for _, record := range s.conflicts {
+		if record.ProjectID != projectID {
+			continue
+		}
+		if status != "" && record.Status != status {
+			continue
+		}
+		records = append(records, record)
+	}
+	// Newest first, which is the opposite of the other fact lists: a conflict is
+	// a queue rather than a story.
+	sort.Slice(records, func(i, j int) bool { return records[i].ID > records[j].ID })
+	return records, nil
+}

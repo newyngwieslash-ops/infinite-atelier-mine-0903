@@ -8,12 +8,14 @@ import {
     acceptStoryEntity,
     createStoryEntity,
     isDramaBindingsAvailable,
+    listStoryConflicts,
     listStoryEntities,
     listStoryEventParticipants,
     listStoryEvents,
     listStoryFactSources,
     listStoryRelations,
     rejectStoryEntity,
+    resolveStoryConflict,
 } from "@/services/desktop/drama";
 import { ENTITY_TYPES } from "@/services/desktop/drama";
 import type { desktop } from "@/wailsjs/go/models";
@@ -55,6 +57,8 @@ export function StoryGraphSection({ projectId }: StoryGraphSectionProps) {
     const [entities, setEntities] = useState<desktop.StoryEntityDTO[]>([]);
     const [events, setEvents] = useState<desktop.StoryEventDTO[]>([]);
     const [relations, setRelations] = useState<desktop.StoryRelationDTO[]>([]);
+    const [conflicts, setConflicts] = useState<desktop.StoryFactConflictDTO[]>([]);
+    const [resolving, setResolving] = useState<{ id: string; text: string } | null>(null);
     const [status, setStatus] = useState<string>("");
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -76,14 +80,20 @@ export function StoryGraphSection({ projectId }: StoryGraphSectionProps) {
             // Three reads rather than one composite call, because the core exposes
             // three lists and a combined query would be a fourth thing to keep in
             // step with them.
-            const [entityRows, eventRows, relationRows] = await Promise.all([
+            const [entityRows, eventRows, relationRows, conflictRows] = await Promise.all([
                 listStoryEntities(projectId, status),
                 listStoryEvents(projectId, "", status),
                 listStoryRelations(projectId, status),
+                // Conflicts are read with NO status filter whatever the list
+                // filter says. The queue is what needs a decision, but hiding a
+                // resolved one behind "candidates only" would make the record
+                // unfindable — which is the gap this panel closes.
+                listStoryConflicts(projectId, ""),
             ]);
             setEntities(entityRows);
             setEvents(eventRows);
             setRelations(relationRows);
+            setConflicts(conflictRows);
         } catch (caught) {
             setError(caught instanceof Error ? caught.message : t("studio.shell.loadFailed"));
         } finally {
@@ -269,6 +279,34 @@ export function StoryGraphSection({ projectId }: StoryGraphSectionProps) {
         },
     ];
 
+    const submitResolution = async (conflictId: string) => {
+        const text = resolving?.text.trim() ?? "";
+        if (text === "") {
+            // The domain refuses a blank resolution too — section 6.7 keeps the
+            // resolution as the decision that closed the conflict, so an empty one
+            // would close it having recorded nothing.
+            message.error(t("studio.storyGraph.resolutionRequired"));
+            return;
+        }
+        try {
+            await resolveStoryConflict({
+                conflictId,
+                resolution: text,
+                // The resolver is a person at this surface. A rule that closed the
+                // conflict would name the rule instead.
+                resolvedBy: "user",
+            } as desktop.ResolveStoryConflictRequest);
+            setResolving(null);
+            message.success(t("studio.storyGraph.resolved"));
+            await load();
+        } catch (caught) {
+            // A refusal here is usually a second resolution: the row moved, so
+            // the reload below shows the state that actually exists.
+            message.error(caught instanceof Error ? caught.message : t("studio.storyGraph.resolveFailed"));
+            await load();
+        }
+    };
+
     const graph = useMemo(() => buildGraph(entities, relations), [entities, relations]);
 
     if (!available) {
@@ -383,6 +421,73 @@ export function StoryGraphSection({ projectId }: StoryGraphSectionProps) {
                         dataSource={relations}
                         data-testid="studio-relations-table"
                     />
+                )}
+            </section>
+
+            <section className="space-y-2">
+                <h3 className="text-sm font-medium">{t("studio.storyGraph.conflictsTitle")}</h3>
+                {conflicts.length === 0 ? (
+                    <Empty description={t("studio.storyGraph.conflictsEmpty")} />
+                ) : (
+                    <ul className="space-y-2" data-testid="studio-conflicts-list">
+                        {conflicts.map((conflict) => (
+                            <li key={conflict.id} className="rounded-lg border border-stone-200 p-3 text-sm dark:border-stone-800">
+                                <div className="flex flex-wrap items-center gap-2">
+                                    <Tag color={conflict.status === "open" ? "orange" : "default"}>
+                                        {t(`studio.conflictStatus.${conflict.status}`, { defaultValue: conflict.status })}
+                                    </Tag>
+                                    <span className="text-xs text-stone-500">
+                                        {t(`studio.factType.${conflict.leftFactType}`, { defaultValue: conflict.leftFactType })}
+                                    </span>
+                                    <code className="text-xs">{shortId(conflict.leftFactId)}</code>
+                                    <span className="text-stone-400">↔</span>
+                                    <span className="text-xs text-stone-500">
+                                        {t(`studio.factType.${conflict.rightFactType}`, { defaultValue: conflict.rightFactType })}
+                                    </span>
+                                    <code className="text-xs">{shortId(conflict.rightFactId)}</code>
+                                    {conflict.conflictType ? <Tag>{conflict.conflictType}</Tag> : null}
+                                </div>
+                                {conflict.status === "open" ? (
+                                    resolving?.id === conflict.id ? (
+                                        <div className="mt-2 flex flex-wrap items-end gap-2">
+                                            <Input
+                                                className="min-w-52 flex-1"
+                                                value={resolving.text}
+                                                maxLength={2000}
+                                                placeholder={t("studio.storyGraph.resolutionPlaceholder")}
+                                                data-testid={`studio-conflict-resolution-${conflict.id}`}
+                                                onChange={(event) => setResolving({ id: conflict.id, text: event.target.value })}
+                                            />
+                                            <Button
+                                                size="small"
+                                                type="primary"
+                                                data-testid={`studio-conflict-resolve-submit-${conflict.id}`}
+                                                onClick={() => void submitResolution(conflict.id)}
+                                            >
+                                                {t("studio.storyGraph.resolve")}
+                                            </Button>
+                                            <Button size="small" type="text" onClick={() => setResolving(null)}>
+                                                {t("common.cancel")}
+                                            </Button>
+                                        </div>
+                                    ) : (
+                                        <Button
+                                            className="mt-2"
+                                            size="small"
+                                            data-testid={`studio-conflict-resolve-${conflict.id}`}
+                                            onClick={() => setResolving({ id: conflict.id, text: "" })}
+                                        >
+                                            {t("studio.storyGraph.resolve")}
+                                        </Button>
+                                    )
+                                ) : (
+                                    <p className="mt-2 text-xs text-stone-500">
+                                        {t("studio.storyGraph.resolvedBy", { by: conflict.resolvedBy || "—" })}: {conflict.resolution}
+                                    </p>
+                                )}
+                            </li>
+                        ))}
+                    </ul>
                 )}
             </section>
 

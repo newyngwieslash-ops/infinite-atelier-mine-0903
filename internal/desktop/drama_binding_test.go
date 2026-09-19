@@ -2736,3 +2736,21 @@ func TestReviseChapterStillWorksWithoutAStalenessService(t *testing.T) {
 		t.Fatalf("the correction was lost: end offset %d", revised.EndOffset)
 	}
 }
+
+// ListStoryConflicts mirrors the real repository: newest first, and an empty
+// status means any.
+func (s *dramaStore) ListStoryConflicts(_ context.Context, projectID string, status storydomain.ConflictStatus) ([]storydomain.StoryFactConflict, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var records []storydomain.StoryFactConflict
+	for _, record := range s.conflicts {
+		if record.ProjectID != projectID {
+			continue
+		}
+		if status != "" && record.Status != status {
+			continue
+		}
+		records = append(records, record)
+	}
+	return records, nil
+}
