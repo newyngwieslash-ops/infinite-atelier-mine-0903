@@ -644,3 +644,39 @@ func TestLockCommandsFailClosed(t *testing.T) {
 		}
 	}
 }
+
+// TestReviseChapterMarksTheBoundaryManual covers the promise migration 000014
+// makes: "A user-edited boundary is marked 'manual' by the command that edits it."
+//
+// The column exists so the import report and the staleness walk can tell a
+// detector's boundary from a person's, and a revised chapter that still read
+// 'regex' would make both of them wrong about where it came from. The migration
+// recorded the rule and nothing implemented it.
+func TestReviseChapterMarksTheBoundaryManual(t *testing.T) {
+	store := newMemoryStore()
+	service := newTestService(store)
+	ctx := context.Background()
+	// A chapter as the detector would have written it.
+	store.chapters["chapter-1"] = storydomain.Chapter{
+		ID: "chapter-1", SourceDocumentVersionID: "version-1", Ordinal: 1, Title: "One",
+		StartOffset: 0, EndOffset: 100, SourceKind: storydomain.ChapterFromPattern,
+		Status: storydomain.ChapterDetected, Revision: 1,
+	}
+	revised, err := service.ReviseChapter(ctx, ReviseChapterRequest{
+		ChapterID: "chapter-1", Title: "One, corrected", StartOffset: 0, EndOffset: 120, Revision: 1,
+	})
+	if err != nil {
+		t.Fatalf("ReviseChapter: %v", err)
+	}
+	if revised.SourceKind != storydomain.ChapterManual {
+		t.Fatalf("the revised boundary reads %q, want manual", revised.SourceKind)
+	}
+	// And the stored row carries it, not only the returned value.
+	stored, err := store.GetChapter(ctx, "chapter-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.SourceKind != storydomain.ChapterManual {
+		t.Fatalf("the stored boundary reads %q, want manual", stored.SourceKind)
+	}
+}

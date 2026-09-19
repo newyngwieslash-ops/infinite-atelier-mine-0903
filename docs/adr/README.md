@@ -48,3 +48,4 @@
 | 0007 | Drama schema and vocabulary rulings | Accepted |
 | 0008 | Staleness propagation, projection commands, and version approval | Accepted |
 | 0009 | Domain event stream and approval semantics | Accepted |
+| 0010 | Document import, the event extraction contract, and the story graph | Accepted |

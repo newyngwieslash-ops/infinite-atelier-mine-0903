@@ -289,6 +289,15 @@ func (s *Service) ReviseChapter(ctx context.Context, request ReviseChapterReques
 	if request.Status != "" {
 		record.Status = request.Status
 	}
+	// The boundary is now a person's rather than the detector's, which is what
+	// chapters.source_kind exists to record: migration 000014 states that a
+	// user-edited boundary is marked 'manual' by the command that edits it, and a
+	// boundary that was revised and still reads 'regex' would make the import
+	// report and the staleness walk both wrong about where it came from.
+	//
+	// It is set before the domain check so a caller cannot pass a source kind that
+	// contradicts the command that ran.
+	record.SourceKind = storydomain.ChapterManual
 	record.UpdatedAt = s.now()
 	if err := record.Validate(); err != nil {
 		return storydomain.Chapter{}, err

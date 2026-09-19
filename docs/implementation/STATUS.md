@@ -7,6 +7,144 @@
 
 WP-03 start baseline (2026-09-15): branch `codex/wp-01-desktop-foundation`, HEAD `a243891455ec17687dd54b5ac90d3bd64478a1a1`, empty index. Freshly re-run baseline: `go test ./... -count=1` PASS (15 packages at start), `go vet ./...` PASS, `web` `npm run typecheck` PASS, `npm test` PASS (15 tests), `npm run build` PASS. Go commands require `GOTOOLCHAIN=go1.25.0 GOSUMDB=sum.golang.org` on this host because the user-level `go env` sets `GOSUMDB=off`, which blocks toolchain verification. The working tree already contained the WP-01/WP-02 tracked and untracked work plus the user's brand rename; none of it was modified outside the WP-03 scope.
 
+# 0g. WP-06 result: source documents, chapters and the event graph (2026-09-19)
+
+## Scope completed
+
+- **Status: COMPLETE for the 13 ROADMAP items, with the two scope exclusions
+  named in ADR-0010 §8.**
+- Fixtures: `testdata/canary-drama/` (32,736 Chinese characters, 5 chapters, one
+  carrying a prompt-injection block) and `testdata/malicious-imports/` (11
+  hostile inputs). Both are generated, both are checked by `verify.sh` /
+  `verify.ps1` `--check` steps, and both are now consumed by real tests.
+- Domain: `internal/domain/importing` (format, encoding, normalization, chapter
+  detection as pure functions) and `internal/domain/extraction` (the contract's
+  vocabulary and the refusal types).
+- Schema: `schemas/agent/event_extraction.v1.json`, embedded through the
+  `schemas` package. `internal/application/validation` compiles it and validates
+  against it, so the file is the contract rather than a description of one.
+- Application: `internal/application/importing` (precheck, import, confirm,
+  paged reading) and `internal/application/extraction` (the `Extractor` port,
+  reference resolution, candidate writes, evidence). `internal/application/story`
+  gained the alias, participant and evidence writers ADR-0007 recorded as
+  missing, the filtered graph queries, the conflict queue, and lock/unlock.
+- Infrastructure: forward migration `000014_story_import.sql` (the entity
+  vocabulary widened to eight values by rebuilding four tables; `source_hash`
+  and `chapters.source_kind` added). `000001`–`000013` were not modified.
+- Bindings: `ImportBinding` (precheck, import, paged read, confirm, extract),
+  `ImportUploadBinding` (the chunked transfer), the five story-graph list
+  queries, three conflict methods and four lock methods on `DramaBinding`. The
+  Wails surface was regenerated.
+- Frontend: the import flow with its precheck review and duplicate gate, the
+  chapter panel with paged reading, the story-graph section with its review
+  queue, evidence and participant panels, a conflict queue, an SVG reading aid,
+  and lock controls. i18n in both locales at 1,181 leaves each.
+- Docs: ADR-0010, the ADR index, TRACEABILITY, README, this section.
+
+## Commands executed and actual results
+
+| Command | Result |
+|---|---|
+| `go test ./... -count=1` | **PASS** |
+| `go vet ./...` | **PASS** |
+| `gofmt -l internal/ schemas/` | **PASS** (no output) |
+| `node scripts/security-scan.mjs` | **PASS** (401 files scanned; 1 audited dynamic-execution exception, 4 audited legacy direct-call files) |
+| `web`: `npm run typecheck` | **PASS** |
+| `web`: `npm test` | **PASS** (40 tests, including four that compare the two locale key trees) |
+| `web`: `npm run build` | **PASS** |
+| `web`: `npx playwright test e2e/` | **PASS** (23 passed, 1 skipped) |
+| `wails build -s` (v2.15.0) | **PASS**; `build/bin/InfiniteAtelier.exe` |
+| `wails generate module` | **PASS**; `ImportBinding` and `ImportUploadBinding` added |
+| `git diff --check` | **PASS** |
+| `go test -race ./...` | **ENVIRONMENT FAILURE, not a pass** — unchanged from sections 0e/0f: the host's `cc1.exe` reports "64-bit mode not compiled in", so the race detector cannot build. Recorded as an environment failure rather than a skip. |
+
+## Acceptance
+
+| Item | Status | Evidence |
+|---|---|---|
+| AC-STORY-001 编码正确 | PASS | `DetectEncoding` covers UTF-8 with BOM, UTF-16 by BOM, GBK and GB18030; the GBK fixture decodes, and the lossy-decode guard rejects what it cannot decode without loss. |
+| AC-STORY-001 章节检测 | PASS | The canary document's five chapters are detected and matched against its generated report; the boundaries are asserted to tile the document. |
+| AC-STORY-001 用户调整 | PASS | `ReviseChapter` adjusts a boundary's title and offsets under a revision guard and marks it `manual`. Split and merge are excluded, with ADR-0010 §8 stating why. |
+| AC-STORY-001 offsets 有效 | PASS | Evidence offsets are asserted to fall inside the chapter AND to index the VERSION's text, which is what §6.6's reader uses. Both assertions caught a real defect. |
+| AC-STORY-001 原文定位 | PASS | `ReadDocumentRange` returns a version's text by offset, bounded by the core's page ceiling. |
+| AC-STORY-001 duplicate hash 提示 | PASS | A repeat import of the same file is refused by default and reported with the document it was imported as; the UI requires an explicit confirmation. |
+| AC-STORY-001 UI 不冻结 | PARTIAL, with the cost named | The reader's response is capped by the core (asserted), and the transfer that feeds an import is chunked at 64 KiB (asserted to cross a 100k-character document in more than one chunk). **No timing measurement exists**: the repository has no benchmark for this path, so the claim rests on the bounds rather than on a measured figure. The precheck still crosses in one message and is the remaining cost. |
+| AC-STORY-002 结构校验 | PASS | The embedded schema is compiled and enforced; a document that violates it writes nothing. |
+| AC-STORY-002 来源 chapter/offset | PASS | Evidence rows carry the version, the chapter and, when the name is found, its offsets. |
+| AC-STORY-002 candidate 状态 | PASS | Every write goes through commands that hard-code `candidate`; the schema has no status field for a model to fill in. |
+| AC-STORY-002 接受/拒绝/锁定 | PASS | Accept, reject, lock and unlock exist for entities and for events; the gates refuse a locked fact any of the others. |
+| AC-STORY-002 冲突记录 | PASS | Open, resolve and LIST; the list was the missing third of a loop whose commands existed with no way to find what they recorded. |
+| AC-STORY-002 无跨项目污染 | PASS | Every query is scoped by project, and the propagation skips a dependent whose project does not match; a test asserts another project sees none of a conflict. |
+| AC-STORY-002 一次 Schema 修复 | PASS | The repair round is implemented and asserted to reach the extractor with the violations, in exactly one round. |
+| Prompt Injection 边界 | PASS | The canary's injection block and two hostile fixtures are asserted to survive as DATA: the text reaches the extractor unfiltered and nothing acts on it. |
+| 恶意 DOCX | PASS | Eleven hostile fixtures, each with a test that reaches the refusal it exists for. Three fixtures were added because the first two never reached the container check at all. |
+| ADR-0010 | PASS / ACCEPTED | The four rulings and the two exclusions recorded. |
+
+## Independent review
+
+An independent agent reviewed the 13 commits against ROADMAP, PRD FR-020/FR-030,
+ACCEPTANCE §8, SECURITY §7.2/§7.5/§8.1/§8.2/§9/§17/§18 and AGENT_CONTRACTS
+§2.2/§5/§6/§7/§14.3/§17/§18. It found eight issues. Two were blocking and are
+fixed with mutation-verified tests:
+
+1. **Evidence offsets were chapter-local, not version-absolute.** The reader
+   sliced the chapter out of the version and the service searched that slice, so
+   a span it found was relative to the chapter while the row named a VERSION. A
+   citation in a chapter starting at offset 1000 pointed at the whole document's
+   first characters. The suite was green because every fixture had one chapter at
+   offset zero, where the two systems coincide. The fixtures now start at 1000;
+   removing the shift fails three tests.
+2. **Section 14.3's repair round did not exist**, and a validation refusal could
+   not reach the caller at all — the error mapper recognised only the request
+   error, so a malformed document arrived as "The drama request failed." with the
+   violations discarded. Both are fixed, and the violations were made value-free
+   before they could be sent anywhere.
+
+The other six: the Conflict scope item had zero delivery (now implemented);
+lock was missing from AC-STORY-002's list (now implemented, and "modify"
+explained in ADR-0010 §8); "100k 不阻塞" had no measurement and the transport was
+synchronous (the transport is now bounded and chunked, and the missing
+measurement is recorded above rather than papered over); four comments described
+code that did not do what they said; two fixtures were referenced by their
+licence rows and read by no test; and a test-time dependency was missing from the
+notices.
+
+## Known limits and deferred work
+
+- **No timing measurement for the 100k-character path.** The bounds are asserted;
+  a figure is not. A benchmark belongs with the performance work.
+- **The precheck still crosses in one Wails message.** Bounded by the domain's
+  input ceiling, but it is the one remaining cost proportional to document size
+  on the webview thread.
+- **Chapter split and merge have no command**, and a generic "modify a fact" does
+  not exist. ADR-0010 §8 records why, so the next package can disagree with the
+  reasoning rather than rediscover the gap.
+- **`PropState` is still unmodelled** (ADR-0010 §3).
+- **`go test -race` cannot run on this host** (no 64-bit C toolchain), so
+  concurrency claims rest on design rather than on a race-detector run.
+- **A WP-05 leftover is now observable**: creating a candidate entity or event
+  emits `StoryFactAccepted`. The name contradicts the state, and extraction makes
+  that path busy. It predates this package and is recorded rather than fixed
+  here, because the event vocabulary is closed and pinned by a test.
+
+## Git and data safety
+
+- Existing user changes preserved: **yes**. The user's untracked
+  `Infinite-Atelier-OpenCode集成必要性与完整实施方案.md` was briefly staged by a
+  `git add -A` and unstaged immediately; the file was never modified and is
+  untracked again.
+- Automatic commit/push/stash/reset/clean: **none** beyond the `git add` mistake
+  above, which was corrected in the same session.
+- Migrations: `000014` added; `000001`–`000013` unmodified. No migration ran
+  against user data; the upgrade-preservation test uses a temporary database.
+- User databases, secrets and media changed: **no**.
+- Real Provider calls: **none**.
+- Dependencies added: `github.com/santhosh-tekuri/jsonschema/v6` (Apache-2.0, one
+  dependency already direct). `THIRD_PARTY_NOTICES.md` records it and the
+  test-only `dlclark/regexp2`.
+
+---
+
 # 0f. WP-05 follow-up: domain events and the missing approvals (2026-09-18)
 
 ## Why this exists
