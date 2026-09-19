@@ -166,6 +166,31 @@ test.describe("the drama studio without a core", () => {
         await expect(page.locator("[data-empty-section]")).toBeVisible();
     });
 
+    test("the import flow and the story graph state that they need the core", async ({ page }) => {
+        // Both sections were filled by WP-06. With no core the SHELL answers for
+        // them — it renders the no-core notice before reaching any section body —
+        // so what matters here is that they are marked available and that the
+        // shell's answer is the honest one. The sections' own empty states are
+        // reached only in a desktop build, where the Go-side binding tests cover
+        // them.
+        await page.goto("/studio/example-project");
+        const nav = page.locator("[data-testid='studio-section-nav']");
+        await expect(nav).toBeVisible();
+        // Both report themselves as available: they ARE built now, and marking
+        // them unavailable would be the opposite lie.
+        await expect(nav.locator("[data-section='source']")).toHaveAttribute("data-section-available", "true");
+        await expect(nav.locator("[data-section='story-graph']")).toHaveAttribute("data-section-available", "true");
+
+        await nav.locator("[data-section='source']").click();
+        await expect(page.locator("[data-testid='studio-section-no-core']")).toBeVisible();
+        // The WP-05 gap notice must be gone: it claimed no query could list the
+        // fact layer, and WP-06 added them. Asserting its absence keeps the old
+        // notice from being restored by accident.
+        await nav.locator("[data-section='story-graph']").click();
+        await expect(page.locator("[data-testid='studio-section-no-core']")).toBeVisible();
+        await expect(page.locator("[data-testid='studio-story-graph-gap']")).toHaveCount(0);
+    });
+
     test("a direct navigation and a reload both keep the shell working", async ({ page }) => {
         // No prior navigation and no prior state: this is the cold path the shell
         // must tolerate, since the id is taken from the URL alone.

@@ -428,6 +428,28 @@ export namespace desktop {
 		    return a;
 		}
 	}
+	export class ChapterBoundaryDTO {
+	    ordinal: number;
+	    title: string;
+	    startOffset: number;
+	    titleEndOffset: number;
+	    endOffset: number;
+	    source: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ChapterBoundaryDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.ordinal = source["ordinal"];
+	        this.title = source["title"];
+	        this.startOffset = source["startOffset"];
+	        this.titleEndOffset = source["titleEndOffset"];
+	        this.endOffset = source["endOffset"];
+	        this.source = source["source"];
+	    }
+	}
 	export class ChapterDTO {
 	    id: string;
 	    sourceDocumentVersionId: string;
@@ -472,6 +494,20 @@ export namespace desktop {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.artifactType = source["artifactType"];
 	        this.artifactId = source["artifactId"];
+	    }
+	}
+	export class ConfirmChaptersRequestDTO {
+	    sourceDocumentVersionId: string;
+	    traceId?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ConfirmChaptersRequestDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.sourceDocumentVersionId = source["sourceDocumentVersionId"];
+	        this.traceId = source["traceId"];
 	    }
 	}
 	export class CreateAssetRequest {
@@ -1052,6 +1088,24 @@ export namespace desktop {
 	        this.createdAt = source["createdAt"];
 	    }
 	}
+	export class DocumentRangeDTO {
+	    text: string;
+	    startRune: number;
+	    endRune: number;
+	    totalRunes: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new DocumentRangeDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.text = source["text"];
+	        this.startRune = source["startRune"];
+	        this.endRune = source["endRune"];
+	        this.totalRunes = source["totalRunes"];
+	    }
+	}
 	export class DomainEventDTO {
 	    eventId: string;
 	    eventType: string;
@@ -1123,6 +1177,174 @@ export namespace desktop {
 	        this.updatedAt = source["updatedAt"];
 	        this.revision = source["revision"];
 	    }
+	}
+	export class ExtractChapterRequest {
+	    chapterId: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ExtractChapterRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.chapterId = source["chapterId"];
+	    }
+	}
+	export class ExtractionResultDTO {
+	    chapterId: string;
+	    extracted: number;
+	    entities: number;
+	    events: number;
+	    relations: number;
+	    aliases: number;
+	    participants: number;
+	    evidence: number;
+	    summary?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ExtractionResultDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.chapterId = source["chapterId"];
+	        this.extracted = source["extracted"];
+	        this.entities = source["entities"];
+	        this.events = source["events"];
+	        this.relations = source["relations"];
+	        this.aliases = source["aliases"];
+	        this.participants = source["participants"];
+	        this.evidence = source["evidence"];
+	        this.summary = source["summary"];
+	    }
+	}
+	export class ImportDocumentRequest {
+	    projectId: string;
+	    documentId?: string;
+	    documentType?: string;
+	    name?: string;
+	    format?: string;
+	    content: number[];
+	    confirmDuplicate?: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new ImportDocumentRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.projectId = source["projectId"];
+	        this.documentId = source["documentId"];
+	        this.documentType = source["documentType"];
+	        this.name = source["name"];
+	        this.format = source["format"];
+	        this.content = source["content"];
+	        this.confirmDuplicate = source["confirmDuplicate"];
+	    }
+	}
+	export class SourceDocumentVersionDTO {
+	    id: string;
+	    sourceDocumentId: string;
+	    versionNumber: number;
+	    physicalFileId?: string;
+	    normalizedTextFileId: string;
+	    contentHash?: string;
+	    mimeType?: string;
+	    encoding?: string;
+	    charCount: number;
+	    importMetadataJson?: string;
+	    createdByType: string;
+	    createdAt: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SourceDocumentVersionDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.sourceDocumentId = source["sourceDocumentId"];
+	        this.versionNumber = source["versionNumber"];
+	        this.physicalFileId = source["physicalFileId"];
+	        this.normalizedTextFileId = source["normalizedTextFileId"];
+	        this.contentHash = source["contentHash"];
+	        this.mimeType = source["mimeType"];
+	        this.encoding = source["encoding"];
+	        this.charCount = source["charCount"];
+	        this.importMetadataJson = source["importMetadataJson"];
+	        this.createdByType = source["createdByType"];
+	        this.createdAt = source["createdAt"];
+	    }
+	}
+	export class SourceDocumentDTO {
+	    id: string;
+	    projectId: string;
+	    type: string;
+	    name: string;
+	    currentVersionId?: string;
+	    status: string;
+	    deletedAt?: string;
+	    createdAt: string;
+	    updatedAt: string;
+	    revision: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new SourceDocumentDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.projectId = source["projectId"];
+	        this.type = source["type"];
+	        this.name = source["name"];
+	        this.currentVersionId = source["currentVersionId"];
+	        this.status = source["status"];
+	        this.deletedAt = source["deletedAt"];
+	        this.createdAt = source["createdAt"];
+	        this.updatedAt = source["updatedAt"];
+	        this.revision = source["revision"];
+	    }
+	}
+	export class ImportDocumentResult {
+	    document: SourceDocumentDTO;
+	    version: SourceDocumentVersionDTO;
+	    chapters: ChapterDTO[];
+	    charCount: number;
+	    encoding: string;
+	    format: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ImportDocumentResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.document = this.convertValues(source["document"], SourceDocumentDTO);
+	        this.version = this.convertValues(source["version"], SourceDocumentVersionDTO);
+	        this.chapters = this.convertValues(source["chapters"], ChapterDTO);
+	        this.charCount = source["charCount"];
+	        this.encoding = source["encoding"];
+	        this.format = source["format"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class ImportProjectsRequest {
 	    snapshotJson: string;
@@ -1430,6 +1652,70 @@ export namespace desktop {
 		}
 	}
 	
+	export class PrecheckImportRequest {
+	    projectId: string;
+	    format?: string;
+	    name?: string;
+	    content: number[];
+	
+	    static createFrom(source: any = {}) {
+	        return new PrecheckImportRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.projectId = source["projectId"];
+	        this.format = source["format"];
+	        this.name = source["name"];
+	        this.content = source["content"];
+	    }
+	}
+	export class PrecheckImportResult {
+	    format: string;
+	    encoding: string;
+	    charCount: number;
+	    chapterCount: number;
+	    chapters: ChapterBoundaryDTO[];
+	    duplicate: boolean;
+	    duplicateDocumentId?: string;
+	    duplicateDocumentName?: string;
+	    warnings: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new PrecheckImportResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.format = source["format"];
+	        this.encoding = source["encoding"];
+	        this.charCount = source["charCount"];
+	        this.chapterCount = source["chapterCount"];
+	        this.chapters = this.convertValues(source["chapters"], ChapterBoundaryDTO);
+	        this.duplicate = source["duplicate"];
+	        this.duplicateDocumentId = source["duplicateDocumentId"];
+	        this.duplicateDocumentName = source["duplicateDocumentName"];
+	        this.warnings = source["warnings"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	
 	export class ProjectRuleDTO {
 	    id: string;
@@ -1543,6 +1829,22 @@ export namespace desktop {
 	        this.cancelled = source["cancelled"];
 	        this.activeTotal = source["activeTotal"];
 	        this.paused = source["paused"];
+	    }
+	}
+	export class ReadDocumentRangeRequest {
+	    sourceDocumentVersionId: string;
+	    startRune: number;
+	    endRune: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ReadDocumentRangeRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.sourceDocumentVersionId = source["sourceDocumentVersionId"];
+	        this.startRune = source["startRune"];
+	        this.endRune = source["endRune"];
 	    }
 	}
 	export class ReviewIssueInputRequest {
@@ -1954,70 +2256,8 @@ export namespace desktop {
 	        this.revision = source["revision"];
 	    }
 	}
-	export class SourceDocumentDTO {
-	    id: string;
-	    projectId: string;
-	    type: string;
-	    name: string;
-	    currentVersionId?: string;
-	    status: string;
-	    deletedAt?: string;
-	    createdAt: string;
-	    updatedAt: string;
-	    revision: number;
 	
-	    static createFrom(source: any = {}) {
-	        return new SourceDocumentDTO(source);
-	    }
 	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.id = source["id"];
-	        this.projectId = source["projectId"];
-	        this.type = source["type"];
-	        this.name = source["name"];
-	        this.currentVersionId = source["currentVersionId"];
-	        this.status = source["status"];
-	        this.deletedAt = source["deletedAt"];
-	        this.createdAt = source["createdAt"];
-	        this.updatedAt = source["updatedAt"];
-	        this.revision = source["revision"];
-	    }
-	}
-	export class SourceDocumentVersionDTO {
-	    id: string;
-	    sourceDocumentId: string;
-	    versionNumber: number;
-	    physicalFileId?: string;
-	    normalizedTextFileId: string;
-	    contentHash?: string;
-	    mimeType?: string;
-	    encoding?: string;
-	    charCount: number;
-	    importMetadataJson?: string;
-	    createdByType: string;
-	    createdAt: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new SourceDocumentVersionDTO(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.id = source["id"];
-	        this.sourceDocumentId = source["sourceDocumentId"];
-	        this.versionNumber = source["versionNumber"];
-	        this.physicalFileId = source["physicalFileId"];
-	        this.normalizedTextFileId = source["normalizedTextFileId"];
-	        this.contentHash = source["contentHash"];
-	        this.mimeType = source["mimeType"];
-	        this.encoding = source["encoding"];
-	        this.charCount = source["charCount"];
-	        this.importMetadataJson = source["importMetadataJson"];
-	        this.createdByType = source["createdByType"];
-	        this.createdAt = source["createdAt"];
-	    }
-	}
 	export class StageRunDTO {
 	    id: string;
 	    workflowRunId: string;
@@ -2088,6 +2328,30 @@ export namespace desktop {
 	        this.waivedByDecisionId = source["waivedByDecisionId"];
 	        this.waivedReason = source["waivedReason"];
 	        this.clearedAt = source["clearedAt"];
+	    }
+	}
+	export class StoryEntityAliasDTO {
+	    id: string;
+	    storyEntityId: string;
+	    alias: string;
+	    sourceChapterId?: string;
+	    sourceStart?: number;
+	    sourceEnd?: number;
+	    createdAt: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new StoryEntityAliasDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.storyEntityId = source["storyEntityId"];
+	        this.alias = source["alias"];
+	        this.sourceChapterId = source["sourceChapterId"];
+	        this.sourceStart = source["sourceStart"];
+	        this.sourceEnd = source["sourceEnd"];
+	        this.createdAt = source["createdAt"];
 	    }
 	}
 	export class StoryEntityDTO {
@@ -2172,6 +2436,58 @@ export namespace desktop {
 	        this.createdAt = source["createdAt"];
 	        this.updatedAt = source["updatedAt"];
 	        this.revision = source["revision"];
+	    }
+	}
+	export class StoryEventParticipantDTO {
+	    storyEventId: string;
+	    storyEntityId: string;
+	    role: string;
+	    stateBefore?: string;
+	    stateAfter?: string;
+	    createdAt: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new StoryEventParticipantDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.storyEventId = source["storyEventId"];
+	        this.storyEntityId = source["storyEntityId"];
+	        this.role = source["role"];
+	        this.stateBefore = source["stateBefore"];
+	        this.stateAfter = source["stateAfter"];
+	        this.createdAt = source["createdAt"];
+	    }
+	}
+	export class StoryFactSourceDTO {
+	    id: string;
+	    factType: string;
+	    factId: string;
+	    chapterId?: string;
+	    sourceDocumentVersionId: string;
+	    startOffset?: number;
+	    endOffset?: number;
+	    quoteHash?: string;
+	    sourceKind: string;
+	    createdAt: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new StoryFactSourceDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.factType = source["factType"];
+	        this.factId = source["factId"];
+	        this.chapterId = source["chapterId"];
+	        this.sourceDocumentVersionId = source["sourceDocumentVersionId"];
+	        this.startOffset = source["startOffset"];
+	        this.endOffset = source["endOffset"];
+	        this.quoteHash = source["quoteHash"];
+	        this.sourceKind = source["sourceKind"];
+	        this.createdAt = source["createdAt"];
 	    }
 	}
 	export class StoryRelationDTO {

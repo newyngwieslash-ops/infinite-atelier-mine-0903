@@ -763,6 +763,181 @@ func (b *DramaBinding) CreateStoryRelation(request CreateStoryRelationRequest) (
 }
 
 // ---------------------------------------------------------------------------
+// The story-graph reads
+//
+// WP-05 exposed the fact layer's commands and no query that lists it, which the
+// story-graph section recorded as a gap: an empty table would have claimed the
+// project has no entities, which the interface could not know. These are the
+// lists that close it.
+//
+// The status filter is a separate argument rather than folded into the project
+// id, because the panel asks two different questions — everything the project
+// has, and the candidates awaiting review — and an empty value means "any"
+// rather than "none".
+// ---------------------------------------------------------------------------
+
+// ListStoryEntities returns a project's live entities oldest first.
+func (b *DramaBinding) ListStoryEntities(projectID string, status string) ([]StoryEntityDTO, error) {
+	service := b.storyService()
+	if service == nil {
+		return nil, bindingUnavailable()
+	}
+	records, err := service.ListStoryEntities(b.context(), projectID, storydomain.FactStatus(status))
+	if err != nil {
+		return nil, toDramaError(err)
+	}
+	entities := make([]StoryEntityDTO, 0, len(records))
+	for _, record := range records {
+		entities = append(entities, toStoryEntityDTO(record))
+	}
+	return entities, nil
+}
+
+// ListStoryEvents returns a project's events in story order.
+//
+// chapterID narrows the list to one chapter, which is what the chapter panel
+// asks for; empty means the whole project.
+func (b *DramaBinding) ListStoryEvents(projectID string, chapterID string, status string) ([]StoryEventDTO, error) {
+	service := b.storyService()
+	if service == nil {
+		return nil, bindingUnavailable()
+	}
+	records, err := service.ListStoryEvents(b.context(), projectID, chapterID, storydomain.FactStatus(status))
+	if err != nil {
+		return nil, toDramaError(err)
+	}
+	events := make([]StoryEventDTO, 0, len(records))
+	for _, record := range records {
+		events = append(events, toStoryEventDTO(record))
+	}
+	return events, nil
+}
+
+// ListStoryRelations returns a project's relations oldest first.
+func (b *DramaBinding) ListStoryRelations(projectID string, status string) ([]StoryRelationDTO, error) {
+	service := b.storyService()
+	if service == nil {
+		return nil, bindingUnavailable()
+	}
+	records, err := service.ListStoryRelations(b.context(), projectID, storydomain.FactStatus(status))
+	if err != nil {
+		return nil, toDramaError(err)
+	}
+	relations := make([]StoryRelationDTO, 0, len(records))
+	for _, record := range records {
+		relations = append(relations, toStoryRelationDTO(record))
+	}
+	return relations, nil
+}
+
+// StoryEntityAliasDTO is the transport view of an alternative name.
+type StoryEntityAliasDTO struct {
+	ID            string `json:"id"`
+	StoryEntityID string `json:"storyEntityId"`
+	Alias         string `json:"alias"`
+	// The source span is omitted when the alias has none, which is the case for a
+	// name a user typed: DOMAIN_MODEL section 6.2 marks both offsets nullable, and
+	// zero would be indistinguishable from a span at the very start of the text.
+	SourceChapterID string `json:"sourceChapterId,omitempty"`
+	SourceStart     *int   `json:"sourceStart,omitempty"`
+	SourceEnd       *int   `json:"sourceEnd,omitempty"`
+	CreatedAt       string `json:"createdAt"`
+}
+
+// ListStoryEntityAliases returns one entity's alternative names.
+func (b *DramaBinding) ListStoryEntityAliases(storyEntityID string) ([]StoryEntityAliasDTO, error) {
+	service := b.storyService()
+	if service == nil {
+		return nil, bindingUnavailable()
+	}
+	records, err := service.ListStoryEntityAliases(b.context(), storyEntityID)
+	if err != nil {
+		return nil, toDramaError(err)
+	}
+	aliases := make([]StoryEntityAliasDTO, 0, len(records))
+	for _, record := range records {
+		aliases = append(aliases, StoryEntityAliasDTO{
+			ID: record.ID, StoryEntityID: record.StoryEntityID, Alias: record.Alias,
+			SourceChapterID: record.SourceChapterID, SourceStart: record.SourceStart,
+			SourceEnd: record.SourceEnd, CreatedAt: record.CreatedAt.UTC().Format(rfc3339),
+		})
+	}
+	return aliases, nil
+}
+
+// StoryEventParticipantDTO is the transport view of one entity's part in an event.
+type StoryEventParticipantDTO struct {
+	StoryEventID  string `json:"storyEventId"`
+	StoryEntityID string `json:"storyEntityId"`
+	Role          string `json:"role"`
+	StateBefore   string `json:"stateBefore,omitempty"`
+	StateAfter    string `json:"stateAfter,omitempty"`
+	CreatedAt     string `json:"createdAt"`
+}
+
+// ListStoryEventParticipants returns one event's participants.
+func (b *DramaBinding) ListStoryEventParticipants(storyEventID string) ([]StoryEventParticipantDTO, error) {
+	service := b.storyService()
+	if service == nil {
+		return nil, bindingUnavailable()
+	}
+	records, err := service.ListStoryEventParticipants(b.context(), storyEventID)
+	if err != nil {
+		return nil, toDramaError(err)
+	}
+	participants := make([]StoryEventParticipantDTO, 0, len(records))
+	for _, record := range records {
+		participants = append(participants, StoryEventParticipantDTO{
+			StoryEventID: record.StoryEventID, StoryEntityID: record.StoryEntityID,
+			Role: string(record.Role), StateBefore: record.StateBefore,
+			StateAfter: record.StateAfter, CreatedAt: record.CreatedAt.UTC().Format(rfc3339),
+		})
+	}
+	return participants, nil
+}
+
+// StoryFactSourceDTO is the transport view of the evidence a fact cites.
+//
+// It carries the version and the offsets rather than any text: DOMAIN_MODEL
+// section 6.6 says the passage is read back through the offsets, so the row names
+// where to look instead of copying what is there.
+type StoryFactSourceDTO struct {
+	ID                      string `json:"id"`
+	FactType                string `json:"factType"`
+	FactID                  string `json:"factId"`
+	ChapterID               string `json:"chapterId,omitempty"`
+	SourceDocumentVersionID string `json:"sourceDocumentVersionId"`
+	StartOffset             *int   `json:"startOffset,omitempty"`
+	EndOffset               *int   `json:"endOffset,omitempty"`
+	QuoteHash               string `json:"quoteHash,omitempty"`
+	SourceKind              string `json:"sourceKind"`
+	CreatedAt               string `json:"createdAt"`
+}
+
+// ListStoryFactSources returns the evidence one fact cites.
+func (b *DramaBinding) ListStoryFactSources(factType string, factID string) ([]StoryFactSourceDTO, error) {
+	service := b.storyService()
+	if service == nil {
+		return nil, bindingUnavailable()
+	}
+	records, err := service.ListStoryFactSources(b.context(), storydomain.FactType(factType), factID)
+	if err != nil {
+		return nil, toDramaError(err)
+	}
+	sources := make([]StoryFactSourceDTO, 0, len(records))
+	for _, record := range records {
+		sources = append(sources, StoryFactSourceDTO{
+			ID: record.ID, FactType: string(record.FactType), FactID: record.FactID,
+			ChapterID: record.ChapterID, SourceDocumentVersionID: record.SourceDocumentVersionID,
+			StartOffset: record.StartOffset, EndOffset: record.EndOffset,
+			QuoteHash: record.QuoteHash, SourceKind: string(record.SourceKind),
+			CreatedAt: record.CreatedAt.UTC().Format(rfc3339),
+		})
+	}
+	return sources, nil
+}
+
+// ---------------------------------------------------------------------------
 // Script: episodes, scripts, scenes and shots
 // ---------------------------------------------------------------------------
 

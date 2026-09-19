@@ -72,6 +72,18 @@ export function ListStageRuns(arg1:string):Promise<Array<desktop.StageRunDTO>>;
 
 export function ListStaleMarks(arg1:string):Promise<Array<desktop.StaleMarkDTO>>;
 
+export function ListStoryEntities(arg1:string,arg2:string):Promise<Array<desktop.StoryEntityDTO>>;
+
+export function ListStoryEntityAliases(arg1:string):Promise<Array<desktop.StoryEntityAliasDTO>>;
+
+export function ListStoryEventParticipants(arg1:string):Promise<Array<desktop.StoryEventParticipantDTO>>;
+
+export function ListStoryEvents(arg1:string,arg2:string,arg3:string):Promise<Array<desktop.StoryEventDTO>>;
+
+export function ListStoryFactSources(arg1:string,arg2:string):Promise<Array<desktop.StoryFactSourceDTO>>;
+
+export function ListStoryRelations(arg1:string,arg2:string):Promise<Array<desktop.StoryRelationDTO>>;
+
 export function ListStoryboardItems(arg1:string):Promise<Array<desktop.StoryboardItemDTO>>;
 
 export function ListWorkflowEvents(arg1:string):Promise<Array<desktop.WorkflowEventDTO>>;

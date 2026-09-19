@@ -142,6 +142,30 @@ export function ListStaleMarks(arg1) {
   return window['go']['desktop']['DramaBinding']['ListStaleMarks'](arg1);
 }
 
+export function ListStoryEntities(arg1, arg2) {
+  return window['go']['desktop']['DramaBinding']['ListStoryEntities'](arg1, arg2);
+}
+
+export function ListStoryEntityAliases(arg1) {
+  return window['go']['desktop']['DramaBinding']['ListStoryEntityAliases'](arg1);
+}
+
+export function ListStoryEventParticipants(arg1) {
+  return window['go']['desktop']['DramaBinding']['ListStoryEventParticipants'](arg1);
+}
+
+export function ListStoryEvents(arg1, arg2, arg3) {
+  return window['go']['desktop']['DramaBinding']['ListStoryEvents'](arg1, arg2, arg3);
+}
+
+export function ListStoryFactSources(arg1, arg2) {
+  return window['go']['desktop']['DramaBinding']['ListStoryFactSources'](arg1, arg2);
+}
+
+export function ListStoryRelations(arg1, arg2) {
+  return window['go']['desktop']['DramaBinding']['ListStoryRelations'](arg1, arg2);
+}
+
 export function ListStoryboardItems(arg1) {
   return window['go']['desktop']['DramaBinding']['ListStoryboardItems'](arg1);
 }

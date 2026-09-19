@@ -4,7 +4,8 @@ import type { ColumnsType } from "antd/es/table";
 import { FilePlus2, Plus, ShieldAlert, UserPlus } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
-import { clearStaleMark, createAsset, createEpisode, createSourceDocument, createStoryEntity, ensureScript, listChapters, listScenes, waiveStaleMark } from "@/services/desktop/drama";
+import { clearStaleMark, createAsset, createEpisode, createSourceDocument, ensureScript, listScenes, waiveStaleMark } from "@/services/desktop/drama";
+import { ChapterPanel, ImportFlow } from "@/components/studio/import-flow";
 import type { desktop } from "@/wailsjs/go/models";
 
 /**
@@ -141,13 +142,23 @@ export type SourceSectionProps = {
     onChanged: () => void;
 };
 
+/**
+ * SourceSection registers documents, imports their text, and shows the chapters
+ * that came out of it.
+ *
+ * The import flow and the chapter panel live in components/studio/import-flow.tsx
+ * because they own a flow of their own — choose, preview, confirm, review — and a
+ * section that also held it inline would be the page-sized component AGENTS warns
+ * against. What stays here is the list of documents and which one is expanded.
+ */
 export function SourceSection({ projectId, documents, onChanged }: SourceSectionProps) {
     const { t } = useTranslation();
     const { message } = App.useApp();
     const [name, setName] = useState("");
     const [type, setType] = useState<string>("novel");
     const [busy, setBusy] = useState(false);
-    const [chapters, setChapters] = useState<{ documentId: string; rows: desktop.ChapterDTO[] } | null>(null);
+    const [selected, setSelected] = useState<{ documentId: string; versionId: string } | null>(null);
+    const [reloadToken, setReloadToken] = useState(0);
 
     const create = async () => {
         if (name.trim() === "") {
@@ -166,16 +177,6 @@ export function SourceSection({ projectId, documents, onChanged }: SourceSection
             message.error(error instanceof Error ? error.message : t("studio.source.createFailed"));
         } finally {
             setBusy(false);
-        }
-    };
-
-    const loadChapters = async (document: desktop.SourceDocumentDTO) => {
-        if (!document.currentVersionId) return;
-        try {
-            const rows = await listChapters(document.currentVersionId);
-            setChapters({ documentId: document.id, rows });
-        } catch (error) {
-            message.error(error instanceof Error ? error.message : t("studio.shell.loadFailed"));
         }
     };
 
@@ -200,12 +201,17 @@ export function SourceSection({ projectId, documents, onChanged }: SourceSection
             key: "version",
             render: (_, record) =>
                 record.currentVersionId ? (
-                    <Button size="small" data-testid={`studio-source-chapters-${record.id}`} onClick={() => void loadChapters(record)}>
+                    <Button
+                        size="small"
+                        data-testid={`studio-source-chapters-${record.id}`}
+                        onClick={() => setSelected({ documentId: record.id, versionId: record.currentVersionId ?? "" })}
+                    >
                         {t("studio.source.chaptersLabel")}
                     </Button>
                 ) : (
-                    // No version means no imported text yet, which is WP-06's
-                    // import path rather than a missing row.
+                    // No version means no imported text yet. The import control is
+                    // above this table, so the answer is where to go rather than
+                    // what is missing.
                     <span className="text-xs text-stone-500">{t("studio.source.noVersion")}</span>
                 ),
         },
@@ -233,33 +239,29 @@ export function SourceSection({ projectId, documents, onChanged }: SourceSection
                 </Button>
             </div>
 
+            <ImportFlow
+                projectId={projectId}
+                onImported={() => {
+                    onChanged();
+                    setReloadToken((current) => current + 1);
+                }}
+            />
+
             {documents.length === 0 ? (
                 <Empty description={t("studio.source.empty")} />
             ) : (
                 <Table<desktop.SourceDocumentDTO> rowKey="id" size="small" pagination={false} columns={columns} dataSource={documents} data-testid="studio-source-table" />
             )}
 
-            {chapters ? (
+            {selected ? (
                 <section className="rounded-xl border border-stone-200 p-4 dark:border-stone-800">
                     <div className="mb-2 flex items-center justify-between">
                         <h3 className="text-sm font-medium">{t("studio.source.chaptersLabel")}</h3>
-                        <Button size="small" type="text" onClick={() => setChapters(null)}>
+                        <Button size="small" type="text" onClick={() => setSelected(null)}>
                             {t("common.cancel")}
                         </Button>
                     </div>
-                    {chapters.rows.length === 0 ? (
-                        <p className="text-sm text-stone-500">{t("studio.source.noVersion")}</p>
-                    ) : (
-                        <ul className="space-y-1 text-sm" data-testid="studio-source-chapters">
-                            {chapters.rows.map((chapter) => (
-                                <li key={chapter.id} className="flex items-center gap-2">
-                                    <span className="text-stone-500">{chapter.ordinal}</span>
-                                    <span className="truncate">{chapter.title}</span>
-                                    <Tag>{t(`studio.status.${chapter.status}`, { defaultValue: chapter.status })}</Tag>
-                                </li>
-                            ))}
-                        </ul>
-                    )}
+                    <ChapterPanel versionId={selected.versionId} reloadToken={reloadToken} onChanged={onChanged} />
                 </section>
             ) : null}
         </div>
@@ -270,86 +272,13 @@ export function SourceSection({ projectId, documents, onChanged }: SourceSection
 // Story graph
 // ---------------------------------------------------------------------------
 
-const ENTITY_TYPES = ["character", "location", "organization", "prop", "concept", "time"] as const;
-
-export type StoryGraphSectionProps = { projectId: string };
-
-/**
- * StoryGraphSection creates story entities and states the listing gap.
- *
- * `DramaBinding` exposes CreateStoryEntity and no method that lists entities, so
- * this section shows no entity list — an empty table here would claim the
- * project has no entities, which is not something the interface can know. What it
- * does show is the create command's return values from this session, labelled as
- * such, so the command is usable before the list query exists.
- */
-export function StoryGraphSection({ projectId }: StoryGraphSectionProps) {
-    const { t } = useTranslation();
-    const { message } = App.useApp();
-    const [type, setType] = useState<string>("character");
-    const [name, setName] = useState("");
-    const [busy, setBusy] = useState(false);
-    const [created, setCreated] = useState<desktop.StoryEntityDTO[]>([]);
-
-    const create = async () => {
-        if (name.trim() === "") {
-            message.error(t("studio.storyGraph.nameRequired"));
-            return;
-        }
-        setBusy(true);
-        try {
-            const entity = await createStoryEntity({ projectId, type, canonicalName: name.trim() });
-            setCreated((current) => [entity, ...current]);
-            setName("");
-        } catch (error) {
-            message.error(error instanceof Error ? error.message : t("studio.storyGraph.createFailed"));
-        } finally {
-            setBusy(false);
-        }
-    };
-
-    return (
-        <div className="space-y-6">
-            <Alert type="warning" showIcon message={t("studio.storyGraph.gapTitle")} description={t("studio.storyGraph.gapBody")} data-testid="studio-story-graph-gap" />
-
-            <div className="flex flex-wrap items-end gap-3 rounded-xl border border-stone-200 p-4 dark:border-stone-800">
-                <label className="min-w-52 flex-1">
-                    <span className="mb-1 block text-sm">{t("studio.storyGraph.nameLabel")}</span>
-                    <Input value={name} maxLength={200} data-testid="studio-entity-name" onChange={(event) => setName(event.target.value)} onPressEnter={() => void create()} />
-                </label>
-                <label>
-                    <span className="mb-1 block text-sm">{t("studio.storyGraph.typeLabel")}</span>
-                    <Select
-                        className="w-44"
-                        value={type}
-                        data-testid="studio-entity-type"
-                        onChange={(value: string) => setType(value)}
-                        options={ENTITY_TYPES.map((value) => ({ value, label: t(`studio.entityType.${value}`) }))}
-                    />
-                </label>
-                <Button type="primary" icon={<UserPlus className="size-4" />} loading={busy} data-testid="studio-entity-create" onClick={() => void create()}>
-                    {t("studio.storyGraph.create")}
-                </Button>
-            </div>
-
-            {created.length > 0 ? (
-                <section>
-                    <h3 className="text-sm font-medium">{t("studio.storyGraph.createdTitle")}</h3>
-                    <p className="mt-1 text-xs text-stone-500">{t("studio.storyGraph.createdNote")}</p>
-                    <ul className="mt-3 space-y-1 text-sm" data-testid="studio-entity-created">
-                        {created.map((entity) => (
-                            <li key={entity.id} className="flex items-center gap-2">
-                                <Tag>{t(`studio.entityType.${entity.type}`, { defaultValue: entity.type })}</Tag>
-                                <span className="truncate">{entity.canonicalName}</span>
-                                <span className="text-xs text-stone-500">{t(`studio.status.${entity.status}`, { defaultValue: entity.status })}</span>
-                            </li>
-                        ))}
-                    </ul>
-                </section>
-            ) : null}
-        </div>
-    );
-}
+// The graph section moved to components/studio/story-graph-view.tsx when the
+// list queries landed: it now owns an entity review queue, an event list, a
+// relation list, an evidence panel and an SVG view, which is four concerns and
+// too many for one section body. The shell re-exports it so the section registry
+// keeps a single import surface.
+export { StoryGraphSection } from "@/components/studio/story-graph-view";
+export type { StoryGraphSectionProps } from "@/components/studio/story-graph-view";
 
 // ---------------------------------------------------------------------------
 // Script
