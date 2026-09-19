@@ -44,11 +44,15 @@ func wp05Migrations(t *testing.T) fstest.MapFS {
 		"000011_workflow_review.sql":             {Data: wp05SQL(t, "000011_workflow_review.sql")},
 		"000012_artifact_staleness.sql":          {Data: wp05SQL(t, "000012_artifact_staleness.sql")},
 		"000013_domain_events.sql":               {Data: wp05SQL(t, "000013_domain_events.sql")},
+		"000014_story_import.sql":                {Data: wp05SQL(t, "000014_story_import.sql")},
 	}
 }
 
-// wp05HeadVersion is the user_version the full WP-05 set reaches.
-const wp05HeadVersion = 13
+// wp05HeadVersion is the user_version the shared WP-05/WP-06 set reaches.
+//
+// The helper keeps its wp05 name because every test calls it by that name and
+// the set is the same set; only its head moves as migrations are added.
+const wp05HeadVersion = 14
 
 // applyMigrationFileSplits runs one migration file the way the runner does:
 // splitSQL on the raw text, then execute each fragment in order. It returns the
@@ -92,6 +96,7 @@ func TestWP05SplitSQLCompatibility(t *testing.T) {
 		"000011_workflow_review.sql",
 		"000012_artifact_staleness.sql",
 		"000013_domain_events.sql",
+		"000014_story_import.sql",
 	}
 	for _, name := range files {
 		script := string(migrationSQL(t, name))
