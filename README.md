@@ -138,6 +138,23 @@ WP-06 实现原始文档导入、章节确认与事件图谱（**文档与章节
 - **大文档传输是分块的**：文档以 64 KiB 分块 base64 上传并在结束时校验总长度，因此 10 万字小说不会作为一条消息（更不会作为 30 万个元素的数组）压在主线程上；
 - 本包**不包含**（已如实记录，未偷跑）：Agent 运行时与工具白名单、章节**拆分/合并**命令、通用「修改事实」命令（WP-07/后续）、`PropState` 建模。裁定与理由见 `docs/adr/0010-document-import-and-extraction.md`，验收明细见 `docs/implementation/STATUS.md` §0g。
 
+WP-07 实现三层 Agent 运行时、Skill 加载器、Workflow 引擎与质量门（**不接入任何付费 Provider**）：
+
+- **三层运行时是同一套 runner**：Decision / Execution / Supervision 由 `AgentLayer` 与 Tool 模式矩阵区分，而不是三份代码——矩阵是安全核心：Decision 只能读与控制，Execution 可按阶段读写，Supervision **只能读**，且该规则在注册表构造时与每次调用时各校验一次；
+- **Agent 清单来自内置 Skill Pack**：`skills/script`（8 个 agent）与 `skills/production`（9 个）由 `scripts/gen-skill-packs.mjs` 生成，每个文档带 AGENT_CONTRACTS §4.3 的十三个小节且**无业务内容**（范围 16 明确要求）；清单是 JSON 而非 §4.1 所示 YAML——不为一个文件引入依赖，且 YAML 的别名展开是清单这种授权文件的真实攻击面（ADR-0011 §2）；
+- **Tool 表是真实的十九个工具**：每个 handler 都调用一个应用服务，没有占位实现；工具输入 Schema 由 `scripts/gen-tool-schemas.mjs` 从**同一份 key 列表**生成，三个测试把两个方向钉住（注册的必有 Schema、生成的必已注册、Schema 的字段名就是 handler 解码的字段名）；
+- **§6.2 示例里的两个 Tool 按裁定缺席而非占位**（ADR-0011 §6）：`story.create_event_candidates` 会是抽取阶段第二条写入路径（真正的路径是运行时实现 WP-06 的 `Extractor` 端口、由抽取服务校验并写入），`provider.submit_image_job` 是 Job 而不是 Tool（§19 明确「媒体生成本身由 Job/Provider Service 执行」）；
+- **结构化解码**：每个 agent 的输出按其清单声明的契约校验（§7.1–7.7 的七份 Schema，随二进制嵌入）；失败时把「路径 + 规则」回传同一个模型**一次**（§14.3），回传内容不含文档原文；两次失败即失败该阶段，且**不产生任何业务半写入**（用例通过前后计数产物行来断言）；
+- **Artifact 幻觉被拒绝**：写入工具报告的是真实写入的行的 ID，运行时读回校验；不存在的 ID、**未知的实体类型**、以及查询本身失败，三者被区分开——最后一种是存储故障而不是幻觉（AC-AGENT-003）；
+- **Tool Call 与校验后的文档并列传输**，而不是塞进文档内部：§7 的每份输出 Schema 都是 `additionalProperties: false`，工具调用放在文档里必然被 Schema 拒绝——这个缺陷曾经让整条工具路径对所有真正校验过的 agent 不可达，是 Mock 的第一份真实文档把它照出来的（ADR-0011 §5）；
+- **Workflow 引擎**：PRD FR-100 的十个阶段策略（监督与用户门设置由该表决定）、`StartStage`、`ApplySupervision`、`ApplyGate`；迁移 `000015` 用**部分唯一索引**把 §11.2 的「最多一个 active attempt」从注释变成约束；FIX/REDO **复用同一个 attempt 行**（§10.2 的「新 Attempt」与 WP-05 已交付的 `IsActive` 冲突，裁定见 ADR-0011 §4），因此修复预算改从**审计事件**计数——用 attempt 计数永远不可能触发，那是一个无界循环；
+- **取消被记录为 `cancelled` 而不是 `failed`**（§15），取消在阶段行与运行行上都能区分出来；
+- **确定性 Mock LLM**：§18.3 的八个场景全部实现（正常、一次无效后有效、Tool Call、拒绝非法 Tool、Supervisor issues、超时、取消、Provider 错误）；它只能经 `KindMockText` 触达，而该 kind 被应用层拒绝且被数据库 CHECK 拒绝，因此**任何用户可持久化的配置都无法选中它**；CI 不调用真实模型；
+- **基础 Memory Port（仅 Recent）**：结构化六字段 scope 既编码成 key 也拆成列（§14.4 的「不依赖脆弱字符串前缀」），并且实现了 §14.5 两条会被静默违反的不变量——当前消息不召回自身、其他项目内容不可召回；
+- **Agent Center 分区**：按层筛选运行记录、查看一次运行的 Tool Call 与消息、以及本构建可运行的 agent 清单（含每个 agent 被允许调用的工具 key）。**没有从界面发起运行的入口**——运行由应用服务发起，这让「谁可以跑 agent」留在服务端；该缺口如实记录为 STATUS §0h 的 PARTIAL 项；
+- **Canary（关键验收）**：Decision → Execution → Supervisor → User Gate 全链路跑在**真实迁移过的数据库**上，使用真实 Skill Pack、真实 Tool 表与真实校验器，只由确定性 Mock 驱动；运行产生的每一次状态迁移都能在审计事件里读到；
+- 本包**不包含**：完整 Script Agent（WP-08）、完整 Production Agent（WP-09/11）、Semantic Memory 与向量索引（WP-10）、真实付费 Provider 调用与媒体生成。实现期间发现并修掉的九个已交付代码缺陷（工具路径不可达、`workflow.Service` 缺 `GetRun`、四处在项目边界检查路径上的缺失读取、`ToolRequest` 缺运行 ID、`finish` 丢弃 revision、拒绝路径丢弃运行 ID、Mock 的三处缺陷）逐条记在 `docs/adr/0011-agent-runtime-tools-and-stage-keys.md`；验收明细见 `docs/implementation/STATUS.md` §0h。
+
 ## 使用说明
 
 1. 打开右上角配置，添加渠道的 API 地址与模型。

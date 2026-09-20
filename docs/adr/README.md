@@ -49,3 +49,4 @@
 | 0008 | Staleness propagation, projection commands, and version approval | Accepted |
 | 0009 | Domain event stream and approval semantics | Accepted |
 | 0010 | Document import, the event extraction contract, and the story graph | Accepted |
+| 0011 | The agent runtime, its tool table, and the stage-key rulings | Accepted |
