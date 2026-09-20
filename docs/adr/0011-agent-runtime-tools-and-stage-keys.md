@@ -202,6 +202,48 @@ reviewed, found by a test that did not exist when the code was.
    execution-shaped document, which the review-report schema refused — and the ACL was
    therefore never reached. Found by the canary, which was asserting about a denial.
 
+## Findings from the independent reviews
+
+Two reviews ran against the delivered package — a specification review and a quality review with
+mutation testing — and both found real defects in code that had already been written, tested and
+reviewed once. They are recorded here because each is a lesson about the KIND of thing a test
+suite of this shape misses.
+
+1. **Tool arguments were never schema-validated.** Section 6.1's chain names the step and section
+   20 lists its absence as release-blocking, and the schema path travelled into the prompt and was
+   never applied to what came back. The reviewer found it by READING, not by mutating: the field
+   appeared in exactly one place. The lesson is that a prompt layer and a validation step can be
+   described by the same string and only one of them implemented.
+2. **The runtime had no call site in a production build.** `composeAgents` built the
+   runtime-backed extraction service and `app.go` never attached it. A compile-time assertion
+   proved the port was SATISFIED, not that anything USED it — and ADR-0011's own text claimed the
+   seam was closed. The lesson is that a `var _ Port = (*Impl)(nil)` line is evidence about a type,
+   never about a build.
+3. **`ToolRequest` had no agent-run id**, so a version's author was recorded as a stage id.
+4. **`Runtime.finish` discarded the revision it incremented**, so a second write reused the first
+   revision and the repository's guard reported a not-found.
+5. **Refusals discarded the run id**, so a caller could not look up what happened — the canary
+   could not be written without it.
+6. **The answering model was never recorded**, though section 13 is specifically about the case
+   where it differs from the requested one.
+7. **The message bound counted runes against a byte limit**, so a long CJK reply was refused and
+   the refusal discarded: a silent drop, on a field nothing asserted.
+8. **Section 7.4's two artifact rules and section 7.6's critical rule did not exist.** Both are
+   relations between fields, which JSON Schema cannot express — the same class as the
+   `passed`/`severity` rule WP-06 left to the domain, and a reminder that a schema file is not a
+   specification.
+9. **The stage identity cross-check did not exist**, though two comments and a canary assertion
+   claimed it did. The canary's assertion passed because the mock copied the value out of the
+   prompt: a test whose fixture does the work the production code should be doing proves nothing
+   about the production code.
+
+Three findings stand out because they were about the TESTS rather than the code: the mock's
+`SetScenario` kept its counters across a scenario change (so a test saw a success where it
+expected a refusal); the mock's tool-call scenario sent `{}` (so the tool's own schema refused it
+and a test of the write path tested the failure path); and the repair round's two-write sequence
+could not be reached through `Run` at all, which is why the revision defect needed a test of
+`finish`'s contract rather than of a run.
+
 ## Consequences
 
 - The stage-key list is the PRD's, and a stage outside it stops for a person rather than

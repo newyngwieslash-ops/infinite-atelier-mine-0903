@@ -83,7 +83,7 @@
 | AC-AGENT-004 prompt injection | **PASS** | The repository's own injection fixture travels as the untrusted task; the skill is unchanged, no tool is added, no secret is read, the agent still processes the story content, and the prompt carries the boundary. |
 | AC-AGENT-005 maximum loop | **PASS** | Thirteen tool calls against a budget of twelve are refused BEFORE any runs (zero calls recorded); a failing review whose FIX budget is spent moves the stage to `waiting_user`. |
 | AC-WORKFLOW canary | **PASS** | Decision -> Execution -> Supervisor -> User Gate over a real migrated database with the real packs, tool table and validator, driven by the deterministic mock. The audit trail records every transition. `TestCanaryDecisionToExecutionToSupervisorToGate` and five sibling canary tests. |
-| AC-AGENT-006 minimal Agent Center UI | **PARTIAL** | The `agents` section renders the runs, a run's trace and the inventory; it is read-only because the binding surface is, and there is **no user-facing run trigger**. The canary is a test rather than a button. Named in STATUS 0h. |
+| AC-AGENT-006 minimal Agent Center UI | **PARTIAL** | The `agents` section renders the runs, a run's trace and the inventory; it is read-only because the binding surface is, and there is **no user-facing run trigger**. The canary is a test rather than a button. The EXTRACTION path is wired, though: an independent review found it was composed and never attached, and that is fixed with a canary test that drives it end to end. Named in STATUS 0h. |
 | AC-SCRIPT | Not started | WP-08. |
 | AC-PROD / AC-STORYBOARD | Not started; MONOFORM bridge partial | WP-09. |
 | AC-MEM / AC-QUALITY | Not started | WP-10. |

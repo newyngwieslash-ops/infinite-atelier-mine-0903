@@ -67,7 +67,7 @@ WP-03 start baseline (2026-09-15): branch `codex/wp-01-desktop-foundation`, HEAD
 
 | Command | Result |
 |---|---|
-| `go test ./... -count=1` | **PASS** (43 packages) |
+| `go test ./... -count=1` | **PASS** (53 packages: 46 with tests, 7 without) |
 | `go vet ./...` | **PASS** |
 | `gofmt -l internal/ schemas/ *.go` | **PASS** (no output) |
 | `node scripts/security-scan.mjs` | **PASS** (451 files scanned; 1 audited dynamic-execution exception, 4 audited legacy direct-call files) |
@@ -121,15 +121,17 @@ WP-03 start baseline (2026-09-15): branch `codex/wp-01-desktop-foundation`, HEAD
   registry's startup check (`Supervisor 无未批准写工具`), and a table test that no
   write tool is reachable from the supervision or decision layers.
 - **Minimal Agent Center UI (scope item 14)** — **PARTIAL**, and the gap is named:
-  there is **no method to start a run from the UI**. The binding surface is
-  read-only by design (a run happens because an application service asks for one,
-  which keeps "who may run an agent" a server-side question), so the Agent Center
-  shows the runs that exist rather than offering a button. The plan called for a
-  "start canary run" action; what shipped instead is the canary as a TEST, which is
-  where it is safest and where it can assert the whole chain. Adding a user-facing
-  run trigger is a product decision — which stage, under which policy, with which
-  provider — and belongs to the package that owns that workflow (WP-08 for the
-  script pack). Recorded here rather than papered over.
+  there is **no user-facing way to start a run**. The binding surface is read-only by
+  design (a run happens because an application service asks for one, which keeps "who may
+  run an agent" a server-side question), so the Agent Center shows the runs that exist.
+  The plan called for a "start canary run" action; what shipped instead is the canary as a
+  TEST, which is where it is safest and where it can assert the whole chain. Adding a
+  trigger is a product decision — which stage, under which policy, with which provider —
+  and belongs to the package that owns that workflow (WP-08 for the script pack).
+  Recorded here rather than papered over.
+
+  The extraction path, by contrast, IS wired: an independent review found it was not, and
+  that finding and its fix are recorded below.
 
 ## What was delivered against the 16 ROADMAP items
 
@@ -163,6 +165,89 @@ no agent-run id, so a version's author was recorded as a stage; `Runtime.finish`
 discarded the revision it incremented; refusals discarded the run id; and the mock
 had three defects of its own (empty tool arguments, counters that survived a
 scenario change, and no supervision branch in its tool-call document).
+
+## Independent reviews, and what they found
+
+Two reviews ran against the delivered package: a specification review and a quality review
+with mutation testing. Both found real defects, and the package was changed rather than the
+findings being argued away. The specification review's report is worth reading in full; what
+follows is what was DONE about each finding.
+
+**Release-blocking: tool arguments were never schema-validated.** Section 6.1's per-call chain
+is "JSON parse → Schema validation → Tool ACL → scope validation → execute", and the schema path
+travelled into the prompt and was never applied to what came back. A model could hand a handler
+any shape at all; only the handler's own struct decoding refused it — a decode error rather than
+a contract refusal, unable to name the rule. Section 20 lists "Tool 参数未 Schema 校验" as a
+release-blocking condition. Fixed: the runtime takes a `ToolArgumentValidator` and applies it
+between the ACL and the handler, with three deliberate distinctions (no validator configured
+REFUSES; a non-JSON document is a repairable refusal; a schema that will not compile is an error
+because the model cannot fix a build defect). The refusal is a FAILURE rather than a denial, and
+the code is `agent.tool_arguments_invalid`.
+
+**The runtime had no call site in a production build.** `composeAgents` built the
+runtime-backed extraction service and `app.go` never attached it, so the extraction binding kept
+the drama stack's extractor-less service and every extraction refused with "unavailable". A
+compile-time assertion proved the port was satisfied, not that anything used it — the "interface
+with no real path" AGENTS section 12 refuses, and the finding was sharper for standing on
+ADR-0011's own claim that the seam was closed. Fixed: `app.go` rebuilds the service with the
+runtime as its Extractor and re-attaches it. That exposed a second gap — the mock could not
+answer the extraction agent, whose contract is the event graph's rather than an ExecutionResult's
+— so the mock now reads the agent from the skill layer and answers in that agent's shape. A new
+canary test drives the extraction path end to end through the runtime, so the wiring is asserted
+rather than assumed.
+
+**The answering model was never recorded.** Section 16 requires "模型和 Provider", and section
+13's "模型变更写入 Run" is about a run whose answering model differs from the requested one. Only
+`model_config_id` was recorded. Fixed with a `ResponseModel` field, a forward migration
+(`000016`) and a capture from the first reply.
+
+**A long Chinese reply was silently dropped from the record.** The storage bound is BYTES and the
+code counted RUNES against it, so a reply was clipped past the limit, the domain refused it, and
+the caller discarded the refusal. Fixed: the clip counts bytes and walks back to a rune boundary,
+and a refusal is recorded as `agent.message_not_stored` rather than swallowed. Writing that fix
+produced the same bug one level down (subtracting the marker after the boundary walk), which the
+new test's UTF-8 assertion caught.
+
+**Two of section 7.4's artifact rules and section 7.6's critical rule did not exist.** A success
+with no artifact passed for every stage, and a `critical` finding took the ordinary path rather
+than forcing a human gate — a rule the DOMAIN names this package as the owner of. Fixed: the
+no-op case is now the caller's to state (a new `Invocation` field, because the caller is what
+chose the stage), a failed result may not carry artifacts, and `ApplySupervision` takes the
+report's Severity and parks the stage on a critical finding, checked BEFORE the passed/failed
+branch because it overrides both.
+
+**The stage identity cross-check did not exist.** Nothing compared a result's `stageRunId` with
+the invocation's, though two comments and a canary assertion claimed the check was there — the
+canary's passed because the mock copies the value out of the prompt. Fixed.
+
+**A comment described a `+ 1` the code does not contain.** `StartRevision` reads
+`revisions > MaxAutoFix` while its comment said "hence the `+ 1`". A reader who followed it would
+write `revisions+1 > MaxAutoFix`, permitting one extra automatic revision and breaking
+AC-AGENT-005. Fixed: the comment now states the two predicates and why they differ.
+
+**Two vacuous assertions** were found by reading rather than mutating: a `forbidden` slice built
+and discarded (`_ = forbidden`) whose loop hardcoded three of its four entries, and an
+empty-object test that derived its expectation from the same `required` array it was asserting
+about. Both fixed; the second now names every tool and asserts its list length against the
+table's.
+
+**A status figure was wrong**: STATUS said 43 packages where `go list ./...` reports 53. Fixed.
+
+**The quality review's mutation run** reported 29 of 81 surviving. The eight behaviourally
+significant ones are now covered and each was verified by re-introducing its mutation: three
+project-boundary checks (9 of `scope.go`'s 13 blocks had zero coverage and all 14 guard lines in
+`handlers.go` were at zero or absent — an agent in project A could read and WRITE project B's
+artifacts), two engine guards that their tests could not reach (the revision counter's
+fail-closed arm needed a transitioner that does not implement the interface; the gate's status
+guard was shadowed by the edge check below it), the artifact verifier's type table (whose own
+comment promised a test, and whose `VerifiedTypes` had no caller anywhere), the mock's counter
+reset (whose own comment says the canary found the defect), and the verifier's storage-fault
+distinction. `inspector.go` had NO tests at all — 41 of 41 blocks at zero — and now has seven,
+with five mutations verified caught.
+
+Two survivors are recorded rather than chased, because they are equivalent mutations: a
+redundant scheme guard that a later arm already refuses, and a defensive fallback no embedded
+schema can reach. That is stated rather than counted as a pass.
 
 ## Mutation testing
 

@@ -27,6 +27,7 @@ export namespace agentruntime {
 	    status: string;
 	    skillVersionId: string;
 	    modelConfigId: string;
+	    responseModel: string;
 	    workflowRunId: string;
 	    stageRunId: string;
 	    inputSummary: string;
@@ -46,6 +47,7 @@ export namespace agentruntime {
 	        this.status = source["status"];
 	        this.skillVersionId = source["skillVersionId"];
 	        this.modelConfigId = source["modelConfigId"];
+	        this.responseModel = source["responseModel"];
 	        this.workflowRunId = source["workflowRunId"];
 	        this.stageRunId = source["stageRunId"];
 	        this.inputSummary = source["inputSummary"];

@@ -68,13 +68,17 @@ type RunSummary struct {
 	Status   string `json:"status"`
 	// SkillVersionID is the version the run cited, which is what makes it reproducible.
 	SkillVersionID string `json:"skillVersionId"`
-	ModelConfigID  string `json:"modelConfigId"`
-	WorkflowRunID  string `json:"workflowRunId"`
-	StageRunID     string `json:"stageRunId"`
-	InputSummary   string `json:"inputSummary"`
-	ErrorCode      string `json:"errorCode"`
-	StartedAt      string `json:"startedAt"`
-	FinishedAt     string `json:"finishedAt"`
+	// ModelConfigID is the model the policy NAMED and ResponseModel is the one that answered.
+	// Both travel because section 13 requires the difference to be visible, and a list showing
+	// only the requested model would hide a run that fell back.
+	ModelConfigID string `json:"modelConfigId"`
+	ResponseModel string `json:"responseModel"`
+	WorkflowRunID string `json:"workflowRunId"`
+	StageRunID    string `json:"stageRunId"`
+	InputSummary  string `json:"inputSummary"`
+	ErrorCode     string `json:"errorCode"`
+	StartedAt     string `json:"startedAt"`
+	FinishedAt    string `json:"finishedAt"`
 }
 
 // RunTrace is one run with its messages and tool calls.
@@ -214,8 +218,9 @@ func summariseRun(run agent.AgentRun) RunSummary {
 	return RunSummary{
 		ID: run.ID, AgentKey: run.AgentKey, Layer: string(run.Layer),
 		Status: string(run.Status), SkillVersionID: run.SkillVersionID,
-		ModelConfigID: run.ModelConfigID, WorkflowRunID: run.WorkflowRunID,
-		StageRunID: run.StageRunID, InputSummary: run.InputSummary,
+		ModelConfigID: run.ModelConfigID, ResponseModel: run.ResponseModel,
+		WorkflowRunID: run.WorkflowRunID,
+		StageRunID:    run.StageRunID, InputSummary: run.InputSummary,
 		ErrorCode:  run.ErrorCode,
 		StartedAt:  formatTimestamp(run.StartedAt),
 		FinishedAt: formatTimestamp(run.FinishedAt),

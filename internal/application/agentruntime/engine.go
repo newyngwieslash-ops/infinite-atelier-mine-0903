@@ -569,12 +569,19 @@ func (e *Engine) StartRevision(ctx context.Context, request StageTransitionReque
 	// method directly on a stage whose budget is spent.
 	//
 	// The two checks therefore differ in what they are for, and the difference is
-	// deliberate: ApplySupervision decides whether a fix may be REQUESTED, which is
-	// true while fewer than the budget have been; StartRevision decides whether the
-	// request may be honoured, which is true up to and including the last one. A
-	// revision is counted by the transition INTO needs_fix, so at the moment
-	// StartRevision runs the count is already one higher than it was when the review
-	// looked — hence the `+ 1`.
+	// deliberate: ApplySupervision decides whether a fix may be REQUESTED, which is true
+	// while FEWER than the budget have been; StartRevision decides whether the request may
+	// be honoured, which is true UP TO AND INCLUDING the last one.
+	//
+	// That difference shows up in the comparison: `revisions > budget` here, where
+	// ApplySupervision uses `revisions < budget`. A revision is counted by the transition
+	// INTO needs_fix, so at the moment StartRevision runs the count already INCLUDES the
+	// revision being honoured — which is why the refusal is strictly greater than the
+	// budget rather than greater-or-equal. An earlier version of this comment said "hence
+	// the `+ 1`", describing an expression the code does not contain: a reader who followed
+	// it would write `revisions+1 > MaxAutoFix`, which permits one EXTRA automatic revision
+	// and breaks AC-AGENT-005's "FIX 超过 2 次转人工". The two predicates are asserted to be
+	// complementary by test, and the comments now agree with them.
 	if revisions > policy.MaxAutoFix {
 		return workflow.StageRun{}, &QuotaError{Limit: "auto_fix", Allowed: policy.MaxAutoFix, Used: revisions}
 	}
