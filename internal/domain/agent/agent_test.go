@@ -525,3 +525,52 @@ func stringsOf[T ~string](values []T) []string {
 	}
 	return out
 }
+
+// TestWireCategoriesCoverEveryDomainCategory is the parity guard this repository has
+// needed twice before, per validation.go's own account of the drift it was bitten by.
+//
+// The domain taxonomy and the contract's enum are different sets on purpose, so the
+// guarantee cannot be "they are equal". It is that every domain category maps into
+// the contract's vocabulary, and that the vocabulary is exactly section 7.7's list —
+// a category added to the domain without a decision about where it belongs on the
+// wire would otherwise silently become "internal".
+func TestWireCategoriesCoverEveryDomainCategory(t *testing.T) {
+	domainCategories := []ErrorCategory{
+		CategoryInvalidInput, CategoryNotFound, CategoryConflict,
+		CategoryStorage, CategorySecurity, CategoryUnavailable,
+		CategoryModel, CategoryTool, CategoryCancelled,
+	}
+	for _, category := range domainCategories {
+		wire := category.Wire()
+		if !IsValidWireCategory(wire) {
+			t.Fatalf("domain category %q maps to %q, which is not in the contract", category, wire)
+		}
+	}
+	// The contract's list, written out here rather than shared with the implementation
+	// so a change to the enum is visible in the diff of a test.
+	want := []WireCategory{
+		"configuration", "input", "model", "tool", "timeout",
+		"cancelled", "security", "storage", "internal",
+	}
+	got := WireCategories()
+	if len(got) != len(want) {
+		t.Fatalf("the wire vocabulary has %d entries, section 7.7 lists %d", len(got), len(want))
+	}
+	for index, category := range want {
+		if got[index] != category {
+			t.Fatalf("wire category %d is %q, want %q", index, got[index], category)
+		}
+	}
+	// The specific mappings that lose information are asserted rather than left to the
+	// loop above, because "not_found becomes input" is a decision a reviewer should
+	// have to disagree with explicitly.
+	if CategoryNotFound.Wire() != WireInput {
+		t.Fatal("a not-found does not map to the input category")
+	}
+	if CategoryConflict.Wire() != WireInput {
+		t.Fatal("a conflict does not map to the input category")
+	}
+	if CategoryUnavailable.Wire() != WireConfiguration {
+		t.Fatal("an unavailable runtime does not map to the configuration category")
+	}
+}

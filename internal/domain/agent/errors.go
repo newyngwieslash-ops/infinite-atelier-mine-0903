@@ -104,3 +104,81 @@ func AsError(err error) (*Error, bool) {
 	}
 	return nil, false
 }
+
+// WireCategory is the category vocabulary of the agent-error contract, which is
+// AGENT_CONTRACTS section 7.7's list.
+//
+// The two vocabularies are NOT the same, and the difference is deliberate rather
+// than drift: this package's taxonomy distinguishes states the domain needs to act
+// on (a not-found, a conflict, "the runtime is not composed"), while the wire form is
+// the smaller set a caller outside the process branches on. What must not happen is
+// the two drifting apart silently — which is exactly the failure this repository has
+// been bitten by twice, per validation.go's own account — so WireCategories below is
+// the closed set and a parity test asserts every domain category maps into it.
+type WireCategory string
+
+const (
+	WireConfiguration WireCategory = "configuration"
+	WireInput         WireCategory = "input"
+	WireModel         WireCategory = "model"
+	WireTool          WireCategory = "tool"
+	WireTimeout       WireCategory = "timeout"
+	WireCancelled     WireCategory = "cancelled"
+	WireSecurity      WireCategory = "security"
+	WireStorage       WireCategory = "storage"
+	WireInternal      WireCategory = "internal"
+)
+
+// WireCategories is section 7.7's enum, in its order.
+func WireCategories() []WireCategory {
+	return []WireCategory{
+		WireConfiguration, WireInput, WireModel, WireTool,
+		WireTimeout, WireCancelled, WireSecurity, WireStorage, WireInternal,
+	}
+}
+
+// IsValidWireCategory reports whether a value is one the contract accepts.
+func IsValidWireCategory(category WireCategory) bool {
+	for _, candidate := range WireCategories() {
+		if candidate == category {
+			return true
+		}
+	}
+	return false
+}
+
+// Wire maps a domain category onto the contract's vocabulary.
+//
+// Each mapping is a decision rather than a rename, and the ones worth stating are
+// the ones that lose information:
+//
+//   - not_found becomes "input": the caller named something that is not there, which
+//     is a fact about the request. Section 7.7 has no not-found entry, and "internal"
+//     would say the fault is ours when it is the caller's identifier that is stale.
+//   - conflict becomes "input" for the same reason: a revision mismatch is a stale
+//     caller, and the remedy — reload and retry — is a caller's.
+//   - unavailable becomes "configuration", which this package's own comment on that
+//     category already says it is: the runtime is not composed in this build.
+//
+// An unrecognised category maps to "internal", which is the honest answer for a
+// category somebody added without deciding where it belongs.
+func (c ErrorCategory) Wire() WireCategory {
+	switch c {
+	case CategoryInvalidInput, CategoryNotFound, CategoryConflict:
+		return WireInput
+	case CategoryStorage:
+		return WireStorage
+	case CategorySecurity:
+		return WireSecurity
+	case CategoryUnavailable:
+		return WireConfiguration
+	case CategoryModel:
+		return WireModel
+	case CategoryTool:
+		return WireTool
+	case CategoryCancelled:
+		return WireCancelled
+	default:
+		return WireInternal
+	}
+}
