@@ -1,0 +1,790 @@
+package agentruntime
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"strings"
+	"time"
+
+	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/agent"
+)
+
+// runner.go executes one agent invocation: build the prompt, call the model, read
+// the tool calls it asks for, validate the output, and record what happened.
+//
+// The order is AGENT_CONTRACTS section 14.3's, and the part of it that matters
+// most is what does NOT happen: no business write occurs until the output has
+// validated. So a malformed answer, a refused tool call or a spent budget leaves
+// the database exactly as it was, and the only rows the run produces are its own
+// record — which is what AC-AGENT-002's "无业务半写入" and AC-AGENT-003's "不标记
+// success" are about.
+//
+// The model is reached through ModelPort, which is deliberately one method. The
+// runtime does not know about providers, models or wire protocols: WP-06 built the
+// extraction seam the same way for the same reason, and this port is the one the
+// Mock LLM and the real provider adapter both satisfy.
+
+// ModelPort is one model call.
+//
+// It returns the model's raw text, UNVALIDATED. Validation belongs to the runner
+// because the runner is what can ask for a repair; a port that validated its own
+// output would be grading its own work.
+type ModelPort interface {
+	// Complete sends a prompt and returns the reply.
+	//
+	// The request carries the model selection the project's policy named, the
+	// messages, and the deadline. The implementation must honour the context:
+	// section 15 requires a cancel to reach the provider.
+	Complete(ctx context.Context, request ModelRequest) (ModelReply, error)
+}
+
+// ModelRequest is one call to the model.
+type ModelRequest struct {
+	// ModelID is the model policy's choice, resolved by the caller from the
+	// project's settings. The runtime passes it through rather than choosing: section
+	// 13's "低成本阶段不默认使用最昂贵模型" is a configuration rule.
+	ModelID string
+	// ProviderID names the configured provider, or empty to let the port choose.
+	ProviderID string
+	Messages   []TextMessage
+	// MaxOutputTokens and Temperature come from the model policy. Zero means the
+	// policy did not state them, which is different from stating zero.
+	MaxOutputTokens int
+	Temperature     float64
+	// Deadline bounds this call. The runner also bounds the whole invocation.
+	Deadline time.Duration
+}
+
+// ModelReply is the model's answer.
+type ModelReply struct {
+	Content string
+	// Model and FinishReason are recorded with the run, because section 13 requires
+	// a model change to be visible in it.
+	Model        string
+	FinishReason string
+}
+
+// RunStore is where a run's own record goes.
+//
+// One port with the three writes a run makes, because they are one unit of work:
+// a tool call that was not recorded, or a message that was, would make the record
+// disagree with what happened.
+type RunStore interface {
+	// CreateRun writes the run. It is called BEFORE the model is called, so a run
+	// that dies mid-flight leaves a row saying it started.
+	CreateRun(ctx context.Context, run agent.AgentRun) error
+	// FinishRun records the outcome and the validated output.
+	FinishRun(ctx context.Context, run agent.AgentRun, expectedRevision int64) error
+	// RecordMessage writes one message of the run.
+	RecordMessage(ctx context.Context, message agent.AgentMessage) error
+	// RecordToolCall writes one tool call.
+	RecordToolCall(ctx context.Context, call agent.AgentToolCall) error
+}
+
+// Validator checks a model's output against a schema path.
+//
+// It returns value-free violations, because the runner sends them back in a repair
+// prompt and a violation that quoted the document would carry text from an
+// untrusted source into the next call.
+type Validator func(schemaPath string, raw []byte) ([]Violation, error)
+
+// ArtifactVerifier checks that an output's artifact references exist.
+//
+// It is a port rather than a direct database call because the entities differ per
+// stage: a story skeleton, a script version and a storyboard are three tables, and
+// the runtime does not own any of them. AC-AGENT-003's rule — an invented
+// identifier fails validation — is enforced by whatever implements this.
+type ArtifactVerifier interface {
+	// Verify reports the first reference that does not exist, or nil.
+	VerifyArtifacts(ctx context.Context, refs []ArtifactRef) error
+}
+
+// ArtifactRef is one reference an output claims.
+type ArtifactRef struct {
+	EntityType string
+	EntityID   string
+	VersionID  string
+}
+
+// Clock and IDGenerator are the determinism ports every application service here
+// has.
+type Clock interface {
+	Now() time.Time
+}
+
+type IDGenerator interface {
+	New() (string, error)
+}
+
+// Options configures a Runtime.
+type Options struct {
+	Registry  *Registry
+	Tools     *Tools
+	Models    ModelPort
+	Runs      RunStore
+	Validate  Validator
+	Artifacts ArtifactVerifier
+	Clock     Clock
+	IDs       IDGenerator
+}
+
+// Runtime runs agents.
+type Runtime struct {
+	registry  *Registry
+	tools     *Tools
+	models    ModelPort
+	runs      RunStore
+	validate  Validator
+	artifacts ArtifactVerifier
+	clock     Clock
+	ids       IDGenerator
+}
+
+// New builds a Runtime.
+//
+// Every dependency is required. A runtime missing its validator would accept
+// whatever a model returned, and one missing its run store would leave no record —
+// both are refusals rather than degraded modes, which is what Available expresses.
+func New(options Options) *Runtime {
+	return &Runtime{
+		registry:  options.Registry,
+		tools:     options.Tools,
+		models:    options.Models,
+		runs:      options.Runs,
+		validate:  options.Validate,
+		artifacts: options.Artifacts,
+		clock:     options.Clock,
+		ids:       options.IDs,
+	}
+}
+
+// Available reports whether the runtime can run anything.
+func (r *Runtime) Available() bool {
+	return r != nil && r.registry != nil && r.tools != nil && r.models != nil && r.runs != nil && r.validate != nil
+}
+
+func (r *Runtime) now() time.Time {
+	if r == nil || r.clock == nil {
+		return time.Now().UTC()
+	}
+	return r.clock.Now().UTC()
+}
+
+// Invocation is one agent call.
+type Invocation struct {
+	// AgentKey names which registered agent to run.
+	AgentKey      string
+	ProjectID     string
+	EpisodeID     string
+	WorkflowRunID string
+	StageRunID    string
+	// Skill is the document text for the agent's skill, supplied by the caller
+	// because the loader read it and the runtime does not read files.
+	Skill string
+	// SkillVersion is the skill_versions row the skill text came from. The caller
+	// supplies it rather than the runtime looking it up: a second lookup could observe
+	// a different row than the text the caller passed, and section 4.2 requires a run
+	// to name the version it actually ran.
+	SkillVersion string
+	// WorkflowState and ApprovedFacts fill prompt layers 5 and 6.
+	WorkflowState string
+	ApprovedFacts string
+	// Memory fills layer 7.
+	Memory []Message
+	// Task fills layer 8, and TaskIsUntrusted says whether it carries document text.
+	Task            string
+	TaskIsUntrusted bool
+	// UserMessage fills layer 9.
+	UserMessage string
+	// ModelID and ProviderID come from the project's policy for the agent's layer.
+	ModelID    string
+	ProviderID string
+}
+
+// Outcome is what one invocation produced.
+type Outcome struct {
+	RunID string
+	// Output is the validated output, as the schema describes it. It is returned to
+	// the caller and stored on the run.
+	Output json.RawMessage
+	// Summary is the reasonSummary or the model's own short description, for a list
+	// view.
+	Summary string
+	// ToolCalls is what the run called, in order.
+	ToolCalls []agent.AgentToolCall
+	// Messages is what was said, so the caller can persist them or show them.
+	Messages []agent.AgentMessage
+	// Repaired reports that the output needed the one repair round.
+	Repaired bool
+}
+
+// Run executes one invocation.
+//
+// It returns either a validated outcome or a refusal. A refusal never leaves a
+// business write behind, because there are no business writes here at all: this
+// runtime's only writes are its own record and whatever a TOOL does, and a tool
+// call happens only after the model has answered and the ACL has allowed it.
+func (r *Runtime) Run(ctx context.Context, invocation Invocation) (Outcome, error) {
+	if !r.Available() {
+		return Outcome{}, agent.UnavailableError()
+	}
+	spec, ok := r.registry.Lookup(strings.TrimSpace(invocation.AgentKey))
+	if !ok {
+		return Outcome{}, agent.NotFoundError()
+	}
+	if strings.TrimSpace(invocation.ProjectID) == "" {
+		return Outcome{}, agent.InvalidError("An agent run needs a project.")
+	}
+	if err := ctx.Err(); err != nil {
+		return Outcome{}, &CancelledError{Cause: err}
+	}
+
+	// The deadline covers the whole invocation, not one model call: section 3
+	// bounds an agent by duration, and a per-call bound would let a loop of calls
+	// run for as long as it liked.
+	runCtx, cancel := context.WithTimeout(ctx, spec.Limits.MaxDuration)
+	defer cancel()
+
+	runID, err := r.ids.New()
+	if err != nil {
+		return Outcome{}, agent.StorageError("The run could not be identified.", err)
+	}
+	startedAt := r.now()
+	record := agent.AgentRun{
+		ID: runID, ProjectID: invocation.ProjectID,
+		WorkflowRunID: invocation.WorkflowRunID, StageRunID: invocation.StageRunID,
+		Layer: spec.Layer, AgentKey: spec.Key,
+		// The model config is recorded so section 13's "模型变更写入 Run" is satisfied:
+		// a run names which model produced it.
+		ModelConfigID: invocation.ModelID,
+		Status:        agent.RunRunning,
+		StartedAt:     startedAt,
+		InputSummary:  summarise(invocation),
+		Revision:      1,
+	}
+	// The skill version is the caller's to state, because the loader minted it. An
+	// empty one is refused by the domain, which is why it is not defaulted here.
+	record.SkillVersionID = skillVersionOf(invocation)
+	if err := record.Validate(); err != nil {
+		return Outcome{}, err
+	}
+	if err := r.runs.CreateRun(ctx, record); err != nil {
+		return Outcome{}, err
+	}
+
+	// The prompt. Layer order is section 5's, and the tool contract comes from the
+	// registry so a model cannot be told about a tool the ACL would refuse.
+	prompt := Assemble(AssembleRequest{
+		Spec:            spec,
+		Skill:           invocation.Skill,
+		Tools:           r.toolContractFor(spec),
+		WorkflowState:   invocation.WorkflowState,
+		ApprovedFacts:   invocation.ApprovedFacts,
+		Memory:          invocation.Memory,
+		Task:            invocation.Task,
+		TaskIsUntrusted: invocation.TaskIsUntrusted,
+		UserMessage:     invocation.UserMessage,
+	})
+
+	toolCalls := make([]agent.AgentToolCall, 0, 4)
+	messages := make([]agent.AgentMessage, 0, 8)
+	sequence := 0
+
+	// One attempt, then one repair, then stop. Section 14.3 allows exactly one
+	// repair, so this is a two-iteration loop rather than a retry policy.
+	var (
+		output    json.RawMessage
+		failures  []Violation
+		repaired  bool
+		attempted bool
+	)
+	for attempt := 0; attempt < 2; attempt++ {
+		if err := runCtx.Err(); err != nil {
+			// A deadline or a cancel is reported as itself, and the stage is left
+			// for the engine to mark cancelled.
+			_ = r.finish(ctx, record, agent.RunCancelled, "", "agent.cancelled", nil)
+			return Outcome{}, &CancelledError{Cause: err}
+		}
+		reply, err := r.models.Complete(runCtx, ModelRequest{
+			ModelID:    invocation.ModelID,
+			ProviderID: invocation.ProviderID,
+			Messages:   prompt.AsTextMessages(),
+			Deadline:   spec.Limits.MaxDuration,
+		})
+		if err != nil {
+			code := classifyModelFailure(err)
+			// A cancellation is recorded as CANCELLED rather than failed, which is
+			// section 15's "StageRun 标记 cancelled". The first version of this
+			// recorded every model failure as failed, so a cancelled run looked
+			// identical to one that broke — and a retry policy reading the status would
+			// have retried a cancellation the user asked for.
+			status := agent.RunFailed
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				status = agent.RunCancelled
+			}
+			_ = r.finish(ctx, record, status, "", code, nil)
+			return Outcome{}, err
+		}
+		attempted = true
+
+		// The model's own turn is recorded, because section 16 requires the run's
+		// messages and because a repair prompt refers back to it.
+		assistant, messageErr := r.message(runID, invocation, agent.MessageAssistant, reply.Content)
+		if messageErr == nil {
+			messages = append(messages, assistant)
+			_ = r.runs.RecordMessage(ctx, assistant)
+		}
+
+		// Every refusal path below leaves the run unfinished until the loop decides.
+		// The output is validated BEFORE anything acts on it, which is section
+		// 14.3's "no business write" and this runner's central ordering rule.
+		violations, validationErr := r.validate(spec.Output, []byte(reply.Content))
+		if validationErr == nil && len(violations) == 0 {
+			// A validated output may still name an artifact that does not exist, and
+			// that is AC-AGENT-003: the run must not be marked successful and the
+			// workflow must not advance.
+			if artifactErr := r.verifyArtifacts(runCtx, spec, json.RawMessage(reply.Content)); artifactErr != nil {
+				_ = r.finish(ctx, record, agent.RunFailed, "", artifactCode(artifactErr), nil)
+				return Outcome{}, artifactErr
+			}
+			output = json.RawMessage(reply.Content)
+			break
+		}
+		if validationErr != nil {
+			// The validator itself failed, which is a configuration defect rather than
+			// a model failure, so it is reported as one and not repaired.
+			_ = r.finish(ctx, record, agent.RunFailed, "", "agent.validator_failed", nil)
+			return Outcome{}, validationErr
+		}
+		failures = violations
+		// Send the violations back once. The prompt gains a layer rather than being
+		// rebuilt: the model sees what it said and what was wrong with it.
+		prompt.Messages = append(prompt.Messages, Message{
+			Region: RegionTaskInput,
+			Role:   agent.MessageUser,
+			Content: "Your output did not satisfy the contract.\n" +
+				describeViolations(failures) +
+				"\nReturn a corrected document that satisfies every rule above.",
+		})
+		// The repair prompt carries the violations, and the caller learns that a
+		// repair happened even if it then fails.
+		repaired = true
+	}
+
+	if output == nil {
+		// Both attempts were invalid, which section 14.3 makes final.
+		code := "agent.output_schema_invalid"
+		_ = r.finish(ctx, record, agent.RunFailed, "", code, failures)
+		return Outcome{}, &SchemaError{Stage: spec.Key, Violations: failures, Repaired: attempted && repaired}
+	}
+
+	// Tool calls, which the output's schema describes. They run AFTER validation,
+	// so a malformed document cannot cause a write.
+	requested, parseErr := r.requestedToolCalls(spec, output)
+	if parseErr != nil {
+		_ = r.finish(ctx, record, agent.RunFailed, "", "agent.tool_request_invalid", nil)
+		return Outcome{}, parseErr
+	}
+	for _, request := range requested {
+		call := r.callTool(runCtx, runID, spec, invocation, request, sequence)
+		sequence++
+		toolCalls = append(toolCalls, call)
+		_ = r.runs.RecordToolCall(ctx, call)
+		if call.Status == agent.ToolCallDenied {
+			// AC-AGENT-001: an illegal call is refused, the run records the failure and
+			// the invocation stops rather than continuing as if nothing happened.
+			_ = r.finish(ctx, record, agent.RunFailed, "", CodeToolNotAllowed, nil)
+			return Outcome{}, &ToolNotAllowedError{
+				Layer: spec.Layer, Mode: agent.ToolMode(""), Tool: call.ToolKey, NotGranted: true,
+			}
+		}
+		if call.Status == agent.ToolCallFailed {
+			_ = r.finish(ctx, record, agent.RunFailed, "", call.ErrorCode, nil)
+			return Outcome{}, agent.StorageError("A tool this step needed did not complete.", nil)
+		}
+	}
+
+	if err := r.finish(ctx, record, agent.RunSucceeded, string(output), "", nil); err != nil {
+		return Outcome{}, err
+	}
+	return Outcome{
+		RunID:     runID,
+		Output:    output,
+		Summary:   summariseOutput(output),
+		ToolCalls: toolCalls,
+		Messages:  messages,
+		Repaired:  repaired,
+	}, nil
+}
+
+// finish records the run's outcome.
+func (r *Runtime) finish(ctx context.Context, record agent.AgentRun, status agent.RunStatus, output, errorCode string, violations []Violation) error {
+	finished := record
+	finished.Status = status
+	finished.ValidatedOutputJSON = output
+	finished.ErrorCode = errorCode
+	if status == agent.RunSucceeded {
+		finished.ErrorCode = ""
+	}
+	// A terminal status needs a finish time, and the domain refuses one without it.
+	finished.FinishedAt = r.now()
+	if status == agent.RunSucceeded {
+		_ = violations
+	}
+	// The expected revision is what the row holds, which is what CreateRun wrote.
+	if err := r.runs.FinishRun(ctx, finished, record.Revision); err != nil {
+		return err
+	}
+	record.Revision = record.Revision + 1
+	return nil
+}
+
+// message builds one message row.
+func (r *Runtime) message(runID string, invocation Invocation, role agent.MessageRole, content string) (agent.AgentMessage, error) {
+	id, err := r.ids.New()
+	if err != nil {
+		return agent.AgentMessage{}, agent.StorageError("The message could not be identified.", err)
+	}
+	hash := contentHash(content)
+	message := agent.AgentMessage{
+		ID: id, AgentRunID: runID,
+		ScopeKey:    scopeKey(invocation),
+		Role:        role,
+		Content:     truncateForStorage(content),
+		ContentHash: hash,
+		CreatedAt:   r.now(),
+	}
+	if err := message.Validate(); err != nil {
+		return agent.AgentMessage{}, err
+	}
+	return message, nil
+}
+
+// ToolCallRequest is one tool call the model asked for.
+type ToolCallRequest struct {
+	Key       string
+	Arguments json.RawMessage
+}
+
+// requestedToolCalls reads the tool calls out of a validated output.
+//
+// The output schemas do not all carry tool calls: a stage that does its work in one
+// answer has none. So the shape is looked for rather than required, and an output
+// with no toolCalls field is a complete answer rather than an error.
+func (r *Runtime) requestedToolCalls(spec agent.Spec, output json.RawMessage) ([]ToolCallRequest, error) {
+	var envelope struct {
+		ToolCalls []struct {
+			Tool string          `json:"tool"`
+			Args json.RawMessage `json:"args"`
+		} `json:"toolCalls"`
+	}
+	if err := json.Unmarshal(output, &envelope); err != nil {
+		return nil, agent.InvalidError("The model's output could not be read.")
+	}
+	if len(envelope.ToolCalls) == 0 {
+		return nil, nil
+	}
+	// The count is checked against the agent's budget BEFORE any call runs, so a
+	// model that asked for eleven calls with a budget of eight is refused rather
+	// than truncated: AC-AGENT-005's "Tool Calls 超限停止".
+	if len(envelope.ToolCalls) > spec.Limits.MaxToolCalls {
+		return nil, &QuotaError{Limit: "tool_calls", Allowed: spec.Limits.MaxToolCalls, Used: len(envelope.ToolCalls)}
+	}
+	requests := make([]ToolCallRequest, 0, len(envelope.ToolCalls))
+	for _, call := range envelope.ToolCalls {
+		requests = append(requests, ToolCallRequest{Key: call.Tool, Arguments: call.Args})
+	}
+	return requests, nil
+}
+
+// callTool authorizes and runs one tool call.
+//
+// It returns a call record whatever happened, because section 16 requires the run
+// to show what it tried and section 7.1 requires a denial to be attributable to the
+// ACL rather than to the tool.
+func (r *Runtime) callTool(ctx context.Context, runID string, spec agent.Spec, invocation Invocation, request ToolCallRequest, sequence int) agent.AgentToolCall {
+	started := r.now()
+	call := agent.AgentToolCall{
+		ID: mustID(r.ids), AgentRunID: runID, Sequence: sequence, ToolKey: request.Key,
+		InputJSON: string(request.Arguments), Status: agent.ToolCallRunning, StartedAt: started,
+	}
+	tool, known := r.tools.Lookup(request.Key)
+	if !known {
+		call.Status = agent.ToolCallDenied
+		call.ErrorCode = CodeToolNotAllowed
+		call.FinishedAt = r.now()
+		return call
+	}
+	if err := (Authorizer{}).Authorize(AuthorizeRequest{Spec: spec, Tool: tool.Spec}); err != nil {
+		var notAllowed *ToolNotAllowedError
+		if errors.As(err, &notAllowed) {
+			call.Status = agent.ToolCallDenied
+			call.ErrorCode = CodeToolNotAllowed
+			call.FinishedAt = r.now()
+			return call
+		}
+		call.Status = agent.ToolCallFailed
+		call.ErrorCode = "agent.authorize_failed"
+		call.FinishedAt = r.now()
+		return call
+	}
+	// The arguments are size-bounded before they reach the handler, so a model
+	// cannot hand a tool a document through a field the schema left open.
+	if len(request.Arguments) > MaxToolResultBytes {
+		call.Status = agent.ToolCallFailed
+		call.ErrorCode = "agent.tool_input_too_large"
+		call.FinishedAt = r.now()
+		return call
+	}
+	result, err := tool.Handler(ctx, ToolRequest{
+		ProjectID:     invocation.ProjectID,
+		EpisodeID:     invocation.EpisodeID,
+		WorkflowRunID: invocation.WorkflowRunID,
+		StageRunID:    invocation.StageRunID,
+		Arguments:     request.Arguments,
+	})
+	call.FinishedAt = r.now()
+	if err != nil {
+		call.Status = agent.ToolCallFailed
+		call.ErrorCode = codeFor(call.ErrorCode, err)
+		return call
+	}
+	encoded, boundErr := boundResult(result, tool.Spec.MaxOutputBytes)
+	if boundErr != nil {
+		call.Status = agent.ToolCallFailed
+		call.ErrorCode = "agent.tool_output_too_large"
+		return call
+	}
+	call.Status = agent.ToolCallSucceed
+	call.OutputJSON = encoded
+	return call
+}
+
+// verifyArtifacts checks the references an output claims.
+//
+// An output with no artifacts field has none to check, which is legitimate for a
+// stage that reports only a decision.
+func (r *Runtime) verifyArtifacts(ctx context.Context, spec agent.Spec, output json.RawMessage) error {
+	var envelope struct {
+		Artifacts []struct {
+			EntityType string `json:"entityType"`
+			EntityID   string `json:"entityId"`
+			VersionID  string `json:"versionId"`
+		} `json:"artifacts"`
+	}
+	if err := json.Unmarshal(output, &envelope); err != nil {
+		return agent.InvalidError("The model's output could not be read.")
+	}
+	if len(envelope.Artifacts) == 0 {
+		return nil
+	}
+	// The verifier is optional so a runtime can be composed for an agent whose stage
+	// produces nothing, but a stage that NAMES an artifact without one cannot be
+	// checked and is therefore refused rather than trusted.
+	if r.artifacts == nil {
+		return agent.UnavailableError()
+	}
+	refs := make([]ArtifactRef, 0, len(envelope.Artifacts))
+	for _, artifact := range envelope.Artifacts {
+		refs = append(refs, ArtifactRef{
+			EntityType: artifact.EntityType, EntityID: artifact.EntityID, VersionID: artifact.VersionID,
+		})
+	}
+	return r.artifacts.VerifyArtifacts(ctx, refs)
+}
+
+// toolContractFor renders an agent's own tools for prompt layer 4.
+func (r *Runtime) toolContractFor(spec agent.Spec) []ToolContractLine {
+	lines := make([]ToolContractLine, 0, len(spec.AllowedTools))
+	for _, key := range spec.AllowedTools {
+		tool, ok := r.tools.Lookup(key)
+		if !ok {
+			// A spec naming an unregistered tool cannot happen: the registry refuses
+			// it at startup. Skipping rather than panicking keeps a test double able
+			// to construct a runtime without the registry's checks.
+			continue
+		}
+		lines = append(lines, ToolContractLine{
+			Key: tool.Spec.Key, Mode: tool.Spec.Mode, Schema: tool.SchemaPath,
+			MaxBytes: tool.Spec.MaxOutputBytes,
+		})
+	}
+	return lines
+}
+
+// describeViolations renders violations for a repair prompt.
+//
+// A path and a rule, never a value: the violations come from validating a model's
+// output, and that output quotes a document, so quoting it back would carry
+// document text into the next call. This is WP-06's rule and it applies unchanged.
+func describeViolations(violations []Violation) string {
+	if len(violations) == 0 {
+		return "No specific rule was identified."
+	}
+	var builder strings.Builder
+	builder.WriteString("Problems:\n")
+	for index, violation := range violations {
+		if index >= 20 {
+			builder.WriteString("- and more\n")
+			break
+		}
+		builder.WriteString("- " + violation.Path + " " + violation.Message + "\n")
+	}
+	return builder.String()
+}
+
+// classifyModelFailure maps a model port's error to a stable code.
+func classifyModelFailure(err error) string {
+	var quota *QuotaError
+	if errors.As(err, &quota) {
+		return quota.Code()
+	}
+	var cancelled *CancelledError
+	if errors.As(err, &cancelled) {
+		return "agent.cancelled"
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "agent.timeout"
+	}
+	if errors.Is(err, context.Canceled) {
+		return "agent.cancelled"
+	}
+	return "agent.model_failed"
+}
+
+// artifactCode names an artifact failure.
+func artifactCode(err error) string {
+	var artifact *ArtifactError
+	if errors.As(err, &artifact) {
+		return artifact.Code()
+	}
+	return "agent.artifact_not_found"
+}
+
+// summarise describes an invocation without storing its text.
+func summarise(invocation Invocation) string {
+	parts := []string{"agent=" + invocation.AgentKey}
+	if stage := strings.TrimSpace(invocation.StageRunID); stage != "" {
+		parts = append(parts, "stage_run="+stage)
+	}
+	if task := strings.TrimSpace(invocation.Task); task != "" {
+		// The task's LENGTH rather than its text: it may carry document content, and
+		// the summary is a queryable row.
+		parts = append(parts, "task_runes="+itoa(len([]rune(task))))
+	}
+	if message := strings.TrimSpace(invocation.UserMessage); message != "" {
+		parts = append(parts, "user_message_runes="+itoa(len([]rune(message))))
+	}
+	return strings.Join(parts, " ")
+}
+
+// summariseOutput pulls a short description out of a validated output.
+//
+// It looks for the fields the section 7 schemas name — reasonSummary, summary,
+// intent — and returns empty for an output that has none, because inventing one
+// would put text in a list view that the model did not say.
+func summariseOutput(output json.RawMessage) string {
+	var envelope struct {
+		ReasonSummary string `json:"reasonSummary"`
+		Summary       string `json:"summary"`
+		Intent        string `json:"intent"`
+	}
+	if err := json.Unmarshal(output, &envelope); err != nil {
+		return ""
+	}
+	for _, candidate := range []string{envelope.ReasonSummary, envelope.Summary, envelope.Intent} {
+		if trimmed := strings.TrimSpace(candidate); trimmed != "" {
+			return truncated(trimmed, agent.MaxInputSummaryRunes)
+		}
+	}
+	return ""
+}
+
+// skillVersionOf reads the skill version a caller supplied.
+//
+// The runtime does not look it up: the caller loaded the pack and recorded its
+// version, and a second lookup here could observe a different row than the skill
+// text the caller passed.
+func skillVersionOf(invocation Invocation) string {
+	return invocation.SkillVersion
+}
+
+// codeFor prefers a tool's own error code and falls back to a generic one.
+func codeFor(existing string, err error) string {
+	if strings.TrimSpace(existing) != "" {
+		return existing
+	}
+	var refusal Refusal
+	if asRefusal(err, &refusal) {
+		return "agent.tool_" + string(refusal.Category())
+	}
+	return "agent.tool_failed"
+}
+
+// mustID mints an identifier, tolerating a generator failure by returning empty so
+// the caller's validation refuses the row rather than panicking.
+func mustID(ids IDGenerator) string {
+	if ids == nil {
+		return ""
+	}
+	id, err := ids.New()
+	if err != nil {
+		return ""
+	}
+	return id
+}
+
+// truncateForStorage bounds a message's content.
+func truncateForStorage(content string) string {
+	return truncated(content, agent.DefaultMessageContentBytes)
+}
+
+// truncated clips a string to a rune count.
+func truncated(value string, limit int) string {
+	runes := []rune(value)
+	if len(runes) <= limit {
+		return value
+	}
+	return string(runes[:limit])
+}
+
+// contentHash is the SHA-256 of a message's content, so a message can be
+// identified and de-duplicated without being read.
+func contentHash(content string) string {
+	sum := sha256.Sum256([]byte(content))
+	return hex.EncodeToString(sum[:])
+}
+
+// scopeKey encodes DOMAIN_MODEL section 14.4's structured scope as a stable
+// string.
+//
+// Section 14.4 requires retrieval to filter by STRUCTURE rather than by a fragile
+// prefix, so the encoded key is a display and indexing convenience and the parts
+// are stored as their own columns by the repository. The encoding uses a separator
+// that cannot appear in an identifier, so two different scopes cannot produce the
+// same string.
+func scopeKey(invocation Invocation) string {
+	parts := []string{
+		"local",
+		"",
+		invocation.ProjectID,
+		invocation.EpisodeID,
+		invocation.AgentKey,
+		"",
+	}
+	return strings.Join(parts, "|")
+}
+
+// ScopeParts returns the structured scope a run belongs to, so a repository can
+// store the parts rather than parse the key it was given.
+//
+// Section 14.4's fields, in its order: tenant, workspace, project, episode,
+// agent key, session. The tenant is "local" because this is a single-machine
+// desktop build and the field exists so a future multi-tenant deployment has a
+// place to put its value rather than a shape to change.
+func ScopeParts(invocation Invocation) [6]string {
+	return [6]string{"local", "", invocation.ProjectID, invocation.EpisodeID, invocation.AgentKey, ""}
+}
