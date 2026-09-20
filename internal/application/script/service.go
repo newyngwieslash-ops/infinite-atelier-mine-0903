@@ -13,7 +13,17 @@ import (
 
 // NewService builds the script service.
 func NewService(options Options) *Service {
-	return &Service{repository: options.Repository, clock: options.Clock, ids: options.IDs, events: options.Events}
+	// Every option is copied. The projector was added by WP-08 and NOT copied here at first, so the
+	// field stayed nil however the composition root set it and every projection refused with
+	// "this build cannot project onto a canvas" — a defect a service test found by asserting the
+	// positive path rather than only the refusal.
+	return &Service{
+		repository: options.Repository,
+		clock:      options.Clock,
+		ids:        options.IDs,
+		events:     options.Events,
+		projector:  options.Projector,
+	}
 }
 
 // Available reports whether the service can operate. An unattached binding

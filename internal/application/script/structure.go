@@ -124,7 +124,13 @@ func (s *Service) enforceScriptLocks(ctx context.Context, version scriptdomain.S
 		// row's own field is what is read here and not the request's.
 		return nil
 	}
-	locks, err := s.repository.ListScriptFieldLocks(ctx, version.ID)
+	// The locks are read from the BASE version, which is where the user pinned them.
+	//
+	// This was a real defect: the first version read them from the NEW version, where nothing can be
+	// locked yet because it was created a moment ago — so the set was always empty, the comparison
+	// never ran, and AC-SCRIPT-002's "锁定字段不变" was enforced nowhere while its test passed for the
+	// wrong reason. The service tests found it: a revision that rewrote a pinned field was accepted.
+	locks, err := s.repository.ListScriptFieldLocks(ctx, version.BasedOnVersionID)
 	if err != nil {
 		return err
 	}

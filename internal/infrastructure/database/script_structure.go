@@ -110,6 +110,16 @@ func (r *ScriptRepository) GetScriptStructure(ctx context.Context, scriptVersion
 		if entry.Shots, err = r.ListShots(ctx, scene.ID); err != nil {
 			return script.ScriptStructure{}, err
 		}
+		// The list reads return nil for no rows, which a caller ranging over needs no guard for but
+		// a caller comparing against an empty payload DOES: two scenes with no children and two
+		// scenes with nil children would compare unequal. Normalising here is what makes the
+		// structure a value a diff and a lock comparison can rely on.
+		if entry.DialogueLines == nil {
+			entry.DialogueLines = []script.DialogueLine{}
+		}
+		if entry.Shots == nil {
+			entry.Shots = []script.Shot{}
+		}
 		structure.Scenes = append(structure.Scenes, entry)
 	}
 	return structure, nil
