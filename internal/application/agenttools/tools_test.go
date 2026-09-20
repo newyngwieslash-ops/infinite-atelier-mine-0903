@@ -100,24 +100,43 @@ func TestToolSchemasAreStrictObjects(t *testing.T) {
 // generator produced. A tool that NEEDS an argument is asserted to refuse `{}` here too,
 // which is what makes the list meaningful: both directions have a failing case.
 func TestToolsWithOnlyOptionalArgumentsAcceptAnEmptyObject(t *testing.T) {
+	// EVERY tool, with the answer written out. The first version named seven and DERIVED the rest
+	// from the same `required` array the assertion was about — which is a tautology: it asserted
+	// "this schema accepts {} iff its required array is empty", a statement about JSON Schema
+	// rather than about this table. The list being complete is what makes a wrong `required`
+	// array a failure here instead of a fact the test reads back.
 	allOptional := map[string]bool{
+		// All arguments optional: an empty call states nothing, which the schema must accept.
 		"workflow.read_state":        true,
 		"story.read_events":          true,
 		"story.read_rules":           true,
 		"asset.read_approved_assets": true,
 		"memory.deep_recall":         true,
-		// These three REQUIRE an argument, which is the other direction of the same
-		// assertion: a schema that accepted {} for a tool that cannot work without one
-		// would let a model make a call the handler then refuses.
-		"storyboard.read_storyboard":           false,
-		"script.create_story_skeleton_version": false,
+		// These require an argument, which is the other direction of the same assertion: a schema
+		// that accepted {} for a tool that cannot work without one would let a model make a call the
+		// handler then refuses.
+		"workflow.request_user_gate":                 false,
+		"story.read_chapter_text":                    false,
+		"script.read_story_skeleton":                 false,
+		"script.read_adaptation_strategy":            false,
+		"script.read_script_version":                 false,
+		"script.create_story_skeleton_version":       false,
+		"script.create_adaptation_strategy_version":  false,
+		"script.create_script_version":               false,
+		"storyboard.read_director_plan":              false,
+		"storyboard.read_storyboard":                 false,
+		"storyboard.create_director_plan_version":    false,
+		"storyboard.create_storyboard_version":       false,
+		"storyboard.create_storyboard_panel_version": false,
+		"asset.create_candidate_version":             false,
+	}
+	if len(allOptional) != len(Keys()) {
+		t.Fatalf("this test names %d tools and the table registers %d", len(allOptional), len(Keys()))
 	}
 	for _, key := range Keys() {
 		wantAccepted, known := allOptional[key]
 		if !known {
-			// Not in either list: assert the schema's own answer is consistent with its
-			// `required` array rather than leaving it unchecked.
-			wantAccepted = len(schemaRequiredNames(t, key)) == 0
+			t.Fatalf("the table registers %s, which this test does not cover", key)
 		}
 		empty, err := jsonschema.UnmarshalJSON(strings.NewReader(`{}`))
 		if err != nil {
@@ -133,23 +152,6 @@ func TestToolsWithOnlyOptionalArgumentsAcceptAnEmptyObject(t *testing.T) {
 	}
 }
 
-// schemaRequiredNames returns a schema's required property names, sorted.
-func schemaRequiredNames(t *testing.T, key string) []string {
-	t.Helper()
-	body, err := schemas.Lookup("schemas/agent/tools/" + key + ".json")
-	if err != nil {
-		t.Fatalf("reading the schema for %s: %v", key, err)
-	}
-	var document struct {
-		Required []string `json:"required"`
-	}
-	if err := json.Unmarshal(body, &document); err != nil {
-		t.Fatalf("the schema for %s is not valid JSON: %v", key, err)
-	}
-	sort.Strings(document.Required)
-	return document.Required
-}
-
 // TestNoToolSchemaAcceptsAProjectID is the boundary assertion.
 //
 // AGENT_CONTRACTS section 7.1 forbids taking a project or episode from a model, and the
@@ -157,7 +159,6 @@ func schemaRequiredNames(t *testing.T, key string) []string {
 // schema has a field for one. This checks the schemas rather than the handlers, because
 // a schema is what a future contributor would copy.
 func TestNoToolSchemaAcceptsAProjectID(t *testing.T) {
-	forbidden := []string{"projectId", "episodeId", "tenantId", "workspaceId"}
 	for _, key := range Keys() {
 		body, err := schemas.Lookup("schemas/agent/tools/" + key + ".json")
 		if err != nil {
@@ -178,7 +179,6 @@ func TestNoToolSchemaAcceptsAProjectID(t *testing.T) {
 				t.Errorf("the schema for %s carries a %s field, so a model could propose a scope", key, field)
 			}
 		}
-		_ = forbidden
 	}
 }
 
