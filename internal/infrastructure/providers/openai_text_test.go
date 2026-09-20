@@ -406,6 +406,75 @@ func TestEndpointRejectsCredentialedBaseURL(t *testing.T) {
 	}
 }
 
+// TestParseCompletionReadsToolCalls covers the transport the agent runtime depends
+// on, and it exists because two mutations survived without it: dropping the tool
+// calls, and dropping only the ones that have no name.
+//
+// Both failures are silent. A response whose tool calls were dropped looks exactly
+// like a model that asked for nothing, so the runtime would validate the document,
+// find no calls to make and report a successful run — a stage that did its work with
+// tools it never called.
+func TestParseCompletionReadsToolCalls(t *testing.T) {
+	payload := []byte(`{"model":"gpt-test","choices":[{"message":{"content":"{\"schemaVersion\":1}","tool_calls":[
+		{"function":{"name":"story.read_events","arguments":"{\"chapterId\":\"c1\"}"}},
+		{"function":{"name":"workflow.read_state","arguments":"{}"}}
+	]}}]}`)
+	result, err := parseCompletion(payload, "fallback")
+	if err != nil {
+		t.Fatalf("parseCompletion: %v", err)
+	}
+	if len(result.ToolCalls) != 2 {
+		t.Fatalf("the reply carries %d tool calls, want 2", len(result.ToolCalls))
+	}
+	if result.ToolCalls[0].Key != "story.read_events" {
+		t.Fatalf("the first call names %q", result.ToolCalls[0].Key)
+	}
+	// The arguments are passed through as the provider's own bytes rather than
+	// decoded and re-encoded, so what the tool's schema validates is what the model
+	// sent. A re-encode would mean validating a document this adapter produced.
+	if !strings.Contains(string(result.ToolCalls[0].Arguments), "c1") {
+		t.Fatalf("the arguments were not passed through: %q", result.ToolCalls[0].Arguments)
+	}
+	// The document itself is untouched by the calls beside it.
+	if !strings.Contains(result.Content, "schemaVersion") {
+		t.Fatalf("the content was altered: %q", result.Content)
+	}
+}
+
+// TestParseCompletionRefusesAnUnnamedToolCall covers the second surviving mutation.
+//
+// A tool call with no name can be neither authorized nor refused, so the whole reply
+// is refused. Dropping it instead would turn "the model asked for something we could
+// not check" into "the model asked for nothing", which is the fail-open direction.
+func TestParseCompletionRefusesAnUnnamedToolCall(t *testing.T) {
+	payload := []byte(`{"choices":[{"message":{"content":"{}","tool_calls":[{"function":{"arguments":"{}"}}]}}]}`)
+	if _, err := parseCompletion(payload, "m"); err == nil {
+		t.Fatal("a reply whose tool call has no name was accepted")
+	}
+	// A blank name is the same case: whitespace is not a tool key.
+	blank := []byte(`{"choices":[{"message":{"content":"{}","tool_calls":[{"function":{"name":"   ","arguments":"{}"}}]}}]}`)
+	if _, err := parseCompletion(blank, "m"); err == nil {
+		t.Fatal("a reply whose tool call name is blank was accepted")
+	}
+}
+
+// TestParseCompletionWithoutToolCallsIsACompleteAnswer is the other side: an empty
+// tool_calls array and an absent one are both a complete answer, not a failure.
+func TestParseCompletionWithoutToolCallsIsACompleteAnswer(t *testing.T) {
+	for _, payload := range []string{
+		`{"choices":[{"message":{"content":"{}"}}]}`,
+		`{"choices":[{"message":{"content":"{}","tool_calls":[]}}]}`,
+	} {
+		result, err := parseCompletion([]byte(payload), "m")
+		if err != nil {
+			t.Fatalf("parseCompletion(%s): %v", payload, err)
+		}
+		if len(result.ToolCalls) != 0 {
+			t.Fatalf("parseCompletion(%s) reported %d calls", payload, len(result.ToolCalls))
+		}
+	}
+}
+
 func TestParseCompletionFallbacks(t *testing.T) {
 	result, err := parseCompletion([]byte(`{"choices":[{"message":{"content":"x"}}]}`), "gpt-fallback")
 	if err != nil {
