@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://infinite-atelier.invalid/schemas/agent/decision-result.v1.json",
+  "title": "DecisionResult v1",
+  "description": "What the Decision layer returns. AGENT_CONTRACTS section 7.2. The runtime validates this against the legal action set before acting on it, so a model that names an illegal stage or agent is refused rather than obeyed — the rules are the runtime's, not the model's.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "status", "intent", "reasonSummary", "nextAction"],
+  "properties": {
+    "schemaVersion": { "type": "integer", "const": 1 },
+    "status": {
+      "enum": ["respond", "execute", "review", "wait_user", "stop", "error"]
+    },
+    "workflowRunId": { "anyOf": [{ "type": "string", "maxLength": 200 }, { "type": "null" }] },
+    "currentStage": { "anyOf": [{ "type": "string", "maxLength": 120 }, { "type": "null" }] },
+    "intent": {
+      "description": "A short label for what the agent understood the user to want.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "reasonSummary": {
+      "description": "An auditable summary of why this action was chosen. It is a summary rather than the model's reasoning: SECURITY section 7 and AGENT_CONTRACTS section 16 both require the record to be reviewable without asking for private chain of thought.",
+      "type": "string",
+      "maxLength": 2000
+    },
+    "nextAction": { "$ref": "#/$defs/nextAction" },
+    "userMessage": {
+      "description": "What to show the user. It is model output, so it is displayed as text and never parsed.",
+      "type": "string",
+      "maxLength": 20000
+    },
+    "warnings": {
+      "type": "array",
+      "maxItems": 50,
+      "items": { "type": "string", "maxLength": 500 }
+    }
+  },
+  "$defs": {
+    "nextAction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "enum": ["run_execution", "run_supervision", "request_approval", "request_input", "finish", "none"]
+        },
+        "agentKey": {
+          "description": "Required when the type runs an agent; the runtime refuses a key that is not registered for that layer.",
+          "anyOf": [{ "type": "string", "maxLength": 120 }, { "type": "null" }]
+        },
+        "stage": {
+          "description": "The stage to run. The runtime refuses one the workflow's next-step rules do not allow.",
+          "anyOf": [{ "type": "string", "maxLength": 120 }, { "type": "null" }]
+        },
+        "input": {
+          "description": "Arguments for the stage. It is passed through to the Execution agent's request, so the schema here stays open while the execution contract stays closed.",
+          "type": "object"
+        }
+      }
+    }
+  }
+}

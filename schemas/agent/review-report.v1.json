@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://infinite-atelier.invalid/schemas/agent/review-report.v1.json",
+  "title": "ReviewReport v1",
+  "description": "What a Supervision agent returns. AGENT_CONTRACTS section 7.6. The Validation rules there are split between this schema (what is expressible as a shape) and the domain (what is a rule about the report as a whole). The rule that a passing report may not carry a major or critical issue is NOT here, because JSON Schema cannot compare a flag with the severities of an array: workflow.ReviewReport.Validate enforces it, and a test pins that.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "passed", "severity", "stage", "stageRunId", "rulesetVersion", "issues", "summary", "recommendedAction"],
+  "properties": {
+    "schemaVersion": { "type": "integer", "const": 1 },
+    "passed": { "type": "boolean" },
+    "score": {
+      "description": "A score, or null when the ruleset does not grade. null is distinct from zero, which is a real result.",
+      "anyOf": [{ "type": "number", "minimum": 0, "maximum": 100 }, { "type": "null" }]
+    },
+    "grade": { "enum": ["", "A", "B", "C", "D", "F"] },
+    "severity": { "enum": ["none", "minor", "major", "critical"] },
+    "stage": { "type": "string", "minLength": 1, "maxLength": 120 },
+    "stageRunId": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "rulesetVersion": { "type": "string", "minLength": 1, "maxLength": 60 },
+    "issues": {
+      "type": "array",
+      "maxItems": 2000,
+      "items": { "$ref": "#/$defs/issue" }
+    },
+    "summary": { "type": "string", "maxLength": 4000 },
+    "recommendedAction": { "enum": ["pass", "fix", "redo", "manual_review"] }
+  },
+  "$defs": {
+    "issue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rule", "severity", "problem"],
+      "properties": {
+        "rule": {
+          "description": "The ruleset rule this finding is about, such as CHARACTER_CONSISTENCY.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "severity": { "enum": ["none", "minor", "major", "critical"] },
+        "entityType": { "type": "string", "maxLength": 60 },
+        "entityId": { "type": "string", "maxLength": 200 },
+        "location": {
+          "description": "Where the problem is, when it is not addressable by entity id. workflow.ReviewIssue.Validate requires one of the entity pair or this.",
+          "type": "string",
+          "maxLength": 500
+        },
+        "field": { "type": "string", "maxLength": 120 },
+        "evidence": {
+          "description": "What the supervisor actually read to support this finding. Section 7.6 requires evidence to reference only things the run really loaded, which the runtime checks against the tool calls the run made.",
+          "type": "array",
+          "maxItems": 50,
+          "items": { "$ref": "#/$defs/evidence" }
+        },
+        "problem": { "type": "string", "minLength": 1, "maxLength": 2000 },
+        "suggestion": { "type": "string", "maxLength": 2000 },
+        "autoFixable": { "type": "boolean" }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "ref"],
+      "properties": {
+        "type": { "enum": ["entity_ref", "file_ref", "tool_result", "rule"] },
+        "ref": { "type": "string", "minLength": 1, "maxLength": 300 }
+      }
+    }
+  }
+}

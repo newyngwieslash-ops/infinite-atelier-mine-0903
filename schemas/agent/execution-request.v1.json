@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://infinite-atelier.invalid/schemas/agent/execution-request.v1.json",
+  "title": "ExecutionRequest v1",
+  "description": "What an Execution agent is given for one attempt. AGENT_CONTRACTS section 7.3. lockedRefs exists because a user may pin a version this stage must respect rather than regenerate, and fixIssueIds because section 10.2's FIX mode re-runs against specific findings rather than from scratch. Both are supplied by the runtime from the database; the agent cannot add to either.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "projectId", "workflowRunId", "stageRunId", "stage", "task", "idempotencyKey"],
+  "properties": {
+    "schemaVersion": { "type": "integer", "const": 1 },
+    "projectId": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "episodeId": { "anyOf": [{ "type": "string", "maxLength": 200 }, { "type": "null" }] },
+    "workflowRunId": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "stageRunId": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "stage": { "type": "string", "minLength": 1, "maxLength": 120 },
+    "task": {
+      "description": "The stage's instruction to the agent. It comes from the skill and the stage's own configuration, never from a document.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 20000
+    },
+    "inputRefs": {
+      "description": "The upstream versions this stage reads, by reference. The agent fetches them through read tools so the runtime can record what was actually read.",
+      "type": "array",
+      "maxItems": 200,
+      "items": { "$ref": "#/$defs/ref" }
+    },
+    "lockedRefs": {
+      "description": "Things the user pinned, which this stage must not rewrite.",
+      "type": "array",
+      "maxItems": 200,
+      "items": { "$ref": "#/$defs/ref" }
+    },
+    "fixIssueIds": {
+      "description": "The review issues a FIX attempt must address. Empty for a first attempt and for REDO.",
+      "type": "array",
+      "maxItems": 200,
+      "items": { "type": "string", "minLength": 1, "maxLength": 200 }
+    },
+    "idempotencyKey": {
+      "description": "Identifies this attempt so a replayed command does not produce a second version (PRD FR-100's idempotency requirement).",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    }
+  },
+  "$defs": {
+    "ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["entityType", "entityId"],
+      "properties": {
+        "entityType": { "type": "string", "minLength": 1, "maxLength": 60 },
+        "entityId": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "versionId": { "anyOf": [{ "type": "string", "maxLength": 200 }, { "type": "null" }] },
+        "status": { "anyOf": [{ "type": "string", "maxLength": 60 }, { "type": "null" }] }
+      }
+    }
+  }
+}

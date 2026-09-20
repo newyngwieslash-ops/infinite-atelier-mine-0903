@@ -29,9 +29,43 @@ var files embed.FS
 // form uses to name this schema.
 const AgentEventExtractionPath = "schemas/agent/event_extraction.v1.json"
 
+// The rest of the agent contract, by the path a skill manifest names them with.
+//
+// They are constants rather than string literals at the call sites so a rename
+// breaks the build instead of producing a "no schema is embedded at ..." error at
+// runtime, and so the set of contracts this build carries is greppable.
+const (
+	AgentDecisionRequestPath  = "schemas/agent/decision-request.v1.json"
+	AgentDecisionResultPath   = "schemas/agent/decision-result.v1.json"
+	AgentExecutionRequestPath = "schemas/agent/execution-request.v1.json"
+	AgentExecutionResultPath  = "schemas/agent/execution-result.v1.json"
+	AgentSupervisionReqPath   = "schemas/agent/supervision-request.v1.json"
+	AgentReviewReportPath     = "schemas/agent/review-report.v1.json"
+	AgentErrorPath            = "schemas/agent/agent-error.v1.json"
+)
+
 // embeddedPath is the same file as this package sees it: embed paths are
 // relative to the directory holding the directive, with no leading `schemas/`.
+//
+// It is unused today because Lookup addresses files by their specification path,
+// but it documents the translation that path.Join("schemas", dir) performs, which
+// is what a reader checking the embed directive against the constants needs.
 const embeddedEventExtractionPath = "agent/event_extraction.v1.json"
+
+// AgentPaths lists every agent-contract schema this build embeds, in the order the
+// agent runtime compiles them. It exists so the runtime's registry and the tests
+// can iterate the whole set rather than naming files one at a time: a schema added
+// to the directory but forgotten in a call site is then impossible.
+var AgentPaths = []string{
+	AgentDecisionRequestPath,
+	AgentDecisionResultPath,
+	AgentExecutionRequestPath,
+	AgentExecutionResultPath,
+	AgentSupervisionReqPath,
+	AgentReviewReportPath,
+	AgentErrorPath,
+	AgentEventExtractionPath,
+}
 
 // cached schemas, read once. A schema is immutable at runtime, so re-reading it
 // per validation would only add a failure mode.

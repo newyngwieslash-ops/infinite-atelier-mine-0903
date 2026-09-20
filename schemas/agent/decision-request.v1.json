@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://infinite-atelier.invalid/schemas/agent/decision-request.v1.json",
+  "title": "DecisionRequest v1",
+  "description": "What the Decision layer is given for one turn. AGENT_CONTRACTS section 7.1. The Decision agent chooses among legal actions; it never decides what is legal, which is why availableActions is supplied by the runtime from the workflow state rather than inferred by the model.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "projectId", "userMessage", "currentState", "availableActions"],
+  "properties": {
+    "schemaVersion": { "type": "integer", "const": 1 },
+    "projectId": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "episodeId": { "anyOf": [{ "type": "string", "maxLength": 200 }, { "type": "null" }] },
+    "workflowRunId": { "anyOf": [{ "type": "string", "maxLength": 200 }, { "type": "null" }] },
+    "userMessage": {
+      "description": "The user's message for this turn. It is UNTRUSTED input: it is delimited like the imported documents rather than concatenated into the policy layers.",
+      "type": "string",
+      "maxLength": 20000
+    },
+    "requestedAction": {
+      "description": "An action the user asked for by name, or null. The runtime still refuses one that is not in availableActions.",
+      "anyOf": [{ "type": "string", "maxLength": 120 }, { "type": "null" }]
+    },
+    "currentState": { "$ref": "#/$defs/currentState" },
+    "availableActions": {
+      "description": "The legal actions for this moment, computed from the database. The Decision agent may choose only among these.",
+      "type": "array",
+      "maxItems": 50,
+      "items": { "$ref": "#/$defs/availableAction" }
+    },
+    "contextRefs": {
+      "description": "References to context the runtime assembled. They are ids and hashes, never inlined text.",
+      "type": "array",
+      "maxItems": 200,
+      "items": { "$ref": "#/$defs/contextRef" }
+    }
+  },
+  "$defs": {
+    "currentState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["attempt", "pendingUserGate"],
+      "properties": {
+        "workflowType": { "anyOf": [{ "type": "string", "maxLength": 120 }, { "type": "null" }] },
+        "stage": { "anyOf": [{ "type": "string", "maxLength": 120 }, { "type": "null" }] },
+        "status": { "anyOf": [{ "type": "string", "maxLength": 60 }, { "type": "null" }] },
+        "attempt": { "type": "integer", "minimum": 0, "maximum": 1000 },
+        "pendingUserGate": { "type": "boolean" }
+      }
+    },
+    "availableAction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "enum": ["run_execution", "run_supervision", "request_approval", "request_input", "finish", "respond"]
+        },
+        "agentKey": { "anyOf": [{ "type": "string", "maxLength": 120 }, { "type": "null" }] },
+        "stage": { "anyOf": [{ "type": "string", "maxLength": 120 }, { "type": "null" }] }
+      }
+    },
+    "contextRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "id"],
+      "properties": {
+        "type": { "type": "string", "minLength": 1, "maxLength": 60 },
+        "id": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "versionId": { "anyOf": [{ "type": "string", "maxLength": 200 }, { "type": "null" }] },
+        "status": { "anyOf": [{ "type": "string", "maxLength": 60 }, { "type": "null" }] }
+      }
+    }
+  }
+}

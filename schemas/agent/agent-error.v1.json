@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://infinite-atelier.invalid/schemas/agent/agent-error.v1.json",
+  "title": "AgentError v1",
+  "description": "The classified failure one agent call reports. AGENT_CONTRACTS section 7.7. It is a shape rather than a Go struct alone because the same classification crosses to the frontend and into the run record, and both must agree with the specification. category and retriable together decide whether section 14.1's retry applies, and section 14.2's non-retriable list is enforced by the runtime, not by this schema.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "code", "category", "retriable", "safeMessage"],
+  "properties": {
+    "schemaVersion": { "type": "integer", "const": 1 },
+    "code": {
+      "description": "A stable identifier, such as agent.output_schema_invalid. It is the value a caller branches on.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120,
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$"
+    },
+    "category": {
+      "enum": ["configuration", "input", "model", "tool", "timeout", "cancelled", "security", "storage", "internal"]
+    },
+    "retriable": { "type": "boolean" },
+    "safeMessage": {
+      "description": "What the user is shown. It never carries a provider payload, a header, a URL or document text: SECURITY section 17 makes the message safe by construction rather than by review.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1000
+    },
+    "detailsRef": {
+      "description": "A diagnostic reference, or null. The raw detail lives behind it rather than in this document.",
+      "anyOf": [{ "type": "string", "maxLength": 300 }, { "type": "null" }]
+    },
+    "stageRunId": { "anyOf": [{ "type": "string", "maxLength": 200 }, { "type": "null" }] },
+    "agentRunId": { "anyOf": [{ "type": "string", "maxLength": 200 }, { "type": "null" }] }
+  }
+}

@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://infinite-atelier.invalid/schemas/agent/execution-result.v1.json",
+  "title": "ExecutionResult v1",
+  "description": "What an Execution agent returns. AGENT_CONTRACTS section 7.4. The artifacts it names are references, and the runtime verifies each one exists in the database before the stage counts as successful — a model that invents an id fails validation (AC-AGENT-003).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "status", "stage", "stageRunId"],
+  "properties": {
+    "schemaVersion": { "type": "integer", "const": 1 },
+    "status": {
+      "enum": ["success", "partial", "failed", "cancelled"]
+    },
+    "stage": { "type": "string", "minLength": 1, "maxLength": 120 },
+    "stageRunId": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "artifacts": {
+      "description": "What the stage produced, by reference. An empty list is legitimate only for a stage the runtime knows to be a no-op, which the Validation rules in section 7.4 state as 'success 至少有预期 artifact，除非该阶段明确是 no-op'.",
+      "type": "array",
+      "maxItems": 200,
+      "items": { "$ref": "#/$defs/artifactRef" }
+    },
+    "warnings": {
+      "type": "array",
+      "maxItems": 50,
+      "items": { "type": "string", "maxLength": 500 }
+    },
+    "errors": {
+      "type": "array",
+      "maxItems": 50,
+      "items": { "type": "string", "maxLength": 500 }
+    },
+    "nextAction": {
+      "description": "What the agent believes should happen next. It is a report, not a command: the runtime decides, and section 9 puts the state machine on the runtime's side of the line.",
+      "enum": ["review", "wait_user", "retry", "stop"]
+    },
+    "summary": {
+      "type": "string",
+      "maxLength": 4000
+    }
+  },
+  "$defs": {
+    "artifactRef": {
+      "description": "A reference to a row the stage wrote. The operation is reported rather than inferred so a reviewer can tell a new artifact from a superseded one.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["entityType", "entityId", "operation"],
+      "properties": {
+        "entityType": { "type": "string", "minLength": 1, "maxLength": 60 },
+        "entityId": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "versionId": { "anyOf": [{ "type": "string", "maxLength": 200 }, { "type": "null" }] },
+        "operation": { "enum": ["created", "updated", "superseded"] }
+      }
+    }
+  }
+}
