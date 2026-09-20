@@ -45,14 +45,16 @@ func wp05Migrations(t *testing.T) fstest.MapFS {
 		"000012_artifact_staleness.sql":          {Data: wp05SQL(t, "000012_artifact_staleness.sql")},
 		"000013_domain_events.sql":               {Data: wp05SQL(t, "000013_domain_events.sql")},
 		"000014_story_import.sql":                {Data: wp05SQL(t, "000014_story_import.sql")},
+		"000015_agent_runtime.sql":               {Data: wp05SQL(t, "000015_agent_runtime.sql")},
 	}
 }
 
-// wp05HeadVersion is the user_version the shared WP-05/WP-06 set reaches.
+// wp05HeadVersion is the user_version the shared migration set reaches.
 //
 // The helper keeps its wp05 name because every test calls it by that name and
-// the set is the same set; only its head moves as migrations are added.
-const wp05HeadVersion = 14
+// the set is the same set; only its head moves as migrations are added. It is 15
+// since WP-07 added the agent runtime tables.
+const wp05HeadVersion = 15
 
 // applyMigrationFileSplits runs one migration file the way the runner does:
 // splitSQL on the raw text, then execute each fragment in order. It returns the
