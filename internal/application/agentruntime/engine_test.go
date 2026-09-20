@@ -602,3 +602,104 @@ func TestStageStateActiveUsesTheDomainsOwnPredicate(t *testing.T) {
 		t.Fatalf("AttemptCount is %d", state.AttemptCount())
 	}
 }
+
+// TestApplySupervisionForcesAGateOnACriticalFinding pins section 7.6's "critical 强制人工门".
+//
+// The domain states the rule and names this package as its owner: `Severity`'s comment reads
+// "critical 强制人工门" and "the second is the gate's decision and belongs to WP-07". The first
+// version of ApplySupervision had no Severity at all, so a critical finding took the ordinary
+// path — an automatic revision, or a pass — and the rule was enforced nowhere.
+//
+// The test asserts the OVERRIDE, which is what makes the rule a rule. `asset_gap_analysis` is
+// the stage chosen for the passing case because its policy has no supervision and a required
+// gate: a PASSING review there would go to waiting_user anyway, so that case would prove
+// nothing. `story_skeleton` is used for the failing case, where the ordinary path is an
+// automatic revision while the budget lasts.
+func TestApplySupervisionForcesAGateOnACriticalFinding(t *testing.T) {
+	cases := []struct {
+		name   string
+		passed bool
+		// expected is what the stage does WITHOUT the severity, so the test can assert that the
+		// severity changed the outcome rather than agreeing with it by luck.
+		expected workflow.StageStatus
+	}{
+		{name: "a failing critical report waits rather than revising", passed: false, expected: workflow.StageNeedsFix},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			// The ordinary path first, on the same stage, so the difference is the severity.
+			ordinary := newEngineHarness(t)
+			ordinaryStage, err := ordinary.engine.StartStage(context.Background(), StartStageRequest{
+				WorkflowRunID: "run-1", Stage: "story_skeleton",
+				ExecutionKey: "script.execution.story_skeleton",
+			})
+			if err != nil {
+				t.Fatalf("StartStage: %v", err)
+			}
+			reviewable := toReviewing(t, ordinary, ordinaryStage.ID)
+			withoutSeverity, err := ordinary.engine.ApplySupervision(context.Background(), RecordSupervisionRequest{
+				StageRunID: reviewable.ID, Revision: reviewable.Revision,
+				Passed: testCase.passed, RecommendedAction: "fix",
+				Actor: Actor{Type: "test", ID: "test"},
+			})
+			if err != nil {
+				t.Fatalf("ApplySupervision without a severity: %v", err)
+			}
+			if withoutSeverity.Status != testCase.expected {
+				t.Fatalf("without a severity the stage moved to %q, want %q — the fixture is wrong",
+					withoutSeverity.Status, testCase.expected)
+			}
+
+			// And with one, on a fresh run so the two do not share a stage row.
+			critical := newEngineHarness(t)
+			criticalStage, err := critical.engine.StartStage(context.Background(), StartStageRequest{
+				WorkflowRunID: "run-1", Stage: "story_skeleton",
+				ExecutionKey: "script.execution.story_skeleton",
+			})
+			if err != nil {
+				t.Fatalf("StartStage: %v", err)
+			}
+			criticalReviewable := toReviewing(t, critical, criticalStage.ID)
+			withSeverity, err := critical.engine.ApplySupervision(context.Background(), RecordSupervisionRequest{
+				StageRunID: criticalReviewable.ID, Revision: criticalReviewable.Revision,
+				Passed: testCase.passed, RecommendedAction: "manual_review",
+				Severity: workflow.SeverityCritical,
+				Actor:    Actor{Type: "test", ID: "test"},
+			})
+			if err != nil {
+				t.Fatalf("ApplySupervision with a critical severity: %v", err)
+			}
+			if withSeverity.Status != workflow.StageWaitingUser {
+				t.Fatalf("a critical finding moved the stage to %q, want waiting_user", withSeverity.Status)
+			}
+		})
+	}
+}
+
+// TestApplySupervisionWithoutASeverityFollowsTheOrdinaryPolicy is the other direction.
+//
+// An empty severity means the caller did not state one, which is NOT the same as "none": a caller
+// who read a report with no severity and passed it through unchanged gets the policy's answer,
+// which is right, because the absence of a statement is not a statement of absence.
+func TestApplySupervisionWithoutASeverityFollowsTheOrdinaryPolicy(t *testing.T) {
+	harness := newEngineHarness(t)
+	stage, err := harness.engine.StartStage(context.Background(), StartStageRequest{
+		WorkflowRunID: "run-1", Stage: "story_skeleton", ExecutionKey: "script.execution.story_skeleton",
+	})
+	if err != nil {
+		t.Fatalf("StartStage: %v", err)
+	}
+	reviewable := toReviewing(t, harness, stage.ID)
+	updated, err := harness.engine.ApplySupervision(context.Background(), RecordSupervisionRequest{
+		StageRunID: reviewable.ID, Revision: reviewable.Revision,
+		Passed: true, RecommendedAction: "pass",
+		Actor: Actor{Type: "test", ID: "test"},
+	})
+	if err != nil {
+		t.Fatalf("ApplySupervision: %v", err)
+	}
+	// story_skeleton's policy requires a user gate, so a passing review waits rather than passing.
+	if updated.Status != workflow.StageWaitingUser {
+		t.Fatalf("the stage moved to %q, want waiting_user", updated.Status)
+	}
+}

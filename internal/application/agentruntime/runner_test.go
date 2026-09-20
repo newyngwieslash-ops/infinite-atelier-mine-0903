@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/agent"
 )
@@ -53,9 +54,12 @@ func (m *scriptedModel) Complete(_ context.Context, request ModelRequest) (Model
 
 // memoryRunStore records what the runtime wrote, in order.
 type memoryRunStore struct {
-	runs      []agent.AgentRun
-	messages  []agent.AgentMessage
-	toolCalls []agent.AgentToolCall
+	runs []agent.AgentRun
+	// createdStatuses is what each run's row said when it was created, so a test can assert the
+	// ORDER of writes rather than only the final state.
+	createdStatuses []agent.RunStatus
+	messages        []agent.AgentMessage
+	toolCalls       []agent.AgentToolCall
 	// runOrder records whether the run row was written before the first model call,
 	// which is what makes a run that dies mid-flight visible.
 	finishes []agent.RunStatus
@@ -63,7 +67,28 @@ type memoryRunStore struct {
 
 func (s *memoryRunStore) CreateRun(_ context.Context, run agent.AgentRun) error {
 	s.runs = append(s.runs, run)
+	// createdStatuses records what each run looked like when its row appeared, which is the
+	// assertion "the row was written BEFORE the model was called" needs: a run that died
+	// mid-flight leaves a row saying it had STARTED, and a store that only keeps the latest
+	// state cannot show that.
+	s.createdStatuses = append(s.createdStatuses, run.Status)
 	return nil
+}
+
+// update replaces a stored row, which is what the real repository's guarded UPDATE does.
+//
+// The first version of this double only APPENDED, so FinishRun added a second row and a caller
+// reading the run back saw the one CreateRun wrote — with no status, no output and no answering
+// model. A test of what a finished run records therefore could not see the finish at all, which
+// is what found this: the answering-model assertion read an empty field from a stale row.
+func (s *memoryRunStore) update(run agent.AgentRun) {
+	for index := range s.runs {
+		if s.runs[index].ID == run.ID {
+			s.runs[index] = run
+			return
+		}
+	}
+	s.runs = append(s.runs, run)
 }
 
 func (s *memoryRunStore) findRun(id string) (agent.AgentRun, error) {
@@ -76,7 +101,7 @@ func (s *memoryRunStore) findRun(id string) (agent.AgentRun, error) {
 }
 
 func (s *memoryRunStore) FinishRun(_ context.Context, run agent.AgentRun, _ int64) error {
-	s.runs = append(s.runs, run)
+	s.update(run)
 	s.finishes = append(s.finishes, run.Status)
 	return nil
 }
@@ -202,13 +227,23 @@ func TestRunValidatesBeforeItActs(t *testing.T) {
 	if string(outcome.Output) != `{"summary":"fine","toolCalls":[]}` {
 		t.Fatalf("the output read as %s", outcome.Output)
 	}
-	// The run row was written BEFORE the model was called, so a run that dies
-	// mid-flight still leaves a record that it started.
-	if len(harness.store.runs) < 2 {
-		t.Fatalf("the store holds %d run rows, want the create and the finish", len(harness.store.runs))
+	// The run row was written BEFORE the model was called, so a run that dies mid-flight still
+	// leaves a record that it started. What the store holds after a SUCCESSFUL run is one row in
+	// its finished state, because the real repository's finish is a guarded UPDATE rather than a
+	// second insert — and the double now models that. The assertion is on the ORDER instead: the
+	// create came first, which is what makes a run that died visible.
+	if len(harness.store.runs) != 1 {
+		t.Fatalf("the store holds %d run rows, want the one the run used", len(harness.store.runs))
 	}
-	if harness.store.runs[0].Status != agent.RunRunning {
-		t.Fatalf("the first run row is %q, want running", harness.store.runs[0].Status)
+	// The row EXISTED before the model was called, which is the property that makes a run that
+	// died mid-flight visible. The final state is succeeded because the finish updated the row
+	// in place — which is what the real repository's guarded UPDATE does — so the assertion is on
+	// what the row said when it appeared.
+	if len(harness.store.createdStatuses) != 1 || harness.store.createdStatuses[0] != agent.RunRunning {
+		t.Fatalf("the created rows were %v, want one running", harness.store.createdStatuses)
+	}
+	if harness.store.runs[0].Status != agent.RunSucceeded {
+		t.Fatalf("the finished row is %q, want succeeded", harness.store.runs[0].Status)
 	}
 	if harness.store.runs[0].SkillVersionID != "sv-1" {
 		t.Fatal("the run row does not name its skill version, so it could not be reproduced")
@@ -930,5 +965,134 @@ func TestRuntimeWithoutAToolArgumentValidatorRefusesToRunATool(t *testing.T) {
 	}
 	if harness.store.toolCalls[0].Status != agent.ToolCallFailed {
 		t.Fatalf("the call is %q, want failed", harness.store.toolCalls[0].Status)
+	}
+}
+
+// The tests below pin the four rules an independent review found missing. Each was a
+// specification requirement the code did not implement, and each is recorded in ADR-0011.
+
+// TestRunRecordsTheModelThatAnswered pins section 13's "模型变更写入 Run".
+//
+// The first version recorded only model_config_id — the model the policy NAMED — and its own
+// comment claimed that satisfied section 13. It does not: the requirement exists because a
+// run's answering model can differ from the requested one (a fallback was used, or a provider
+// served something else), and a record naming only the request would cite a model that did not
+// produce the output.
+func TestRunRecordsTheModelThatAnswered(t *testing.T) {
+	store := &memoryRunStore{}
+	harness := newHarness(t, []string{`{"summary":"x"}`}, func(options *Options) {
+		options.Runs = store
+	})
+	// The scripted model answers as "scripted" while the invocation asks for "model-1".
+	outcome, err := harness.runtime.Run(context.Background(), invocationFor("script.execution.x"))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	run, err := store.findRun(outcome.RunID)
+	if err != nil {
+		t.Fatalf("finding the run: %v", err)
+	}
+	if run.ModelConfigID != "model-1" {
+		t.Fatalf("the run names the REQUESTED model as %q, want model-1", run.ModelConfigID)
+	}
+	if run.ResponseModel != "scripted" {
+		t.Fatalf("the run records the answering model as %q, want the model that replied", run.ResponseModel)
+	}
+	if run.ModelConfigID == run.ResponseModel {
+		t.Fatal("the two are equal, so this test cannot tell the fields apart")
+	}
+}
+
+// TestMessageStorageBoundCountsBytes covers the silent drop a rune count caused.
+//
+// The bound is BYTES, and the first version counted runes against it: a long Chinese reply was
+// clipped to 16,384 runes = 49,152 bytes, the domain refused it, and the caller discarded the
+// refusal — so the message vanished from the record with no trace. The test uses CJK text
+// because that is the only input where the two counts diverge.
+func TestMessageStorageBoundCountsBytes(t *testing.T) {
+	// Three bytes per rune, so the byte limit is reached at a third of the rune count.
+	long := strings.Repeat("测", 8000)
+	clipped := truncateForStorage(long)
+	if len(clipped) > agent.DefaultMessageContentBytes {
+		t.Fatalf("the clipped value is %d bytes, over the %d bound", len(clipped), agent.DefaultMessageContentBytes)
+	}
+	// It must still satisfy the domain's own check, which is what the caller relies on.
+	message := agent.AgentMessage{
+		ID: "m1", AgentRunID: "r1", ScopeKey: "local||p||k|",
+		Role: agent.MessageAssistant, Content: clipped, ContentHash: contentHash(clipped),
+		CreatedAt: fixedRuntimeClock{}.Now(),
+	}
+	if err := message.Validate(); err != nil {
+		t.Fatalf("the clipped content does not satisfy the domain: %v", err)
+	}
+	// And a short value is untouched, so the clipping is not applied where it is unnecessary.
+	if short := truncateForStorage("短"); short != "短" {
+		t.Fatalf("a short message was altered: %q", short)
+	}
+	// The result is valid UTF-8 rather than cut mid-rune, which a byte clip without the
+	// boundary walk would produce.
+	if !utf8.ValidString(clipped) {
+		t.Fatal("the clipped value is not valid UTF-8")
+	}
+}
+
+// TestRunRefusesAResultThatNamesAnotherStage covers the identity cross-check.
+//
+// Section 9's "Runtime 必须再次校验" covers what a result SAYS ABOUT ITSELF as much as what it asks
+// for: a document naming a different attempt would be recorded as this stage's output, and a
+// reviewer could not tell what it described.
+func TestRunRefusesAResultThatNamesAnotherStage(t *testing.T) {
+	harness := newHarness(t, []string{
+		`{"summary":"x","stage":"story_skeleton","stageRunId":"some-other-stage"}`,
+	}, nil)
+	_, err := harness.runtime.Run(context.Background(), invocationFor("script.execution.x"))
+	if err == nil {
+		t.Fatal("a result naming another stage attempt was accepted")
+	}
+	// The same document naming THIS stage's attempt is accepted, so the check is a comparison
+	// rather than a ban on the field.
+	invocation := invocationFor("script.execution.x")
+	good := newHarness(t, []string{
+		`{"summary":"x","stage":"story_skeleton","stageRunId":"` + invocation.StageRunID + `"}`,
+	}, nil)
+	if _, err := good.runtime.Run(context.Background(), invocation); err != nil {
+		t.Fatalf("a result naming its own stage attempt was refused: %v", err)
+	}
+}
+
+// TestRunRefusesASuccessWithNoArtifact covers section 7.4's first artifact rule.
+//
+// "success 至少有预期 artifact，除非该阶段明确是 no-op" is a relation between a status and a list,
+// which JSON Schema cannot express. The first version tried to infer the no-op case from the
+// VERIFIER and the check was a no-op itself: the verifier answers "all the references I was
+// given exist", which it quite correctly answers about an empty list — so a success with
+// nothing behind it passed.
+func TestRunRefusesASuccessWithNoArtifact(t *testing.T) {
+	harness := newHarness(t, []string{`{"summary":"x","status":"success","artifacts":[]}`}, nil)
+	_, err := harness.runtime.Run(context.Background(), invocationFor("script.execution.x"))
+	if err == nil {
+		t.Fatal("a success reporting no artifact was accepted")
+	}
+	var artifactErr *ArtifactError
+	if !errors.As(err, &artifactErr) {
+		t.Fatalf("the refusal is a %T, want an artifact error", err)
+	}
+	// The same document on a stage the caller declares a no-op is accepted, which is what makes
+	// the check a rule rather than a blanket refusal.
+	invocation := invocationFor("script.execution.x")
+	invocation.StageProducesNoArtifact = true
+	relaxed := newHarness(t, []string{`{"summary":"x","status":"success","artifacts":[]}`}, nil)
+	if _, err := relaxed.runtime.Run(context.Background(), invocation); err != nil {
+		t.Fatalf("a no-op stage's success was refused: %v", err)
+	}
+}
+
+// TestRunRefusesAFailedResultCarryingAnArtifact covers section 7.4's second artifact rule.
+func TestRunRefusesAFailedResultCarryingAnArtifact(t *testing.T) {
+	harness := newHarness(t, []string{
+		`{"summary":"x","status":"failed","artifacts":[{"entityType":"script_version","entityId":"v1"}]}`,
+	}, nil)
+	if _, err := harness.runtime.Run(context.Background(), invocationFor("script.execution.x")); err == nil {
+		t.Fatal("a failed result carrying an artifact was accepted")
 	}
 }

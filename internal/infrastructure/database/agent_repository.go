@@ -75,11 +75,11 @@ func (r *AgentRepository) CreateRun(ctx context.Context, run agent.AgentRun) err
 	stamp := formatTime(run.StartedAt)
 	_, err := conn.ExecContext(ctx, `INSERT INTO agent_runs
 		(id, project_id, workflow_run_id, stage_run_id, agent_layer, agent_key, model_config_id,
-		 skill_version_id, status, input_summary, validated_output_json, raw_output_file_id,
-		 error_code, started_at, finished_at, created_at, updated_at, revision)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 response_model, skill_version_id, status, input_summary, validated_output_json,
+		 raw_output_file_id, error_code, started_at, finished_at, created_at, updated_at, revision)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		run.ID, run.ProjectID, run.WorkflowRunID, run.StageRunID, string(run.Layer), run.AgentKey,
-		run.ModelConfigID, run.SkillVersionID, string(run.Status), run.InputSummary,
+		run.ModelConfigID, run.ResponseModel, run.SkillVersionID, string(run.Status), run.InputSummary,
 		run.ValidatedOutputJSON, run.RawOutputFileID, run.ErrorCode,
 		formatTime(run.StartedAt), formatTime(run.FinishedAt),
 		stamp, stamp, run.Revision)
@@ -127,10 +127,11 @@ func (r *AgentRepository) FinishRun(ctx context.Context, run agent.AgentRun, exp
 	}
 	result, err := conn.ExecContext(ctx, `UPDATE agent_runs SET
 		status = ?, validated_output_json = ?, raw_output_file_id = ?, error_code = ?,
-		finished_at = ?, updated_at = ?, revision = revision + 1
+		response_model = ?, finished_at = ?, updated_at = ?, revision = revision + 1
 		WHERE id = ? AND revision = ?`,
 		string(run.Status), run.ValidatedOutputJSON, run.RawOutputFileID, run.ErrorCode,
-		formatTime(run.FinishedAt), formatTime(run.FinishedAt), run.ID, expectedRevision)
+		run.ResponseModel, formatTime(run.FinishedAt), formatTime(run.FinishedAt),
+		run.ID, expectedRevision)
 	if err != nil {
 		return storageError("AGENT_RUN_WRITE_FAILED", "The agent run could not be saved.", err)
 	}
@@ -164,13 +165,14 @@ func (r *AgentRepository) GetRun(ctx context.Context, id string) (agent.AgentRun
 		createdAt, updatedAt            string
 	)
 	err := conn.QueryRowContext(ctx, `SELECT id, project_id, workflow_run_id, stage_run_id,
-		agent_layer, agent_key, model_config_id, skill_version_id, status, input_summary,
-		validated_output_json, raw_output_file_id, error_code, started_at, finished_at,
-		created_at, updated_at, revision
+		agent_layer, agent_key, model_config_id, response_model, skill_version_id, status,
+		input_summary, validated_output_json, raw_output_file_id, error_code, started_at,
+		finished_at, created_at, updated_at, revision
 		FROM agent_runs WHERE id = ?`, id).Scan(
 		&run.ID, &run.ProjectID, &run.WorkflowRunID, &run.StageRunID,
-		&layer, &run.AgentKey, &run.ModelConfigID, &run.SkillVersionID, &status, &run.InputSummary,
-		&validated, &rawOutput, &errorCode, &startedAt, &finishedAt, &createdAt, &updatedAt, &run.Revision)
+		&layer, &run.AgentKey, &run.ModelConfigID, &run.ResponseModel, &run.SkillVersionID,
+		&status, &run.InputSummary, &validated, &rawOutput, &errorCode,
+		&startedAt, &finishedAt, &createdAt, &updatedAt, &run.Revision)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return agent.AgentRun{}, agent.NotFoundError()

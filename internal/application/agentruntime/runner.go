@@ -8,6 +8,7 @@ import (
 	"errors"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/agent"
 )
@@ -218,6 +219,13 @@ type Invocation struct {
 	// Task fills layer 8, and TaskIsUntrusted says whether it carries document text.
 	Task            string
 	TaskIsUntrusted bool
+	// StageProducesNoArtifact says this stage is one section 7.4 calls a no-op, so a success
+	// reporting no artifact is legitimate rather than a claim with nothing behind it.
+	//
+	// It is the CALLER's to state because the caller chose the stage. The first version tried to
+	// infer it and could not: the verifier's job is "do these references exist", and it answers
+	// that — correctly — about an empty list, so the check passed everything.
+	StageProducesNoArtifact bool
 	// UserMessage fills layer 9.
 	UserMessage string
 	// ModelID and ProviderID come from the project's policy for the agent's layer.
@@ -285,8 +293,13 @@ func (r *Runtime) Run(ctx context.Context, invocation Invocation) (Outcome, erro
 		ID: runID, ProjectID: invocation.ProjectID,
 		WorkflowRunID: invocation.WorkflowRunID, StageRunID: invocation.StageRunID,
 		Layer: spec.Layer, AgentKey: spec.Key,
-		// The model config is recorded so section 13's "模型变更写入 Run" is satisfied:
-		// a run names which model produced it.
+		// ModelConfigID is the model the policy NAMED; ResponseModel is the one that actually
+		// answered, captured below. Section 13 requires both, and the gap between them is the case
+		// it names: "模型变更写入 Run" is about a run whose answering model differs from the
+		// requested one, which is what a fallback or a provider substitution produces.
+		//
+		// The first version recorded only this field, and its comment claimed that satisfied
+		// section 13. It does not: a run that fell back would cite a model that did not produce it.
 		ModelConfigID: invocation.ModelID,
 		Status:        agent.RunRunning,
 		StartedAt:     startedAt,
@@ -359,12 +372,30 @@ func (r *Runtime) Run(ctx context.Context, invocation Invocation) (Outcome, erro
 		}
 		attempted = true
 
+		// The answering model is captured from the FIRST reply, so a run records what produced it
+		// even when the provider served something other than what was asked for. First rather than
+		// last because that is the answer the output came from when no repair happened, and when
+		// one did the first attempt is what the repair was for.
+		if record.ResponseModel == "" {
+			record.ResponseModel = reply.Model
+		}
 		// The model's own turn is recorded, because section 16 requires the run's
 		// messages and because a repair prompt refers back to it.
 		assistant, messageErr := r.message(runID, invocation, agent.MessageAssistant, reply.Content)
 		if messageErr == nil {
 			messages = append(messages, assistant)
 			_ = r.runs.RecordMessage(ctx, assistant)
+		} else {
+			// A message that could not be stored is REPORTED rather than dropped in silence. The
+			// first version discarded this error, so a reply whose content did not fit the storage
+			// bound vanished from the record with no trace — the same silent-drop shape as the
+			// revision defect. The run is not failed for it (the output is what matters and it is
+			// still validated below), but the refusal is recorded on the run so a reader can see
+			// that the transcript is incomplete.
+			if domainErr, ok := agent.AsError(messageErr); ok && record.ErrorCode == "" {
+				record.ErrorCode = "agent.message_not_stored"
+				_ = domainErr
+			}
 		}
 
 		// Every refusal path below leaves the run unfinished until the loop decides.
@@ -375,7 +406,7 @@ func (r *Runtime) Run(ctx context.Context, invocation Invocation) (Outcome, erro
 			// A validated output may still name an artifact that does not exist, and
 			// that is AC-AGENT-003: the run must not be marked successful and the
 			// workflow must not advance.
-			if artifactErr := r.verifyArtifacts(runCtx, spec, json.RawMessage(reply.Content)); artifactErr != nil {
+			if artifactErr := r.verifyArtifacts(runCtx, spec, invocation, json.RawMessage(reply.Content)); artifactErr != nil {
 				_ = r.finishOnly(ctx, record, agent.RunFailed, "", artifactCode(artifactErr), nil)
 				return Outcome{RunID: runID}, artifactErr
 			}
@@ -658,9 +689,14 @@ func (r *Runtime) validateToolArguments(tool Tool, arguments json.RawMessage) er
 //
 // An output with no artifacts field has none to check, which is legitimate for a
 // stage that reports only a decision.
-func (r *Runtime) verifyArtifacts(ctx context.Context, spec agent.Spec, output json.RawMessage) error {
+func (r *Runtime) verifyArtifacts(ctx context.Context, spec agent.Spec, invocation Invocation, output json.RawMessage) error {
 	var envelope struct {
-		Artifacts []struct {
+		// Status and the two identity fields are read because section 7.4's rules are about the
+		// RELATION between them and the artifacts, which JSON Schema cannot express.
+		Status     string `json:"status"`
+		Stage      string `json:"stage"`
+		StageRunID string `json:"stageRunId"`
+		Artifacts  []struct {
 			EntityType string `json:"entityType"`
 			EntityID   string `json:"entityId"`
 			VersionID  string `json:"versionId"`
@@ -669,14 +705,44 @@ func (r *Runtime) verifyArtifacts(ctx context.Context, spec agent.Spec, output j
 	if err := json.Unmarshal(output, &envelope); err != nil {
 		return agent.InvalidError("The model's output could not be read.")
 	}
+	// --- The result must name the stage attempt it is about. ---
+	//
+	// Section 9's "Runtime 必须再次校验，不因模型输出而改变规则" covers the identity fields as much as
+	// the action: a document naming a different attempt would be recorded as THIS stage's output,
+	// and a reviewer reading the record could not tell what it described. The check runs only
+	// when both sides carry an identifier, because an extraction result names neither — its
+	// contract is the event graph's and its stage is implied by the run that produced it.
+	if strings.TrimSpace(envelope.StageRunID) != "" &&
+		strings.TrimSpace(invocation.StageRunID) != "" &&
+		envelope.StageRunID != invocation.StageRunID {
+		return &ArtifactError{EntityType: "stage_run", EntityID: envelope.StageRunID}
+	}
+	// --- Section 7.4's artifact rules. ---
+	//
+	// "success 至少有预期 artifact，除非该阶段明确是 no-op" and "failed 不得附带 approved artifact"
+	// are relations between a status and a list, which JSON Schema cannot state: the schema knows
+	// the fields exist, not that one constrains the other.
+	//
+	// Whether a stage is a no-op is a fact the CALLER knows, because the caller is what chose
+	// the stage. So the invocation says so, and the runtime refuses a success that named no
+	// artifact for a stage that produces one. The first version tried to ask the VERIFIER
+	// instead and the check was a no-op: the verifier answers "all the references I was given
+	// exist", and it quite correctly answers that about an empty list — so a success with
+	// nothing to show passed.
 	if len(envelope.Artifacts) == 0 {
+		if envelope.Status == "success" && !invocation.StageProducesNoArtifact {
+			return &ArtifactError{EntityType: "stage_artifact", EntityID: string(envelope.Status)}
+		}
 		return nil
 	}
-	// The verifier is optional so a runtime can be composed for an agent whose stage
-	// produces nothing, but a stage that NAMES an artifact without one cannot be
-	// checked and is therefore refused rather than trusted.
+	// The verifier is optional so a runtime can be composed for an agent whose stage produces
+	// nothing, but a stage that NAMES an artifact without one cannot be checked and is therefore
+	// refused rather than trusted.
 	if r.artifacts == nil {
 		return agent.UnavailableError()
+	}
+	if envelope.Status == "failed" {
+		return agent.InvalidError("A failed result cannot report an artifact it produced.")
 	}
 	refs := make([]ArtifactRef, 0, len(envelope.Artifacts))
 	for _, artifact := range envelope.Artifacts {
@@ -830,7 +896,39 @@ func mustID(ids IDGenerator) string {
 
 // truncateForStorage bounds a message's content.
 func truncateForStorage(content string) string {
-	return truncated(content, agent.DefaultMessageContentBytes)
+	// The bound is BYTES: that is what the domain validates and what the column holds. The
+	// first version counted RUNES against it, so a long Chinese reply was clipped to 16,384
+	// runes = 49,152 bytes and then REJECTED by Validate. The caller discarded the rejection, so
+	// the message was silently not recorded at all.
+	if len(content) <= agent.DefaultMessageContentBytes {
+		return content
+	}
+	// The marker tells a reader the value is incomplete, which a bare prefix does not, and its
+	// length is SUBTRACTED BEFORE the boundary walk rather than after: subtracting it afterwards
+	// moves the cut back into the middle of whatever rune straddled it, which produces the very
+	// broken encoding this function exists to avoid. The first version of this fix made exactly
+	// that mistake, and its own test — which asserts the result is valid UTF-8 — caught it.
+	const marker = "…[truncated]"
+	limit := agent.DefaultMessageContentBytes - len(marker)
+	if limit <= 0 {
+		limit = agent.DefaultMessageContentBytes
+	}
+	// Walk back to a rune boundary so the stored value is not cut mid-rune. A UTF-8 continuation
+	// byte has the top two bits set as 10xxxxxx, and cutting there would produce a string the
+	// database accepts and a reader cannot.
+	for limit > 0 && !utf8.RuneStart(content[limit]) {
+		limit--
+	}
+	if limit <= 0 {
+		return ""
+	}
+	if limit >= len(content) {
+		return content
+	}
+	if limit == agent.DefaultMessageContentBytes {
+		return content[:limit]
+	}
+	return content[:limit] + marker
 }
 
 // truncated clips a string to a rune count.

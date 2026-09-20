@@ -375,7 +375,17 @@ type RecordSupervisionRequest struct {
 	Revision          int64
 	Passed            bool
 	RecommendedAction string
-	Actor             Actor
+	// Severity is the report's own severity, which section 7.6 gives a rule of its own:
+	// "critical 强制人工门". It is separate from Passed because the two answer different
+	// questions — whether the report passed, and how bad what it found is — and a critical
+	// finding can accompany either.
+	//
+	// An empty value means the caller did not state one, and the ordinary policy applies. That is
+	// not the same as "none": a caller who read a report with no severity and passed it through
+	// unchanged gets the policy's answer, which is right, because the absence of a statement is
+	// not a statement of absence.
+	Severity workflow.Severity
+	Actor    Actor
 }
 
 // ApplySupervision moves a stage after its review.
@@ -407,14 +417,25 @@ func (e *Engine) ApplySupervision(ctx context.Context, request RecordSupervision
 	}
 	policy := StagePolicyFor(stage.Stage)
 	status := workflow.StageWaitingUser
-	if request.Passed {
+	switch {
+	case request.Severity == workflow.SeverityCritical:
+		// Section 7.6's "critical 强制人工门", which the domain names as this package's to
+		// enforce. A critical finding stops for a person whatever the stage's policy says and
+		// whatever the report's verdict was: the policy's userGate setting is about the ordinary
+		// case, and a critical finding is not the ordinary case.
+		//
+		// It is checked BEFORE the passed/failed branch because it overrides both: a critical
+		// finding on a stage that would otherwise pass still needs a person, and so does one on a
+		// stage that would otherwise revise automatically.
+		status = workflow.StageWaitingUser
+	case request.Passed:
 		if policy.UserGate == UserGateRequired {
 			// The gate is a person's; the stage waits rather than passing.
 			status = workflow.StageWaitingUser
 		} else {
 			status = workflow.StagePassed
 		}
-	} else {
+	default:
 		// A failing review can be revised automatically only while the budget lasts.
 		// The count is of REVISIONS rather than of attempts, because a revision
 		// reuses the attempt row: see RevisionCounter.

@@ -494,6 +494,13 @@ type AgentRun struct {
 	Layer         AgentLayer
 	AgentKey      string
 	ModelConfigID string
+	// ResponseModel is the model that ANSWERED, which the provider reports and which may differ
+	// from ModelConfigID when a fallback was used or a provider substituted one.
+	//
+	// Section 13's "模型变更写入 Run" is about exactly that difference, so the two are separate
+	// fields rather than one: a run citing only the requested model would claim a model produced
+	// it that did not. It is not required — a run refused before the model answered has none.
+	ResponseModel string
 	// SkillVersionID is required: section 4.2 requires a run to name the exact
 	// skill version it ran, and a run without one could not be reproduced.
 	SkillVersionID string
