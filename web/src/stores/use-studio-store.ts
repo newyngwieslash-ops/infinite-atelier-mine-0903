@@ -31,7 +31,8 @@ export type StudioSection =
     | "video"
     | "audio"
     | "timeline"
-    | "quality";
+    | "quality"
+    | "agents";
 
 export type StudioState = {
     /** The section the shell is showing. */
@@ -137,4 +138,7 @@ export const STUDIO_SECTIONS: StudioSectionSpec[] = [
     { id: "audio", titleKey: "studio.sections.audio.title", descriptionKey: "studio.sections.audio.description", available: false, workPackage: "WP-11" },
     { id: "timeline", titleKey: "studio.sections.timeline.title", descriptionKey: "studio.sections.timeline.description", available: false, workPackage: "WP-11" },
     { id: "quality", titleKey: "studio.sections.quality.title", descriptionKey: "studio.sections.quality.description", available: true, workPackage: "WP-05" },
+    // The Agent Center is WP-07's surface: the runs the three-layer runtime produced, with
+    // their messages and tool calls, and the inventory of agents this build can run.
+    { id: "agents", titleKey: "studio.sections.agents.title", descriptionKey: "studio.sections.agents.description", available: true, workPackage: "WP-07" },
 ];

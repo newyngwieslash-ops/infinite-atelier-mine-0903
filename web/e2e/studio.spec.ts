@@ -46,6 +46,7 @@ const SECTION_IDS = [
     "audio",
     "timeline",
     "quality",
+    "agents",
 ] as const;
 
 /** Sections whose content is not built yet, with the package that owns each. */
@@ -203,6 +204,19 @@ test.describe("the drama studio without a core", () => {
         // The section resets to the default on reload, which is the documented
         // behaviour: the section is UI state and the store is not persisted.
         await expect(page.locator("[data-section='overview']")).toHaveAttribute("aria-current", "true");
+    });
+
+    test("the agents section is reachable and states that its records need the core", async ({ page }) => {
+        // WP-07's Agent Center. In a browser the section is marked available —
+        // it has real content in a desktop build — and the shell answers for it
+        // with the no-core notice, which is the honest state rather than a table
+        // of runs that would read as "this project has run nothing".
+        await page.goto("/studio/example-project");
+        const nav = page.locator("[data-testid='studio-section-nav']");
+        await expect(nav).toBeVisible();
+        await nav.locator("[data-section='agents']").click();
+        await expect(page.locator("[data-active-section='agents']")).toBeVisible();
+        await expect(page.locator("[data-testid='studio-section-no-core']")).toBeVisible();
     });
 
     test("the shell offers the way back and the way to the free canvas", async ({ page }) => {

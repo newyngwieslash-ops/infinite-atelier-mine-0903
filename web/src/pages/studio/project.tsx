@@ -6,6 +6,7 @@ import { useTranslation } from "react-i18next";
 
 import { StudioSectionNav } from "@/components/studio/studio-section-nav";
 import { StudioEmptySection } from "@/components/studio/studio-empty-section";
+import { AgentCenterSection } from "@/components/studio/agent-center";
 import { AssetsSection, OverviewSection, QualitySection, ScriptSection, SourceSection, StoryboardCanvasSection, StoryGraphSection, getProjectName, getProjectSettings, loadProjectRules } from "@/pages/studio/sections";
 import { isDramaBindingsAvailable, listAssets, listEpisodes, listOpenStaleMarks, listSourceDocuments, listWorkflowRuns } from "@/services/desktop/drama";
 import { STUDIO_SECTIONS, useStudioStore, type StudioSection } from "@/stores/use-studio-store";
@@ -333,6 +334,8 @@ function SectionBody(props: SectionBodyProps) {
             return <StoryboardCanvasSection projectId={projectId} />;
         case "quality":
             return <QualitySection projectId={projectId} runs={props.workflowRuns} marks={props.staleMarks} onChanged={props.onDramaChanged} />;
+        case "agents":
+            return <AgentCenterSection projectId={projectId} />;
         default:
             return <StudioEmptySection titleKey={spec.titleKey} descriptionKey={spec.descriptionKey} workPackage={spec.workPackage} />;
     }
