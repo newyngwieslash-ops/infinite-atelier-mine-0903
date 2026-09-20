@@ -5,6 +5,7 @@ package providers
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/provider"
@@ -49,11 +50,37 @@ func (r TextRequest) Validate() error {
 	return nil
 }
 
+// TextToolCall is one tool call a model asked for.
+//
+// It is a TRANSPORT type rather than part of any output schema, and the placement is
+// forced by the specification. AGENT_CONTRACTS section 7's output schemas have no
+// field for a tool call, and each of them declares additionalProperties false, so a
+// tool call cannot ride inside the document a model returns. The wire protocols
+// agree: an OpenAI-compatible response carries tool_calls as a SIBLING of content on
+// the assistant message, not inside it. So this is where a tool call travels, and
+// WP-07's runtime reads it from the reply rather than parsing it out of the
+// validated document.
+//
+// Arguments is the model's own JSON, unvalidated. Section 6.1's chain validates it
+// against the tool's input schema, and that check belongs to the runtime that owns
+// the schema — not to the adapter, which has no registry to check it against.
+type TextToolCall struct {
+	// Key is the tool name the model used, in the `<domain>.<verb>_<object>` form of
+	// section 6.2. It is a REQUEST: the registry and the ACL decide whether it runs.
+	Key string `json:"key"`
+	// Arguments is the JSON object the model supplied, as it supplied it.
+	Arguments json.RawMessage `json:"arguments,omitempty"`
+}
+
 // TextResult is the completed generation result.
 type TextResult struct {
 	Content      string `json:"content"`
 	FinishReason string `json:"finishReason,omitempty"`
 	Model        string `json:"model,omitempty"`
+	// ToolCalls lists what the model asked to call, in the order it asked. An empty
+	// list means the reply was a complete answer, which is not an error: a stage that
+	// does its work in one document has no tool calls.
+	ToolCalls []TextToolCall `json:"toolCalls,omitempty"`
 }
 
 // TextEvent is one streamed generation event delivered to the frontend.

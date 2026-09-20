@@ -18,11 +18,21 @@ const (
 	// and by local pipeline exercises. It is not offered in the configuration
 	// UI, so a real provider configuration cannot select it.
 	KindMockMedia Kind = "mock_media"
+	// KindMockText is the deterministic in-process TEXT adapter, added by WP-07 for
+	// the reason AGENT_CONTRACTS section 18.3 gives: "CI 不调用真实付费模型". Like
+	// KindMockMedia it is not offered in the configuration UI and not accepted for a
+	// persisted config, so a real project cannot select it.
+	//
+	// It is a separate kind from KindMockMedia rather than reusing it because the
+	// two stand in for different capabilities and resolve through different switch
+	// arms: an agent runtime asking for text must not be answered by a media adapter,
+	// and a job asking for video must not be answered by this one.
+	KindMockText Kind = "mock_text"
 )
 
 // ValidKinds returns the provider kinds trusted by the current registry.
 func ValidKinds() []Kind {
-	return []Kind{KindOpenAICompatible, KindGeminiCompatible, KindMockMedia}
+	return []Kind{KindOpenAICompatible, KindGeminiCompatible, KindMockMedia, KindMockText}
 }
 
 // IsValidKind reports whether the kind is accepted for persisted configs.

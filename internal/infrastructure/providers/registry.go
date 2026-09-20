@@ -40,6 +40,11 @@ type Registry struct {
 	// registered here when the media work package lands.
 	video appjobs.VideoPort
 	audio appjobs.AudioPort
+
+	// mockText is the deterministic text adapter. It is optional and reachable
+	// only for KindMockText, which no persisted configuration can carry; see
+	// WithMockTextAdapter.
+	mockText providers.TextPort
 }
 
 // NewRegistry builds the provider registry.
@@ -58,6 +63,21 @@ func (r *Registry) WithMediaAdapters(video appjobs.VideoPort, audio appjobs.Audi
 	}
 	r.video = video
 	r.audio = audio
+	return r
+}
+
+// WithMockTextAdapter registers the deterministic text adapter.
+//
+// It is registered separately from the media adapters and reachable only for
+// KindMockText, which the application layer refuses to persist and the database
+// CHECK rejects, so a real provider configuration cannot select it. Keeping the
+// registration at the composition root makes it visible which build carries the
+// mock, in the same way WithMediaAdapters does.
+func (r *Registry) WithMockTextAdapter(adapter providers.TextPort) *Registry {
+	if r == nil {
+		return r
+	}
+	r.mockText = adapter
 	return r
 }
 
@@ -164,6 +184,19 @@ func buildTextAdapter(kind provider.Kind, registry *Registry) (providers.TextPor
 	switch kind {
 	case provider.KindOpenAICompatible, provider.KindGeminiCompatible:
 		return NewOpenAITextAdapter(registry), nil
+	case provider.KindMockText:
+		// The mock is returned as the SAME instance it was registered as rather than
+		// built per call, because its scenario and its call log are state a caller set
+		// up deliberately: a fresh adapter per lookup would discard both, and the
+		// invalid-once scenario would then be invalid every time.
+		//
+		// A registry with no mock registered reports "unsupported" rather than
+		// building one, so a build that did not opt in cannot be answered by a mock
+		// that appeared anyway.
+		if registry == nil || registry.mockText == nil {
+			return nil, provider.NewUnsupportedError()
+		}
+		return registry.mockText, nil
 	default:
 		return nil, provider.NewUnsupportedError()
 	}

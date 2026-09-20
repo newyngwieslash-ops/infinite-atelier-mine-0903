@@ -362,6 +362,21 @@ func parseCompletion(payload []byte, model string) (providers.TextResult, error)
 		Choices []struct {
 			Message struct {
 				Content string `json:"content"`
+				// tool_calls arrives BESIDE content, not inside it. AGENT_CONTRACTS
+				// section 7's output schemas have no field for a tool call and are
+				// additionalProperties false, so the wire protocol's own placement is
+				// also the only place one can travel — see providers.TextToolCall.
+				ToolCalls []struct {
+					Function struct {
+						Name string `json:"name"`
+						// Arguments is the provider's serialized JSON, kept as bytes
+						// rather than decoded: section 6.1 validates it against the
+						// tool's input schema, and re-encoding it here would mean
+						// validating a document this adapter produced instead of the
+						// one the model sent.
+						Arguments json.RawMessage `json:"arguments"`
+					} `json:"function"`
+				} `json:"tool_calls"`
 			} `json:"message"`
 		} `json:"choices"`
 	}
@@ -374,6 +389,18 @@ func parseCompletion(payload []byte, model string) (providers.TextResult, error)
 	result := providers.TextResult{Content: response.Choices[0].Message.Content, Model: response.Model}
 	if result.Model == "" {
 		result.Model = model
+	}
+	for _, call := range response.Choices[0].Message.ToolCalls {
+		if strings.TrimSpace(call.Function.Name) == "" {
+			// A tool call with no name can be neither authorized nor refused, so the
+			// whole reply is refused rather than dropping it: a model that asked for
+			// something and was silently ignored would look like one that asked for
+			// nothing.
+			return providers.TextResult{}, provider.NewResponseInvalidError()
+		}
+		result.ToolCalls = append(result.ToolCalls, providers.TextToolCall{
+			Key: call.Function.Name, Arguments: call.Function.Arguments,
+		})
 	}
 	return result, nil
 }

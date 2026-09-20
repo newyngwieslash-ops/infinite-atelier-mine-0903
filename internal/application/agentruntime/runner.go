@@ -65,6 +65,21 @@ type ModelReply struct {
 	// a model change to be visible in it.
 	Model        string
 	FinishReason string
+	// ToolCalls is what the model asked to call, BESIDE the document rather than
+	// inside it.
+	//
+	// The placement was found by a test rather than chosen, and it is forced by the
+	// specification. Section 7's output schemas have no field for a tool call and
+	// every one of them declares additionalProperties false, so a tool call placed
+	// inside a returned document is refused by the very schema that document must
+	// satisfy. The wire protocols agree: an OpenAI-compatible response carries
+	// tool_calls as a SIBLING of content on the assistant message.
+	//
+	// The first version of this runner parsed `toolCalls` out of the validated
+	// output. That made the whole tool path unreachable for any agent whose output
+	// was actually validated — the mock's reply was the first real document to
+	// travel through it, and the schema refused it immediately.
+	ToolCalls []ToolCallRequest
 }
 
 // RunStore is where a run's own record goes.
@@ -298,6 +313,7 @@ func (r *Runtime) Run(ctx context.Context, invocation Invocation) (Outcome, erro
 	var (
 		output    json.RawMessage
 		failures  []Violation
+		requested []ToolCallRequest
 		repaired  bool
 		attempted bool
 	)
@@ -350,7 +366,21 @@ func (r *Runtime) Run(ctx context.Context, invocation Invocation) (Outcome, erro
 				_ = r.finish(ctx, record, agent.RunFailed, "", artifactCode(artifactErr), nil)
 				return Outcome{}, artifactErr
 			}
+			// The tool calls the model asked for are checked against its budget here,
+			// BEFORE any of them runs: AC-AGENT-005's "Tool Calls 超限停止" is about a
+			// model that asked for more than it may spend, and truncating the list
+			// would silently do the first N of what it asked for.
+			if quotaErr := checkToolCallBudget(spec, reply.ToolCalls); quotaErr != nil {
+				var quota *QuotaError
+				code := "agent.quota_tool_calls"
+				if errors.As(quotaErr, &quota) {
+					code = quota.Code()
+				}
+				_ = r.finish(ctx, record, agent.RunFailed, "", code, nil)
+				return Outcome{}, quotaErr
+			}
 			output = json.RawMessage(reply.Content)
+			requested = reply.ToolCalls
 			break
 		}
 		if validationErr != nil {
@@ -381,13 +411,8 @@ func (r *Runtime) Run(ctx context.Context, invocation Invocation) (Outcome, erro
 		return Outcome{}, &SchemaError{Stage: spec.Key, Violations: failures, Repaired: attempted && repaired}
 	}
 
-	// Tool calls, which the output's schema describes. They run AFTER validation,
-	// so a malformed document cannot cause a write.
-	requested, parseErr := r.requestedToolCalls(spec, output)
-	if parseErr != nil {
-		_ = r.finish(ctx, record, agent.RunFailed, "", "agent.tool_request_invalid", nil)
-		return Outcome{}, parseErr
-	}
+	// Tool calls, which the reply carried beside its document. They run AFTER
+	// validation, so a malformed document cannot cause a write.
 	for _, request := range requested {
 		call := r.callTool(runCtx, runID, spec, invocation, request, sequence)
 		sequence++
@@ -464,40 +489,27 @@ func (r *Runtime) message(runID string, invocation Invocation, role agent.Messag
 }
 
 // ToolCallRequest is one tool call the model asked for.
+//
+// It is the runtime's own type rather than the provider's, because the runtime does
+// not import the providers package: the two are structurally identical and the
+// adapter at the composition root maps between them, which keeps the layering of
+// AGENTS section 7.2 intact.
 type ToolCallRequest struct {
 	Key       string
 	Arguments json.RawMessage
 }
 
-// requestedToolCalls reads the tool calls out of a validated output.
+// checkToolCallBudget refuses a reply that asks for more calls than the agent may make.
 //
-// The output schemas do not all carry tool calls: a stage that does its work in one
-// answer has none. So the shape is looked for rather than required, and an output
-// with no toolCalls field is a complete answer rather than an error.
-func (r *Runtime) requestedToolCalls(spec agent.Spec, output json.RawMessage) ([]ToolCallRequest, error) {
-	var envelope struct {
-		ToolCalls []struct {
-			Tool string          `json:"tool"`
-			Args json.RawMessage `json:"args"`
-		} `json:"toolCalls"`
+// The count is checked BEFORE any call runs, so a model that asked for eleven calls
+// with a budget of eight is refused rather than truncated: AC-AGENT-005's "Tool
+// Calls 超限停止". Truncating would run the first eight of what it asked for, which
+// is a partial execution the model did not request and no one authorized.
+func checkToolCallBudget(spec agent.Spec, requested []ToolCallRequest) error {
+	if len(requested) > spec.Limits.MaxToolCalls {
+		return &QuotaError{Limit: "tool_calls", Allowed: spec.Limits.MaxToolCalls, Used: len(requested)}
 	}
-	if err := json.Unmarshal(output, &envelope); err != nil {
-		return nil, agent.InvalidError("The model's output could not be read.")
-	}
-	if len(envelope.ToolCalls) == 0 {
-		return nil, nil
-	}
-	// The count is checked against the agent's budget BEFORE any call runs, so a
-	// model that asked for eleven calls with a budget of eight is refused rather
-	// than truncated: AC-AGENT-005's "Tool Calls 超限停止".
-	if len(envelope.ToolCalls) > spec.Limits.MaxToolCalls {
-		return nil, &QuotaError{Limit: "tool_calls", Allowed: spec.Limits.MaxToolCalls, Used: len(envelope.ToolCalls)}
-	}
-	requests := make([]ToolCallRequest, 0, len(envelope.ToolCalls))
-	for _, call := range envelope.ToolCalls {
-		requests = append(requests, ToolCallRequest{Key: call.Tool, Arguments: call.Args})
-	}
-	return requests, nil
+	return nil
 }
 
 // callTool authorizes and runs one tool call.

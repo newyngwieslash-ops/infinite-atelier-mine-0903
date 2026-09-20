@@ -18,10 +18,18 @@ import (
 // order is visible in what the store received.
 
 // scriptedModel returns the replies it was given, in order.
+//
+// Tool calls are scripted SEPARATELY from the reply's content, because that is where
+// they travel: section 7's output schemas are additionalProperties false, so a tool
+// call inside a returned document is refused by the schema that document must
+// satisfy. A test that scripted them inside the JSON would be testing the old,
+// unreachable path.
 type scriptedModel struct {
 	replies []string
 	errs    []error
-	calls   []ModelRequest
+	// toolCalls is indexed alongside replies: entry i is what reply i asked for.
+	toolCalls [][]ToolCallRequest
+	calls     []ModelRequest
 }
 
 func (m *scriptedModel) Complete(_ context.Context, request ModelRequest) (ModelReply, error) {
@@ -36,7 +44,11 @@ func (m *scriptedModel) Complete(_ context.Context, request ModelRequest) (Model
 		// model failure.
 		return ModelReply{}, errors.New("the scripted model ran out of replies")
 	}
-	return ModelReply{Content: m.replies[index], Model: "scripted", FinishReason: "stop"}, nil
+	reply := ModelReply{Content: m.replies[index], Model: "scripted", FinishReason: "stop"}
+	if index < len(m.toolCalls) {
+		reply.ToolCalls = m.toolCalls[index]
+	}
+	return reply, nil
 }
 
 // memoryRunStore records what the runtime wrote, in order.
@@ -338,13 +350,12 @@ func TestRunRefusesMoreToolCallsThanTheBudget(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The fixture agent's budget is 8 tool calls, so nine is one too many.
-	requests := make([]string, 0, 9)
+	requests := make([]ToolCallRequest, 0, 9)
 	for index := 0; index < 9; index++ {
-		requests = append(requests, `{"tool":"story.read_events","args":{}}`)
+		requests = append(requests, ToolCallRequest{Key: "story.read_events", Arguments: json.RawMessage(`{}`)})
 	}
-	harness := newHarness(t, []string{
-		`{"summary":"x","toolCalls":[` + strings.Join(requests, ",") + `]}`,
-	}, func(options *Options) { options.Tools = table })
+	harness := newHarness(t, []string{`{"summary":"x"}`}, func(options *Options) { options.Tools = table })
+	harness.model.toolCalls = [][]ToolCallRequest{requests}
 	_, err = harness.runtime.Run(context.Background(), invocationFor("script.execution.x"))
 	if err == nil {
 		t.Fatal("an output asking for more tool calls than the budget was accepted")
@@ -369,9 +380,10 @@ func TestRunDeniesAnIllegalToolCallAndStops(t *testing.T) {
 	// A write tool exists in the table and the execution agent even lists it, but
 	// the test's registry grants the SUPERVISOR only a read tool. So a supervisor
 	// asking for a write is refused by the matrix.
-	harness := newHarness(t, []string{
-		`{"summary":"x","toolCalls":[{"tool":"script.create_script_version","args":{}}]}`,
-	}, nil)
+	harness := newHarness(t, []string{`{"summary":"x"}`}, nil)
+	harness.model.toolCalls = [][]ToolCallRequest{{
+		{Key: "script.create_script_version", Arguments: json.RawMessage(`{}`)},
+	}}
 	_, err := harness.runtime.Run(context.Background(), invocationFor("script.supervision.x"))
 	if err == nil {
 		t.Fatal("a supervisor's write call was allowed")
@@ -579,9 +591,10 @@ func TestToolCallScopesComeFromTheRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	harness := newHarness(t, []string{
-		`{"summary":"x","toolCalls":[{"tool":"story.read_events","args":{"projectId":"project-other"}}]}`,
-	}, func(options *Options) { options.Tools = table })
+	harness := newHarness(t, []string{`{"summary":"x"}`}, func(options *Options) { options.Tools = table })
+	harness.model.toolCalls = [][]ToolCallRequest{{
+		{Key: "story.read_events", Arguments: json.RawMessage(`{"projectId":"project-other"}`)},
+	}}
 	invocation := invocationFor("script.execution.x")
 	invocation.EpisodeID = "episode-real"
 	if _, err := harness.runtime.Run(context.Background(), invocation); err != nil {
