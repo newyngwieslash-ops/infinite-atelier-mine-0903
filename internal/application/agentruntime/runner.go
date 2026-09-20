@@ -226,11 +226,46 @@ type Invocation struct {
 	// infer it and could not: the verifier's job is "do these references exist", and it answers
 	// that — correctly — about an empty list, so the check passed everything.
 	StageProducesNoArtifact bool
+	// LockedRefs are the things a user pinned, which this attempt must not rewrite (section 7.3's
+	// lockedRefs). The runtime renders them into the prompt as a layer of its own.
+	//
+	// They come from the DATABASE and never from a model: the caller reads the version's locks and
+	// passes them here, which is what section 7.1's "supplied by the runtime from the database; the
+	// agent cannot add to either" means. The layer is therefore TRUSTED — it is this process's own
+	// record of a user's decision — and it is rendered outside the untrusted boundary.
+	LockedRefs []LockedRef
+	// FixIssueIDs are the review findings a FIX attempt must address (section 7.3's fixIssueIds).
+	// Empty for a first attempt and for a REDO.
+	//
+	// Like LockedRefs they come from the database: the user's gate decision records the issue ids,
+	// and the pipeline reads them back for the re-run. Section 10.2's FIX is "re-runs against
+	// specific findings rather than from scratch", which is only true if the findings reach the
+	// prompt.
+	FixIssueIDs []string
 	// UserMessage fills layer 9.
 	UserMessage string
 	// ModelID and ProviderID come from the project's policy for the agent's layer.
 	ModelID    string
 	ProviderID string
+}
+
+// LockedRef is one thing a user pinned, as the prompt states it.
+//
+// It is a reference and a label rather than the content: the model is told WHAT it must not rewrite
+// and can read the content through its own read tools, which is section 6.4's rule that large text
+// travels as a reference. The label is bounded because it is a human's own words from a decision
+// record rather than document text.
+type LockedRef struct {
+	// EntityType and EntityID name the pinned thing, such as a scene or a version.
+	EntityType string
+	EntityID   string
+	// Field names the pinned FIELD where the lock is field-level, such as a skeleton's ending hook.
+	// Empty means the whole entity is pinned, which is what a scene lock or a user's gate decision
+	// records.
+	Field string
+	// Label is a short human-readable description, so the model sees what the reference means rather
+	// than an opaque identifier.
+	Label string
 }
 
 // Outcome is what one invocation produced.
@@ -327,6 +362,8 @@ func (r *Runtime) Run(ctx context.Context, invocation Invocation) (Outcome, erro
 		Memory:          invocation.Memory,
 		Task:            invocation.Task,
 		TaskIsUntrusted: invocation.TaskIsUntrusted,
+		LockedRefs:      invocation.LockedRefs,
+		FixIssueIDs:     invocation.FixIssueIDs,
 		UserMessage:     invocation.UserMessage,
 	})
 

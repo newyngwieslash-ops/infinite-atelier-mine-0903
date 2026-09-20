@@ -52,6 +52,21 @@ const (
 	// RegionToolResult is a tool's return value, which section 5.1 lists as trusted
 	// because it comes from this process's own services rather than from a model.
 	RegionToolResult Region = "tool_result"
+	// RegionLockedRefs is what a user pinned, which section 7.3 carries as `lockedRefs` and section
+	// 10.2's FIX must preserve.
+	//
+	// It is TRUSTED: the list comes from the version table's lock rows and from a user's gate
+	// decision, so it is this process's own record of a human's choice rather than anything a model
+	// or a document said. Section 5.1's trusted list includes "runtime policy" and "approved
+	// facts", and a user's explicit pin is the same kind of thing.
+	RegionLockedRefs Region = "locked_refs"
+	// RegionFixIssues is the review findings a FIX attempt must address, which section 7.3 carries
+	// as `fixIssueIds`.
+	//
+	// It is trusted for the same reason, and it is a separate layer from the locked refs because the
+	// two answer different questions: the locks say what must NOT change, and the findings say what
+	// must. A prompt that merged them would blur a prohibition with a request.
+	RegionFixIssues Region = "fix_issues"
 )
 
 // UntrustedRegions are the regions whose content is data rather than instruction.
@@ -168,6 +183,22 @@ func renderToolContract(tools []ToolContractLine) string {
 	return builder.String()
 }
 
+// MaxLockedRefLabelRunes bounds a pin's label.
+//
+// The label is a user's own words from a decision record, so it is trusted — but a layer that can
+// grow without bound is a layer that can crowd out the tool contract, and section 5.3 puts that
+// contract above everything. A label is a description in a list, not a document.
+const MaxLockedRefLabelRunes = 200
+
+// truncateLabel bounds a pin's label.
+func truncateLabel(value string) string {
+	runes := []rune(value)
+	if len(runes) <= MaxLockedRefLabelRunes {
+		return value
+	}
+	return string(runes[:MaxLockedRefLabelRunes]) + "…"
+}
+
 // Prompt is an assembled message list.
 type Prompt struct {
 	Messages []Message
@@ -193,6 +224,12 @@ type AssembleRequest struct {
 	Task string
 	// TaskIsUntrusted marks the task input as data.
 	TaskIsUntrusted bool
+	// LockedRefs are the user's pins, which section 7.3 supplies from the database. They render
+	// between the approved facts and the memory, because they are a rule the model must obey and a
+	// rule belongs with the other rules rather than beside the material it is about.
+	LockedRefs []LockedRef
+	// FixIssueIDs are the findings a FIX attempt must address, rendered beside the locked refs.
+	FixIssueIDs []string
 	// UserMessage is layer 9, and is always untrusted: it is what a person typed.
 	UserMessage string
 }
@@ -257,6 +294,40 @@ func Assemble(request AssembleRequest) Prompt {
 			Region:  RegionApprovedFacts,
 			Role:    agent.MessageUser,
 			Content: "Approved project rules and facts:\n" + trimmed,
+		})
+	}
+
+	// 6b. The user's pins. Section 7.3's lockedRefs, supplied by the runtime from the database: the
+	// model is told what it may not rewrite, and reads the content through its own tools.
+	if len(request.LockedRefs) > 0 {
+		var builder strings.Builder
+		builder.WriteString("These are pinned by the user and must come back unchanged. Read them with your own tools; you may not rewrite them:\n")
+		for _, ref := range request.LockedRefs {
+			builder.WriteString("- " + ref.EntityType + " " + ref.EntityID)
+			if strings.TrimSpace(ref.Field) != "" {
+				builder.WriteString(" field " + ref.Field)
+			}
+			if strings.TrimSpace(ref.Label) != "" {
+				builder.WriteString(": " + truncateLabel(ref.Label))
+			}
+			builder.WriteString("\n")
+		}
+		prompt.Messages = append(prompt.Messages, Message{
+			Region:  RegionLockedRefs,
+			Role:    agent.MessageUser,
+			Content: builder.String(),
+		})
+	}
+
+	// 6c. The findings a FIX attempt must address. A separate layer from the pins because a
+	// prohibition and a request are different instructions, and a model told only the former would
+	// not know what to change.
+	if len(request.FixIssueIDs) > 0 {
+		prompt.Messages = append(prompt.Messages, Message{
+			Region: RegionFixIssues,
+			Role:   agent.MessageUser,
+			Content: "This attempt must address these review findings, and only these:\n- " +
+				strings.Join(request.FixIssueIDs, "\n- "),
 		})
 	}
 

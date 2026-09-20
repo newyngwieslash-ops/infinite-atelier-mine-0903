@@ -464,7 +464,15 @@ type ApplyGateRequest struct {
 	StageRunID string
 	Revision   int64
 	Decision   workflow.GateDecision
-	Actor      Actor
+	// The findings a FIX decision names are NOT here, and their absence is deliberate.
+	//
+	// Section 12.2's gate stores issue_ids_json and instruction on the DECISION row, which the
+	// workflow service writes when the user's decision is submitted. A copy on this request would be
+	// a second source of truth for the same fact, and it would be the one nothing read: the engine
+	// moves the stage, and the pipeline that builds the next attempt reads the decision back from
+	// the database — which is what makes "FIX re-runs against specific findings" survive a restart,
+	// where a value threaded through two calls would not.
+	Actor Actor
 }
 
 // ApplyGate moves a stage after a user decision (AGENT_CONTRACTS section 10.2).
