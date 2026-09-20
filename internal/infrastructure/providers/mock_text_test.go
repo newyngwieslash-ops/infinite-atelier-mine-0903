@@ -642,3 +642,49 @@ func TestMockAnswersTheExtractionContract(t *testing.T) {
 	}
 	checkAgainstSchema(t, schemas.AgentEventExtractionPath, result.Content)
 }
+
+// TestSetScenarioResetsTheConversationCounters pins the fix the canary produced.
+//
+// The counters exist to distinguish "the first reply for this conversation" from a repeat, and a
+// scenario change is a NEW situation rather than a repeat of the old one. The first version kept
+// the counts, so a test that ran one scenario and then the invalid-once scenario got a VALID
+// first reply — the invalid-once scenario's first call was counted as the previous scenario's
+// second. The canary found it by asserting about a refusal and seeing a success.
+//
+// THE DIRECTION MATTERS, and the first version of this test got it wrong: switching TO
+// invalid-always proves nothing, because that scenario replies invalid unconditionally whatever
+// the count is. The observable difference is switching TO invalid-once, whose first reply
+// depends on the count being one.
+func TestSetScenarioResetsTheConversationCounters(t *testing.T) {
+	request := mockRequest("execution")
+
+	// Run the normal scenario first, so this conversation's counter is already at one.
+	adapter := NewMockTextAdapter()
+	if _, err := adapter.Generate(context.Background(), request); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	// Switching to invalid-once must make the NEXT reply invalid, because it is that scenario's
+	// FIRST call for this conversation. Without the reset it would be call two and come back valid.
+	adapter.SetScenario(MockScenarioInvalidOnce)
+	first, err := adapter.Generate(context.Background(), request)
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if !strings.Contains(first.Content, INVALID_VERSION_DOCUMENT) {
+		t.Fatalf("the reply after a scenario change is valid, so the counters were not reset: %s", first.Content)
+	}
+	// And the next call is valid, which is what makes invalid-once a scenario rather than a
+	// permanent failure.
+	second, err := adapter.Generate(context.Background(), request)
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if strings.Contains(second.Content, INVALID_VERSION_DOCUMENT) {
+		t.Fatalf("the repair reply is still invalid: %s", second.Content)
+	}
+}
+
+// INVALID_VERSION_DOCUMENT is the reply the invalid scenarios produce, named so a test says what
+// it is looking for rather than repeating a JSON fragment that could drift from the adapter's.
+const INVALID_VERSION_DOCUMENT = `"schemaVersion":2`

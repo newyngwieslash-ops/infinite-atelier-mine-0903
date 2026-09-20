@@ -3,6 +3,7 @@ package agentruntime
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -701,5 +702,133 @@ func TestApplySupervisionWithoutASeverityFollowsTheOrdinaryPolicy(t *testing.T) 
 	// story_skeleton's policy requires a user gate, so a passing review waits rather than passing.
 	if updated.Status != workflow.StageWaitingUser {
 		t.Fatalf("the stage moved to %q, want waiting_user", updated.Status)
+	}
+}
+
+// TestRevisionCountRefusesAnAdapterThatCannotCount pins the fail-closed arm an independent
+// review found untested.
+//
+// `revisionCount`'s own comment says a missing counter "is a refusal rather than a zero:
+// reporting 'no revisions yet' for a capability that is absent is exactly the fail-open mistake
+// this package's other optional ports avoid". Every test in this file uses a transitioner that
+// DOES implement RevisionCounter, so the absent case was never reached — and the mutation that
+// disabled the refusal left the whole suite green. With it disabled, a failing review always
+// sees zero revisions, so `mayRevise` is always true and AC-AGENT-005's "FIX 超过 2 次转人工"
+// becomes an unbounded revision loop.
+func TestRevisionCountRefusesAnAdapterThatCannotCount(t *testing.T) {
+	// A transitioner that is everything the engine needs EXCEPT the counter. It embeds the
+	// interface so the methods it does not implement are absent rather than zero-valued, which is
+	// what makes the type assertion fail.
+	engine := NewEngine(EngineOptions{
+		Runtime:      &Runtime{registry: mustRegistry(t, testTools(t)), tools: testTools(t)},
+		Transitioner: bareTransitioner{},
+		Clock:        fixedRuntimeClock{}, IDs: &runtimeIDs{},
+	})
+	if _, err := engine.revisionCount(context.Background(), "any-stage"); err == nil {
+		t.Fatal("an engine whose adapter cannot count revisions reported a count")
+	}
+}
+
+// bareTransitioner is a StageTransitioner and nothing else.
+type bareTransitioner struct{}
+
+func (bareTransitioner) CreateStage(context.Context, StageCreationRequest) (workflow.StageRun, error) {
+	return workflow.StageRun{}, workflow.StorageError("unused", nil)
+}
+
+func (bareTransitioner) TransitionStage(context.Context, StageTransitionRequest) (workflow.StageRun, error) {
+	return workflow.StageRun{}, workflow.StorageError("unused", nil)
+}
+
+func (bareTransitioner) ListStages(context.Context, string) ([]workflow.StageRun, error) {
+	return nil, workflow.StorageError("unused", nil)
+}
+
+func (bareTransitioner) GetRun(context.Context, string) (workflow.WorkflowRun, error) {
+	return workflow.WorkflowRun{}, workflow.StorageError("unused", nil)
+}
+
+// TestApplyGateRefusesAReviewingStageRatherThanByItsEdge pins the STATUS GUARD rather than the
+// edge check below it.
+//
+// The existing test uses a RUNNING stage, which the EDGE check below also refuses — so it passed
+// whatever the status guard did, and a mutation that disabled the guard left the suite green. A
+// REVIEWING stage is refused by the same secondary check, so no test distinguished the two
+// guards. This asserts the guard's own message.
+func TestApplyGateRefusesAReviewingStageRatherThanByItsEdge(t *testing.T) {
+	harness := newEngineHarness(t)
+	stage, err := harness.engine.StartStage(context.Background(), StartStageRequest{
+		WorkflowRunID: "run-1", Stage: "story_skeleton", ExecutionKey: "script.execution.story_skeleton",
+	})
+	if err != nil {
+		t.Fatalf("StartStage: %v", err)
+	}
+	// A reviewing stage: `reviewing → passed` IS a legal edge, so only the status guard can
+	// refuse this. That is what makes it the case that distinguishes the two checks.
+	reviewable := toReviewing(t, harness, stage.ID)
+	_, err = harness.engine.ApplyGate(context.Background(), ApplyGateRequest{
+		StageRunID: reviewable.ID, Revision: reviewable.Revision,
+		Decision: workflow.GateApprove,
+		Actor:    Actor{Type: "test", ID: "test"},
+	})
+	if err == nil {
+		t.Fatal("a gate decision applied to a stage that was not waiting")
+	}
+	if !strings.Contains(err.Error(), "waiting") {
+		t.Fatalf("the refusal reads %q, which is not the status guard's message", err)
+	}
+}
+
+// TestLoadOrdersAttemptsNewestFirst pins the sort that Active and Latest depend on.
+//
+// The existing state test builds a StageState literal BY HAND and even constructs its fixture
+// already sorted, so it never exercises the sort — and a mutation reversing the comparison left
+// the suite green. `Latest()` returning the OLDEST attempt would make ApplySupervision and
+// RunSupervision review a stale attempt, and StartStage's passed-stage guard read the wrong row.
+func TestLoadOrdersAttemptsNewestFirst(t *testing.T) {
+	harness := newEngineHarness(t)
+	ctx := context.Background()
+	// Two attempts for one stage. The first is closed, so a second may be created.
+	first, err := harness.engine.StartStage(ctx, StartStageRequest{
+		WorkflowRunID: "run-1", Stage: "story_skeleton", ExecutionKey: "script.execution.story_skeleton",
+	})
+	if err != nil {
+		t.Fatalf("StartStage: %v", err)
+	}
+	// Close the first attempt through the repository, because ApplyGate only applies to a stage
+	// that is WAITING for a decision — which is the guard the test above asserts. Cancelling is
+	// the shortest terminal path and it is a legal edge from running.
+	if _, err := harness.transitioner.TransitionStage(ctx, StageTransitionRequest{
+		StageRunID: first.ID, Status: workflow.StageCancelled, Revision: first.Revision,
+	}); err != nil {
+		t.Fatalf("closing the first attempt: %v", err)
+	}
+	second, err := harness.engine.StartStage(ctx, StartStageRequest{
+		WorkflowRunID: "run-1", Stage: "story_skeleton", ExecutionKey: "script.execution.story_skeleton",
+	})
+	if err != nil {
+		t.Fatalf("StartStage for the second attempt: %v", err)
+	}
+	if second.Attempt != 2 {
+		t.Fatalf("the second attempt is number %d", second.Attempt)
+	}
+	state, err := harness.engine.Load(ctx, "run-1")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	attempts := state.Stages["story_skeleton"].Attempts
+	if len(attempts) != 2 {
+		t.Fatalf("the stage holds %d attempts, want 2", len(attempts))
+	}
+	if attempts[0].Attempt != 2 {
+		t.Fatalf("the first attempt in the list is number %d, want the NEWEST",
+			attempts[0].Attempt)
+	}
+	latest, ok := state.Stages["story_skeleton"].Latest()
+	if !ok {
+		t.Fatal("Latest reported no attempt")
+	}
+	if latest.ID != second.ID {
+		t.Fatalf("Latest returned %q, want the newest attempt %q", latest.ID, second.ID)
 	}
 }
