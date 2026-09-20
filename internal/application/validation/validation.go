@@ -17,6 +17,7 @@ package validation
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -393,4 +394,150 @@ func jsonPointer(tokens []string) string {
 		}
 	}
 	return builder.String()
+}
+
+// Against validates a document against one of the embedded agent contracts by path.
+//
+// It is the general form of EventExtraction, and it exists for AGENT_CONTRACTS section
+// 3's registry: an agent declares its output schema by PATH (section 4.2's manifest
+// names `schemas/agent/execution-result.v1.json`), so the runtime has to validate
+// against whichever contract the agent that ran declared. A validator that knew one
+// schema would leave every other agent's output unchecked, which is the state this
+// package was in until WP-07 needed the second one.
+//
+// The schemas are COMPILED ONCE and cached by path. A schema is immutable at runtime, so
+// compiling per call would only add cost and a failure mode — and an agent runs on every
+// stage transition, which makes this a hot path rather than a startup one.
+//
+// Violations are the same value-free shape EventExtraction returns, for the reason
+// section 14.3 gives: they are sent back to the model for the repair round, and a
+// violation that quoted the document would carry untrusted text into the next call.
+func Against(schemaPath string, raw []byte) ([]Violation, error) {
+	schema, err := compiledSchema(schemaPath)
+	if err != nil {
+		// A schema that will not compile is a build defect rather than bad input, so it
+		// is reported as its own error. The caller distinguishes it from a refusal
+		// because a validator failure is not repairable: telling a model to fix its
+		// document when the CONTRACT is broken would burn the one repair round on a
+		// problem the model cannot see.
+		return nil, fmt.Errorf("the schema at %s is unusable: %w", schemaPath, err)
+	}
+	instance, err := jsonschema.UnmarshalJSON(bytes.NewReader(raw))
+	if err != nil {
+		// A document that is not JSON has no violations to report, because there is no
+		// structure to describe. The caller sends an empty violation list, and the
+		// repair prompt says nothing more specific — which is honest: "that was not
+		// JSON" is the whole message.
+		return nil, &documentError{Cause: err}
+	}
+	if err := schema.Validate(instance); err != nil {
+		return violationsOf(err), nil
+	}
+	return nil, nil
+}
+
+// documentError reports that a document could not be read as JSON.
+//
+// Its own type so the runtime can tell "the model did not return JSON" from "the
+// validator could not run": the first is repairable, the second is a build defect.
+type documentError struct {
+	Cause error
+}
+
+func (e *documentError) Error() string {
+	if e == nil {
+		return ""
+	}
+	return "the model's output was not JSON"
+}
+
+func (e *documentError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Cause
+}
+
+// IsDocumentError reports whether a validation failure was a document that could not be
+// parsed, as opposed to a document that parsed and violated its contract.
+func IsDocumentError(err error) bool {
+	var target *documentError
+	return errors.As(err, &target)
+}
+
+// compiledSchema returns a compiled schema by path, compiling it once.
+//
+// The cache is keyed by the specification path rather than by any identifier the schema
+// declares, because the path is what a manifest names and what a caller passes. Two
+// callers naming the same contract therefore share one compilation, and a caller naming
+// a different one gets a different entry rather than a silently wrong schema.
+func compiledSchema(schemaPath string) (*jsonschema.Schema, error) {
+	key := strings.TrimSpace(schemaPath)
+	schemaCache.mu.Lock()
+	defer schemaCache.mu.Unlock()
+	if cached, ok := schemaCache.byPath[key]; ok {
+		return cached.schema, cached.err
+	}
+	schema, err := compileSchemaAt(key)
+	schemaCache.byPath[key] = schemaEntry{schema: schema, err: err}
+	return schema, err
+}
+
+// schemaEntry is one cache slot.
+type schemaEntry struct {
+	schema *jsonschema.Schema
+	err    error
+}
+
+// schemaCache holds compiled schemas, keyed by specification path.
+//
+// A mutex rather than sync.Once per path, because the set of paths is open: an agent
+// declares its own, so a fixed set of sync.Once values could not cover it. The lock is
+// held across compilation, which is correct rather than merely convenient: two
+// goroutines compiling the same schema concurrently would both pay for it, and the
+// compilation is microseconds against a model call.
+var schemaCache = struct {
+	mu     sync.Mutex
+	byPath map[string]schemaEntry
+}{byPath: map[string]schemaEntry{}}
+
+// compileSchemaAt compiles one embedded schema.
+func compileSchemaAt(schemaPath string) (*jsonschema.Schema, error) {
+	body, err := schemas.Lookup(schemaPath)
+	if err != nil {
+		return nil, err
+	}
+	document, err := jsonschema.UnmarshalJSON(bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("%s is not valid JSON: %w", schemaPath, err)
+	}
+	// The resource is registered under the schema's OWN $id, read from the document
+	// rather than reconstructed, so a $ref inside the schema resolves against the
+	// identifier the schema itself declares. Reconstructing it would work for the files
+	// whose path and id agree — which is all of them today — and would break silently
+	// for the first one where they did not.
+	identifier := schemaIDOf(document, schemaPath)
+	compiler := jsonschema.NewCompiler()
+	if err := compiler.AddResource(identifier, document); err != nil {
+		return nil, fmt.Errorf("registering %s: %w", schemaPath, err)
+	}
+	compiled, err := compiler.Compile(identifier)
+	if err != nil {
+		return nil, fmt.Errorf("compiling %s: %w", schemaPath, err)
+	}
+	return compiled, nil
+}
+
+// schemaIDOf reads a schema's declared $id, falling back to its path.
+//
+// The fallback is the URL form the specification's other schemas use, so a schema
+// without an $id still resolves its own internal refs — a `#/$defs/x` ref needs a base
+// URI and nothing else, and this supplies one.
+func schemaIDOf(document any, schemaPath string) string {
+	if object, ok := document.(map[string]any); ok {
+		if id, ok := object["$id"].(string); ok && strings.TrimSpace(id) != "" {
+			return id
+		}
+	}
+	return "https://infinite-atelier.invalid/" + schemaPath
 }

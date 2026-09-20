@@ -15,8 +15,6 @@
       "allowedTools": [
         "workflow.read_state",
         "workflow.request_user_gate",
-        "agent.invoke_execution",
-        "agent.invoke_supervisor",
         "memory.deep_recall"
       ],
       "limits": {

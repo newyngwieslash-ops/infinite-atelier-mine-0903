@@ -15,8 +15,6 @@
       "allowedTools": [
         "workflow.read_state",
         "workflow.request_user_gate",
-        "agent.invoke_execution",
-        "agent.invoke_supervisor",
         "memory.deep_recall"
       ],
       "limits": {
@@ -32,7 +30,7 @@
       "outputSchema": "schemas/agent/event_extraction.v1.json",
       "allowedTools": [
         "story.read_chapter_text",
-        "story.create_event_candidates"
+        "story.read_events"
       ],
       "limits": {
         "maxToolCalls": 8,

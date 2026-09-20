@@ -654,3 +654,103 @@ func TestJsonPointerEscapesTheReservedCharacters(t *testing.T) {
 		}
 	}
 }
+
+// TestAgainstValidatesEveryAgentContract is the general validator's coverage.
+//
+// It walks the whole set of contracts this build embeds, so a schema added to
+// schemas/agent/ but forgotten in AgentPaths is caught here rather than by an agent
+// whose output nothing validated. For each one it asserts both directions: a document
+// that satisfies the contract passes, and a document that violates it is refused with a
+// path and a rule.
+func TestAgainstValidatesEveryAgentContract(t *testing.T) {
+	for _, path := range schemas.AgentPaths {
+		if strings.Contains(path, "agent-error") {
+			// The error contract is what the runtime REPORTS, not what a model returns,
+			// so there is no output document to validate it against. It is still listed
+			// in AgentPaths, and this states why it has no case here rather than leaving
+			// a silent gap.
+			continue
+		}
+		t.Run(path, func(t *testing.T) {
+			// A document the contract refuses: an empty object violates every one of
+			// them, because each declares required fields.
+			violations, err := Against(path, []byte(`{}`))
+			if err != nil {
+				t.Fatalf("the validator itself failed: %v", err)
+			}
+			if len(violations) == 0 {
+				t.Fatal("an empty object satisfied the contract")
+			}
+			for _, violation := range violations {
+				if violation.Path == "" {
+					t.Fatalf("a violation has no path: %+v", violation)
+				}
+				if violation.Message == "" {
+					t.Fatalf("a violation has no rule: %+v", violation)
+				}
+			}
+			// A document that is not JSON is a different failure: no violations,
+			// because there is no structure to describe, and it is recognisable.
+			if _, err := Against(path, []byte(`not json`)); err == nil {
+				t.Fatal("a non-JSON document was accepted")
+			} else if !IsDocumentError(err) {
+				t.Fatalf("a non-JSON document reports %v, want a document error", err)
+			}
+		})
+	}
+}
+
+// TestAgainstRefusesTheSameDocumentTwice proves the cache does not change behaviour: a
+// compiled schema is reused, and the second call reports what the first did.
+func TestAgainstRefusesTheSameDocumentTwice(t *testing.T) {
+	first, err := Against(schemas.AgentDecisionResultPath, []byte(`{}`))
+	if err != nil {
+		t.Fatalf("the first call failed: %v", err)
+	}
+	second, err := Against(schemas.AgentDecisionResultPath, []byte(`{}`))
+	if err != nil {
+		t.Fatalf("the second call failed: %v", err)
+	}
+	if len(first) != len(second) {
+		t.Fatalf("the two calls reported %d and %d violations", len(first), len(second))
+	}
+	for index := range first {
+		if first[index] != second[index] {
+			t.Fatalf("violation %d differs between calls: %+v vs %+v", index, first[index], second[index])
+		}
+	}
+}
+
+// TestAgainstRefusesAnUnknownSchemaPath covers the fail-closed direction: a manifest
+// naming a schema this build does not carry is refused by the validator rather than
+// silently validating nothing.
+func TestAgainstRefusesAnUnknownSchemaPath(t *testing.T) {
+	if _, err := Against("schemas/agent/no-such-contract.v1.json", []byte(`{}`)); err == nil {
+		t.Fatal("an unknown schema path was accepted")
+	}
+}
+
+// TestAgainstIsValueFree is the security property, asserted on the general validator
+// rather than only on the extraction one.
+//
+// The violations travel back to a model in a repair prompt, and a model's output quotes
+// a document. So a violation may name a path and a rule and never the value that failed
+// — which is what makes the repair round safe to run against an imported novel.
+func TestAgainstIsValueFree(t *testing.T) {
+	// The secret is inside a field the contract requires to be one of an enum, which is
+	// the case the library's own message would quote back.
+	const marker = "INJECTED-MARKER-9f3a"
+	document := `{"schemaVersion":1,"status":"` + marker + `","intent":"x","reasonSummary":"y","nextAction":{"type":"none"}}`
+	violations, err := Against(schemas.AgentDecisionResultPath, []byte(document))
+	if err != nil {
+		t.Fatalf("the validator itself failed: %v", err)
+	}
+	if len(violations) == 0 {
+		t.Fatal("a document with an invalid enum value was accepted")
+	}
+	for _, violation := range violations {
+		if strings.Contains(violation.Message, marker) || strings.Contains(violation.Path, marker) {
+			t.Fatalf("a violation quotes the document: %+v", violation)
+		}
+	}
+}
