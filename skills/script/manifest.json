@@ -1,0 +1,141 @@
+{
+  "apiVersion": "atelier.agent/v1",
+  "kind": "AgentPack",
+  "metadata": {
+    "name": "script",
+    "version": "1.0.0"
+  },
+  "agents": [
+    {
+      "key": "script.decision",
+      "layer": "decision",
+      "skill": "decision.md",
+      "inputSchema": "schemas/agent/decision-request.v1.json",
+      "outputSchema": "schemas/agent/decision-result.v1.json",
+      "allowedTools": [
+        "workflow.read_state",
+        "workflow.request_user_gate",
+        "agent.invoke_execution",
+        "agent.invoke_supervisor",
+        "memory.deep_recall"
+      ],
+      "limits": {
+        "maxToolCalls": 6,
+        "timeoutSeconds": 180
+      }
+    },
+    {
+      "key": "script.execution.event_extraction",
+      "layer": "execution",
+      "skill": "execution/event_extraction.md",
+      "inputSchema": "schemas/agent/execution-request.v1.json",
+      "outputSchema": "schemas/agent/event_extraction.v1.json",
+      "allowedTools": [
+        "story.read_chapter_text",
+        "story.create_event_candidates"
+      ],
+      "limits": {
+        "maxToolCalls": 8,
+        "timeoutSeconds": 300
+      }
+    },
+    {
+      "key": "script.execution.story_skeleton",
+      "layer": "execution",
+      "skill": "execution/story_skeleton.md",
+      "inputSchema": "schemas/agent/execution-request.v1.json",
+      "outputSchema": "schemas/agent/execution-result.v1.json",
+      "allowedTools": [
+        "story.read_events",
+        "story.read_rules",
+        "script.create_story_skeleton_version"
+      ],
+      "limits": {
+        "maxToolCalls": 8,
+        "timeoutSeconds": 300
+      }
+    },
+    {
+      "key": "script.execution.adaptation_strategy",
+      "layer": "execution",
+      "skill": "execution/adaptation_strategy.md",
+      "inputSchema": "schemas/agent/execution-request.v1.json",
+      "outputSchema": "schemas/agent/execution-result.v1.json",
+      "allowedTools": [
+        "story.read_events",
+        "story.read_rules",
+        "script.read_story_skeleton",
+        "script.create_adaptation_strategy_version"
+      ],
+      "limits": {
+        "maxToolCalls": 8,
+        "timeoutSeconds": 300
+      }
+    },
+    {
+      "key": "script.execution.script_generation",
+      "layer": "execution",
+      "skill": "execution/script_generation.md",
+      "inputSchema": "schemas/agent/execution-request.v1.json",
+      "outputSchema": "schemas/agent/execution-result.v1.json",
+      "allowedTools": [
+        "script.read_story_skeleton",
+        "script.read_adaptation_strategy",
+        "story.read_rules",
+        "script.create_script_version"
+      ],
+      "limits": {
+        "maxToolCalls": 8,
+        "timeoutSeconds": 300
+      }
+    },
+    {
+      "key": "script.supervision.story_skeleton",
+      "layer": "supervision",
+      "skill": "supervision/story_skeleton.md",
+      "inputSchema": "schemas/agent/supervision-request.v1.json",
+      "outputSchema": "schemas/agent/review-report.v1.json",
+      "allowedTools": [
+        "story.read_events",
+        "story.read_rules",
+        "script.read_story_skeleton"
+      ],
+      "limits": {
+        "maxToolCalls": 12,
+        "timeoutSeconds": 300
+      }
+    },
+    {
+      "key": "script.supervision.adaptation_strategy",
+      "layer": "supervision",
+      "skill": "supervision/adaptation_strategy.md",
+      "inputSchema": "schemas/agent/supervision-request.v1.json",
+      "outputSchema": "schemas/agent/review-report.v1.json",
+      "allowedTools": [
+        "story.read_events",
+        "story.read_rules",
+        "script.read_adaptation_strategy"
+      ],
+      "limits": {
+        "maxToolCalls": 12,
+        "timeoutSeconds": 300
+      }
+    },
+    {
+      "key": "script.supervision.script",
+      "layer": "supervision",
+      "skill": "supervision/script.md",
+      "inputSchema": "schemas/agent/supervision-request.v1.json",
+      "outputSchema": "schemas/agent/review-report.v1.json",
+      "allowedTools": [
+        "script.read_script_version",
+        "script.read_story_skeleton",
+        "story.read_rules"
+      ],
+      "limits": {
+        "maxToolCalls": 12,
+        "timeoutSeconds": 300
+      }
+    }
+  ]
+}
