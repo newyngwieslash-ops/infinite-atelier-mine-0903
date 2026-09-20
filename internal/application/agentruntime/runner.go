@@ -136,14 +136,18 @@ type IDGenerator interface {
 
 // Options configures a Runtime.
 type Options struct {
-	Registry  *Registry
-	Tools     *Tools
-	Models    ModelPort
-	Runs      RunStore
-	Validate  Validator
-	Artifacts ArtifactVerifier
-	Clock     Clock
-	IDs       IDGenerator
+	Registry *Registry
+	Tools    *Tools
+	Models   ModelPort
+	Runs     RunStore
+	Validate Validator
+	// ToolArguments checks a tool call's arguments against the tool's own schema. Section
+	// 6.1's chain puts it after the ACL and before the handler runs. A nil value means no
+	// tool call can execute, which is a refusal rather than a degraded mode.
+	ToolArguments ToolArgumentValidator
+	Artifacts     ArtifactVerifier
+	Clock         Clock
+	IDs           IDGenerator
 }
 
 // Runtime runs agents.
@@ -153,6 +157,7 @@ type Runtime struct {
 	models    ModelPort
 	runs      RunStore
 	validate  Validator
+	toolArgs  ToolArgumentValidator
 	artifacts ArtifactVerifier
 	clock     Clock
 	ids       IDGenerator
@@ -170,6 +175,7 @@ func New(options Options) *Runtime {
 		models:    options.Models,
 		runs:      options.Runs,
 		validate:  options.Validate,
+		toolArgs:  options.ToolArguments,
 		artifacts: options.Artifacts,
 		clock:     options.Clock,
 		ids:       options.IDs,
@@ -559,6 +565,22 @@ func (r *Runtime) callTool(ctx context.Context, runID string, spec agent.Spec, i
 		call.FinishedAt = r.now()
 		return call
 	}
+	// Section 6.1's chain is "JSON parse -> Schema validation -> Tool ACL -> scope
+	// validation -> execute", and this is the second step. It was MISSING: the schema path
+	// travelled into the prompt (layer 4 tells the model what shape the arguments must
+	// have) and was never applied to what came back, so a model could hand a handler any
+	// shape at all and only the handler's own struct decoding refused it — a decode error,
+	// not a contract refusal, and one that cannot name the rule.
+	//
+	// The refusal is a FAILURE rather than a denial, and the distinction is section 7.1's:
+	// a denial is the ACL saying "you may not call this", while malformed arguments are a
+	// bad REQUEST against a tool the agent is entitled to call.
+	if err := r.validateToolArguments(tool, request.Arguments); err != nil {
+		call.Status = agent.ToolCallFailed
+		call.ErrorCode = "agent.tool_arguments_invalid"
+		call.FinishedAt = r.now()
+		return call
+	}
 	// The arguments are size-bounded before they reach the handler, so a model
 	// cannot hand a tool a document through a field the schema left open.
 	if len(request.Arguments) > MaxToolResultBytes {
@@ -590,6 +612,46 @@ func (r *Runtime) callTool(ctx context.Context, runID string, spec agent.Spec, i
 	call.Status = agent.ToolCallSucceed
 	call.OutputJSON = encoded
 	return call
+}
+
+// ToolArgumentValidator checks a tool call's arguments against the tool's schema.
+//
+// It is a field on Options rather than a hard dependency so a build can run without one —
+// the pool of contracts is small and a caller may have already checked — but a runtime
+// WITHOUT one refuses to execute any tool whose schema it cannot check, which is the
+// fail-closed direction. That is the same rule ArtifactVerifier follows.
+type ToolArgumentValidator func(schemaPath string, raw []byte) ([]Violation, error)
+
+// validateToolArguments applies the tool's own input schema to what the model sent.
+//
+// Three outcomes, and each is deliberate:
+//
+//   - No validator configured: REFUSED. A runtime that cannot check an argument must not
+//     pass it to a handler that will act on it.
+//   - The document is not JSON: refused with a violation rather than an error, because the
+//     model can fix that and this is the same class as a malformed output.
+//   - The validator itself failed: an ERROR, because a contract that will not compile is a
+//     build defect and telling the model to fix its arguments would burn the run.
+func (r *Runtime) validateToolArguments(tool Tool, arguments json.RawMessage) error {
+	if r.toolArgs == nil {
+		return agent.UnavailableError()
+	}
+	violations, err := r.toolArgs(tool.SchemaPath, arguments)
+	if err != nil {
+		// A document that is not JSON, or a schema that will not compile. The first is the
+		// model's to fix and the second is not, so they stay distinguishable: the validator
+		// reports a parse failure as a violation list and a compile failure as an error.
+		if len(violations) > 0 {
+			return &SchemaError{Stage: tool.Spec.Key, Violations: violations}
+		}
+		return err
+	}
+	if len(violations) > 0 {
+		// The violations are value-free, so this refusal can be shown and recorded without
+		// carrying a document's text.
+		return &SchemaError{Stage: tool.Spec.Key, Violations: violations}
+	}
+	return nil
 }
 
 // verifyArtifacts checks the references an output claims.

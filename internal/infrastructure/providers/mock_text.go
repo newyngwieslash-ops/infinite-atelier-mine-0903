@@ -303,6 +303,18 @@ func mockReplyFor(request providers.TextRequest, scenario MockScenario, call int
 		// Generate's decision.
 		return mockToolCallDocument(request)
 	}
+	// The extraction agent is an EXECUTION agent whose output contract is the event graph
+	// rather than an ExecutionResult, so the layer alone does not decide the shape: the
+	// agent's own schema does. Without this branch the mock answered an extraction run with
+	// an execution-result document, which the extraction contract refused — so the runtime
+	// reported a schema failure and the extraction path could not run against the mock at all.
+	//
+	// That is what the wiring test found: the seam WP-06 recorded was closed in code and
+	// unverifiable, because the deterministic model could not answer the one agent the seam
+	// exists for.
+	if mockIsExtractionAgent(request) {
+		return mockExtractionDocument(request)
+	}
 	switch mockLayerOf(request) {
 	case "supervision":
 		return mockReviewReport(request, true)
@@ -311,6 +323,164 @@ func mockReplyFor(request providers.TextRequest, scenario MockScenario, call int
 	default:
 		return mockExecutionResult(request)
 	}
+}
+
+// mockIndexString renders a small index as a decimal string, so the refs this file builds
+// (e0, e1, e2) do not depend on a formatting package for three characters.
+func mockIndexString(value int) string {
+	if value <= 0 {
+		return "0"
+	}
+	digits := ""
+	for value > 0 {
+		digits = string(rune('0'+value%10)) + digits
+		value /= 10
+	}
+	return digits
+}
+
+// mockIsExtractionAgent reports whether the request is for the event-extraction agent.
+//
+// It reads the SKILL layer's title, which the generator writes as `# script/script.<name>`
+// (and `# production/production.<name>`), so the check names the agent the runtime actually
+// constructed the prompt for rather than guessing from the text. The tool contract would be
+// a second way to tell — the extraction agent is the only one granted
+// story.read_chapter_text — and the skill title is the cheaper one and the one a rename
+// cannot silently break, because the pack generator and the manifest both derive from it.
+func mockIsExtractionAgent(request providers.TextRequest) bool {
+	for _, message := range request.Messages {
+		if strings.Contains(message.Content, "event_extraction") {
+			return true
+		}
+	}
+	return false
+}
+
+// mockExtractionDocument answers an extraction run in the event graph's shape.
+//
+// The names come from the task's own text, by the same positional rule the extraction
+// mock in the extraction package uses (the leading two characters of a Han run), so every
+// name it proposes APPEARS in the chapter and the evidence offsets the service records are
+// real. A mock that invented names would produce a document the service's reference
+// resolution refused, and the test would be asserting about a failure it caused itself.
+func mockExtractionDocument(request providers.TextRequest) string {
+	text := mockTaskText(request)
+	names := mockScanNames(text)
+	entities := make([]any, 0, len(names))
+	for index, name := range names {
+		kind := "character"
+		if index > 0 {
+			kind = "location"
+		}
+		entities = append(entities, map[string]any{
+			"ref": "e" + mockIndexString(index), "type": kind, "canonicalName": name,
+		})
+	}
+	document := map[string]any{
+		"schemaVersion": 1,
+		"summary":       "A deterministic reading of the chapter.",
+		"entities":      entities,
+		"events":        []any{},
+		"relations":     []any{},
+	}
+	if len(entities) == 0 {
+		// A chapter with nothing name-like still produces a valid, empty reading rather than
+		// a document with an unresolved reference.
+		document["summary"] = "A deterministic reading that found nothing to propose."
+		return mockJSON(document)
+	}
+	document["events"] = []any{map[string]any{
+		"ref": "ev1", "name": "Something happens", "eventType": "scene",
+		"storyTimeOrder": 1, "confidence": 0.5,
+		"participants": []any{map[string]any{"entityRef": "e0", "role": "actor"}},
+	}}
+	if len(entities) > 1 {
+		document["relations"] = []any{map[string]any{
+			"sourceRef": "e0", "targetRef": "e1", "relationType": "knows",
+			"validFromEventRef": "ev1", "confidence": 0.4,
+		}}
+	}
+	return mockJSON(document)
+}
+
+// mockTaskText returns the untrusted task layer's content, which is the chapter's text.
+func mockTaskText(request providers.TextRequest) string {
+	for _, message := range request.Messages {
+		if strings.Contains(message.Content, UntrustedOpening) {
+			if start := strings.Index(message.Content, UntrustedOpening); start >= 0 {
+				body := message.Content[start+len(UntrustedOpening):]
+				if end := strings.Index(body, UntrustedClosing); end >= 0 {
+					return strings.TrimSpace(body[:end])
+				}
+				return strings.TrimSpace(body)
+			}
+		}
+	}
+	return ""
+}
+
+// mockScanNames finds name-like spans by a positional rule.
+//
+// It is deliberately crude and stated rather than disguised: the leading two characters of
+// each run of Han script, and the first Latin word of each run of letters. The rule has no
+// notion of MEANING, which is what makes an injected document a real test — the text is
+// scanned like any other text and cannot change what the mock returns.
+func mockScanNames(text string) []string {
+	var names []string
+	seen := map[string]bool{}
+	runes := []rune(text)
+	add := func(name string) bool {
+		if len([]rune(name)) < 2 || seen[name] {
+			return false
+		}
+		seen[name] = true
+		names = append(names, name)
+		return len(names) == 3
+	}
+	for index := 0; index < len(runes); {
+		switch {
+		case isHanRune(runes[index]):
+			start := index
+			for index < len(runes) && isHanRune(runes[index]) {
+				index++
+			}
+			if run := runes[start:index]; len(run) >= 2 {
+				if add(string(run[:2])) {
+					return names
+				}
+			}
+		case isLatinRune(runes[index]):
+			start := index
+			for index < len(runes) && isLatinRune(runes[index]) {
+				index++
+			}
+			if add(string(runes[start:index])) {
+				return names
+			}
+		default:
+			index++
+		}
+	}
+	return names
+}
+
+// UntrustedOpening and UntrustedClosing delimit untrusted content in a prompt.
+//
+// They are the same two tags the runtime's assembler emits, written out here rather than
+// imported because this package must not import the runtime: the adapter and the runtime meet
+// only through the port, and the tags are part of the PROMPT format both ends agree on. A test
+// asserts the two spellings match, so a rename on one side cannot silently break the other.
+const (
+	UntrustedOpening = "<UNTRUSTED_SOURCE_DOCUMENT>"
+	UntrustedClosing = "</UNTRUSTED_SOURCE_DOCUMENT>"
+)
+
+// isHanRune reports whether a rune is in the CJK unified ideographs block.
+func isHanRune(value rune) bool { return value >= 0x4E00 && value <= 0x9FFF }
+
+// isLatinRune reports whether a rune is an ASCII letter.
+func isLatinRune(value rune) bool {
+	return (value >= 'a' && value <= 'z') || (value >= 'A' && value <= 'Z')
 }
 
 // mockLayerOf reads the layer out of the prompt.

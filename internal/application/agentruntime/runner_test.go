@@ -105,6 +105,11 @@ func jsonValidator(string, []byte) ([]Violation, error) {
 	return nil, nil
 }
 
+// acceptingToolArguments accepts every tool call's arguments, which is the shape the
+// repository's other doubles have: a test about the ORDER of what happens is not a test about
+// a tool's input contract, and the tests that ARE about it install their own validator.
+func acceptingToolArguments(string, []byte) ([]Violation, error) { return nil, nil }
+
 // strictValidator refuses any output containing a marker, so a test can drive a
 // refusal on demand.
 func strictValidator(marker string) Validator {
@@ -134,9 +139,9 @@ func newHarness(t *testing.T, replies []string, mutate func(*Options)) *testHarn
 		Tools:    table,
 		Models:   model,
 		Runs:     store,
-		Validate: jsonValidator,
-		Clock:    fixedRuntimeClock{},
-		IDs:      &runtimeIDs{},
+		Validate: jsonValidator, ToolArguments: acceptingToolArguments,
+		Clock: fixedRuntimeClock{},
+		IDs:   &runtimeIDs{},
 	}
 	if mutate != nil {
 		mutate(&options)
@@ -476,7 +481,7 @@ func TestRunReportsACancellationAsItself(t *testing.T) {
 	store := &memoryRunStore{}
 	runtime := New(Options{
 		Registry: mustRegistry(t, table), Tools: table, Models: model, Runs: store,
-		Validate: jsonValidator, Clock: fixedRuntimeClock{}, IDs: &runtimeIDs{},
+		Validate: jsonValidator, ToolArguments: acceptingToolArguments, Clock: fixedRuntimeClock{}, IDs: &runtimeIDs{},
 	})
 	_, err := runtime.Run(context.Background(), invocationFor("script.execution.x"))
 	if err == nil {
@@ -503,7 +508,7 @@ func TestRunReportsAModelFailureWithItsCode(t *testing.T) {
 	store := &memoryRunStore{}
 	runtime := New(Options{
 		Registry: mustRegistry(t, table), Tools: table, Models: model, Runs: store,
-		Validate: jsonValidator, Clock: fixedRuntimeClock{}, IDs: &runtimeIDs{},
+		Validate: jsonValidator, ToolArguments: acceptingToolArguments, Clock: fixedRuntimeClock{}, IDs: &runtimeIDs{},
 	})
 	_, err := runtime.Run(context.Background(), invocationFor("script.execution.x"))
 	if err == nil {
@@ -821,5 +826,109 @@ func TestToolRequestCarriesTheAgentRunID(t *testing.T) {
 	}
 	if captured.AgentRunID == captured.StageRunID {
 		t.Fatal("the run id and the stage id are the same value, so the two fields are redundant")
+	}
+}
+
+// TestToolArgumentsAreValidatedAgainstTheToolSchema is section 6.1's chain, and it exists
+// because the chain's SECOND step was missing.
+//
+// An independent review found it by mutating nothing: it read the code and observed that
+// `Tool.SchemaPath` appeared in exactly one place — the prompt — and was never applied to
+// what a model sent back. So a model could hand a handler any shape at all, and the only
+// thing that refused it was the handler's own struct decoding: a decode error rather than a
+// contract refusal, unable to name the rule, and absent entirely for a handler that tolerated
+// the extra field.
+//
+// AGENT_CONTRACTS section 20 lists "Tool 参数未 Schema 校验" as a RELEASE-BLOCKING condition.
+func TestToolArgumentsAreValidatedAgainstTheToolSchema(t *testing.T) {
+	refusing := func(schemaPath string, raw []byte) ([]Violation, error) {
+		if strings.Contains(string(raw), "BAD") {
+			return []Violation{{Path: "/chapterId", Message: "does not satisfy maxLength"}}, nil
+		}
+		return nil, nil
+	}
+	calls := 0
+	table, err := NewTools([]Tool{
+		{
+			Spec:       agent.ToolSpec{Key: "story.read_events", Mode: agent.ToolRead, Scope: "project", MaxOutputBytes: 1024},
+			SchemaPath: "schemas/agent/tools/story.read_events.json",
+			Handler: func(context.Context, ToolRequest) (any, error) {
+				calls++
+				return map[string]any{"ok": true}, nil
+			},
+		},
+		testTool("script.create_script_version", agent.ToolWrite, 1024),
+		testTool("workflow.read_state", agent.ToolRead, 1024),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	harness := newHarness(t, []string{`{"summary":"x"}`}, func(options *Options) {
+		options.Tools = table
+		options.ToolArguments = refusing
+	})
+	harness.model.toolCalls = [][]ToolCallRequest{{
+		{Key: "story.read_events", Arguments: json.RawMessage(`{"chapterId":"BAD"}`)},
+	}}
+	_, err = harness.runtime.Run(context.Background(), invocationFor("script.execution.x"))
+	if err == nil {
+		t.Fatal("an argument the tool's schema refuses reached the handler")
+	}
+	// The handler never ran, which is the property that matters: the check is before
+	// execution, not a validation of what already happened.
+	if calls != 0 {
+		t.Fatalf("the handler ran %d times despite the schema refusing its arguments", calls)
+	}
+	// The record says WHICH refusal it was, so a reader can tell a bad request from a denial
+	// and from a tool that broke.
+	if len(harness.store.toolCalls) != 1 {
+		t.Fatalf("the store holds %d tool calls", len(harness.store.toolCalls))
+	}
+	call := harness.store.toolCalls[0]
+	if call.Status != agent.ToolCallFailed {
+		t.Fatalf("the call is %q, want failed", call.Status)
+	}
+	if call.ErrorCode != "agent.tool_arguments_invalid" {
+		t.Fatalf("the call records %q", call.ErrorCode)
+	}
+	// And a call whose arguments DO satisfy the schema still runs, so the check is a filter
+	// rather than a wall.
+	harness2 := newHarness(t, []string{`{"summary":"x"}`}, func(options *Options) {
+		options.Tools = table
+		options.ToolArguments = refusing
+	})
+	harness2.model.toolCalls = [][]ToolCallRequest{{
+		{Key: "story.read_events", Arguments: json.RawMessage(`{"chapterId":"c1"}`)},
+	}}
+	if _, err := harness2.runtime.Run(context.Background(), invocationFor("script.execution.x")); err != nil {
+		t.Fatalf("a valid tool call was refused: %v", err)
+	}
+}
+
+// TestRuntimeWithoutAToolArgumentValidatorRefusesToRunATool is the fail-closed direction.
+//
+// A runtime that cannot check an argument must not pass it to a handler that will act on it,
+// which is the same rule ArtifactVerifier follows. The refusal is an unavailability rather
+// than a per-call failure, because the defect is in the composition and no argument would fix
+// it.
+func TestRuntimeWithoutAToolArgumentValidatorRefusesToRunATool(t *testing.T) {
+	harness := newHarness(t, []string{`{"summary":"x"}`}, func(options *Options) {
+		options.ToolArguments = nil
+	})
+	// The tool must be one the EXECUTION layer may call, or the denial would be the ACL's
+	// and the test would be asserting about a different refusal — which is what the first
+	// version of this test did with a decision-layer tool.
+	harness.model.toolCalls = [][]ToolCallRequest{{
+		{Key: "story.read_events", Arguments: json.RawMessage(`{}`)},
+	}}
+	_, err := harness.runtime.Run(context.Background(), invocationFor("script.execution.x"))
+	if err == nil {
+		t.Fatal("a runtime with no argument validator ran a tool")
+	}
+	if len(harness.store.toolCalls) != 1 {
+		t.Fatalf("the store holds %d tool calls", len(harness.store.toolCalls))
+	}
+	if harness.store.toolCalls[0].Status != agent.ToolCallFailed {
+		t.Fatalf("the call is %q, want failed", harness.store.toolCalls[0].Status)
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -63,6 +64,10 @@ type canary struct {
 	script   *appscript.Service
 	workflow *appworkflow.Service
 	ids      canaryIDs
+	// chapters holds the text of the chapters this fixture seeded, keyed by chapter id. The
+	// production reader walks to a file store; a fixture keeps the text in memory, which is
+	// what makes this test independent of the object store.
+	chapters map[string]string
 }
 
 // canaryIDs are the fixture's identifiers.
@@ -155,9 +160,9 @@ func newCanary(t *testing.T) *canary {
 	mock := infraproviders.NewMockTextAdapter()
 	runtime := agentruntime.New(agentruntime.Options{
 		Registry: assembly.Registry(), Tools: tools,
-		Models:    agentruntime.NewModelBridge(canaryModel{adapter: mock}),
-		Runs:      repository,
-		Validate:  canaryValidate,
+		Models:   agentruntime.NewModelBridge(canaryModel{adapter: mock}),
+		Runs:     repository,
+		Validate: canaryValidate, ToolArguments: canaryValidate,
 		Artifacts: NewArtifactVerifier(db),
 		Clock:     clock, IDs: generator,
 	})
@@ -170,7 +175,7 @@ func newCanary(t *testing.T) *canary {
 		db: db, repo: repository, runtime: runtime, engine: engine,
 		assembly: assembly, tools: tools, mock: mock,
 		story: storyService, script: scriptService, workflow: workflowService,
-		ids: ids,
+		ids: ids, chapters: map[string]string{},
 	}
 }
 
@@ -893,7 +898,7 @@ func TestCanaryStopsAtItsToolCallBudget(t *testing.T) {
 	runtime := agentruntime.New(agentruntime.Options{
 		Registry: canary.assembly.Registry(), Tools: canary.tools,
 		Models: scripted, Runs: canary.repo,
-		Validate:  canaryValidate,
+		Validate: canaryValidate, ToolArguments: canaryValidate,
 		Artifacts: NewArtifactVerifier(canary.db),
 		Clock:     canaryClock{}, IDs: id.NewGenerator(),
 	})
@@ -960,4 +965,187 @@ func mustJSON(t *testing.T, value any) []byte {
 		t.Fatalf("rendering JSON: %v", err)
 	}
 	return encoded
+}
+
+// TestCanaryExtractionIsDrivenByTheRuntime is the seam WP-06 recorded, closed and verified.
+//
+// WP-06 shipped its `Extractor` port with NO implementation and a note saying WP-07 would
+// supply one. WP-07 did — and an independent review found that the implementation had no
+// CALL SITE in a production build: `composeAgents` built the runtime-backed extraction service
+// and `app.go` never attached it, so the extraction binding went on using the drama stack's
+// extractor-less service and every extraction refused with "unavailable". A compile-time
+// assertion proved the port was SATISFIED; nothing proved it was USED.
+//
+// This test drives the real service with the runtime behind it, so the wiring is asserted
+// rather than assumed. It is the extraction path end to end: a chapter's text is read, the
+// runtime runs the extraction agent against the mock, the document validates against the
+// embedded contract, and the candidates are written.
+func TestCanaryExtractionIsDrivenByTheRuntime(t *testing.T) {
+	ctx := context.Background()
+	canary := newCanary(t)
+
+	// The chapter's text, through the reader the runtime's extraction agent uses. It is the
+	// canary's own tiny document rather than the 32k-character fixture, because what this test
+	// asserts is the WIRING rather than the extraction quality — that has its own tests in the
+	// extraction package, over the real fixture.
+	const text = "白掌柜在望江楼三层低声念了一遍那个名字。雾气正从河面漫上来。"
+	chapter := canary.seedChapter(t, text)
+
+	// The extraction service with the runtime as its Extractor, which is what app.go now
+	// attaches. Built the same way the composition root builds it.
+	service := appextraction.NewService(appextraction.Options{
+		Reader:    canary.chapterReader(t, chapter),
+		Story:     canary.story,
+		Extractor: canaryExtractor{wiring: canary},
+		Clock:     canaryClock{},
+		IDs:       id.NewGenerator(),
+	})
+	if !service.Available() {
+		t.Fatal("the extraction service reports unavailable with the runtime behind it")
+	}
+	result, err := service.ExtractChapterEventCandidates(ctx, chapter)
+	if err != nil {
+		t.Fatalf("extraction: %v", err)
+	}
+	// The write happened: the service resolved the model's local refs and stored candidates.
+	if result.Entities == 0 {
+		t.Fatal("the extraction wrote no entities, so the runtime produced nothing usable")
+	}
+	// And the run behind it is recorded, which is section 16's requirement and the evidence
+	// that the RUNTIME did the reading rather than some other adapter.
+	var runCount int
+	if err := canary.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM agent_runs WHERE agent_key = 'script.execution.event_extraction'`).Scan(&runCount); err != nil {
+		t.Fatalf("counting the extraction runs: %v", err)
+	}
+	if runCount != 1 {
+		t.Fatalf("the extraction produced %d agent runs, want 1", runCount)
+	}
+	// The run is at the execution layer and succeeded.
+	var status, layer string
+	if err := canary.db.QueryRowContext(ctx,
+		`SELECT status, agent_layer FROM agent_runs WHERE agent_key = 'script.execution.event_extraction'`).
+		Scan(&status, &layer); err != nil {
+		t.Fatalf("reading the extraction run: %v", err)
+	}
+	if status != "succeeded" || layer != "execution" {
+		t.Fatalf("the extraction run is %q at layer %q", status, layer)
+	}
+}
+
+// canaryExtractor drives the extraction agent, mirroring agent_wiring.go's extractionAgent.
+//
+// It is written out rather than reusing the production type because that type lives in package
+// main, which this test cannot import. The duplication is the cost of testing a composition
+// root from the package below it, and it is small: the interesting behaviour — reading the
+// chapter, running the agent, returning the validated document — is the agent runtime's, and
+// this only wires it.
+type canaryExtractor struct {
+	wiring *canary
+}
+
+func (e canaryExtractor) Extract(ctx context.Context, request appextraction.Request) ([]byte, error) {
+	spec, ok := e.wiring.assembly.Registry().Lookup("script.execution.event_extraction")
+	if !ok {
+		return nil, errors.New("the extraction agent is not registered")
+	}
+	invocation := agentruntime.Invocation{
+		AgentKey: spec.Key, ProjectID: request.ProjectID,
+		Task: request.Text, TaskIsUntrusted: true,
+	}
+	invocation.Skill, _ = e.wiring.assembly.SkillDocument(spec.Key)
+	invocation.SkillVersion, _ = e.wiring.assembly.SkillVersionOf(spec.Key)
+	outcome, err := e.wiring.runtime.Run(ctx, invocation)
+	if err != nil {
+		return nil, err
+	}
+	return []byte(outcome.Output), nil
+}
+
+// seedChapter writes a document, a version and a chapter holding text, and returns the
+// chapter's id. It also registers the text with the canary's reader.
+func (c *canary) seedChapter(t *testing.T, text string) string {
+	t.Helper()
+	ctx := context.Background()
+	ids := struct{ document, version, chapter string }{
+		document: "canary-extract-document", version: "canary-extract-version", chapter: "canary-extract-chapter",
+	}
+	statements := []struct {
+		statement string
+		args      []any
+	}{
+		{`INSERT INTO source_documents (id, project_id, document_type, name, status, created_at, updated_at, revision)
+		  VALUES (?, ?, 'novel', 'Extraction source', 'active', ?, ?, 1)`,
+			[]any{ids.document, c.ids.project, canaryStamp, canaryStamp}},
+		{`INSERT INTO source_document_versions (id, source_document_id, version_number,
+		   normalized_text_file_id, content_hash, source_hash, char_count, created_at)
+		  VALUES (?, ?, 1, 'canary-extract-file', 'canary-extract-hash', 'canary-extract-source', %d, ?)`,
+			[]any{ids.version, ids.document, len([]rune(text)), canaryStamp}},
+	}
+	for _, entry := range statements {
+		// The char count is interpolated rather than bound because the statement is a literal
+		// with one %d placeholder: the count comes from the fixture's own text, not from a caller.
+		statement := entry.statement
+		if strings.Contains(statement, "%d") {
+			statement = fmt.Sprintf(statement, len([]rune(text)))
+		}
+		if _, err := c.db.ExecContext(ctx, statement, entry.args...); err != nil {
+			t.Fatalf("seeding the extraction document: %v", err)
+		}
+	}
+	// The chapter's offsets index the VERSION's text, and this text begins at zero, so the
+	// end offset is the rune count.
+	if _, err := c.db.ExecContext(ctx, fmt.Sprintf(`INSERT INTO chapters
+		(id, source_document_version_id, ordinal, title, start_offset, end_offset, source_kind, created_at, updated_at)
+		VALUES (?, ?, 1, 'Chapter One', 0, %d, 'heading', ?, ?)`, len([]rune(text))),
+		ids.chapter, ids.version, canaryStamp, canaryStamp); err != nil {
+		t.Fatalf("seeding the extraction chapter: %v", err)
+	}
+	c.chapters[ids.chapter] = text
+	return ids.chapter
+}
+
+// chapterReader returns a reader over the canary's seeded chapters.
+func (c *canary) chapterReader(t *testing.T, chapterID string) appextraction.ChapterReader {
+	t.Helper()
+	return canaryChapterReader{canary: c}
+}
+
+// canaryChapterReader reads a chapter's text from the canary's own store.
+type canaryChapterReader struct {
+	canary *canary
+}
+
+func (r canaryChapterReader) ChapterWithText(ctx context.Context, chapterID string) (appextraction.ChapterText, error) {
+	chapter, err := r.canary.story.GetChapter(ctx, chapterID)
+	if err != nil {
+		return appextraction.ChapterText{}, err
+	}
+	version, err := r.canary.story.GetSourceDocumentVersion(ctx, chapter.SourceDocumentVersionID)
+	if err != nil {
+		return appextraction.ChapterText{}, err
+	}
+	document, err := r.canary.story.GetSourceDocument(ctx, version.SourceDocumentID)
+	if err != nil {
+		return appextraction.ChapterText{}, err
+	}
+	text, ok := r.canary.chapters[chapterID]
+	if !ok {
+		return appextraction.ChapterText{}, errors.New("this chapter has no text in the fixture")
+	}
+	runes := []rune(text)
+	start, end := chapter.StartOffset, chapter.EndOffset
+	if start < 0 {
+		start = 0
+	}
+	if end > len(runes) || end <= start {
+		end = len(runes)
+	}
+	return appextraction.ChapterText{
+		Chapter: chapter, ProjectID: document.ProjectID,
+		SourceDocumentVersionID: version.ID,
+		Text:                    string(runes[start:end]),
+		BaseOffset:              start,
+		Language:                "zh",
+	}, nil
 }

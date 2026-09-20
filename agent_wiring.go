@@ -132,10 +132,14 @@ func composeAgents(deps agentDeps) *agentWiring {
 		// The real validator: every agent's output is checked against the contract its
 		// manifest named, which is what makes AC-AGENT-002 a property of the runtime
 		// rather than of a test that happens to call the validator.
-		Validate:  validateWith(appvalidation.Against),
-		Artifacts: database.NewArtifactVerifier(connection),
-		Clock:     clock,
-		IDs:       ids,
+		Validate: validateWith(appvalidation.Against),
+		// Section 6.1 puts the tool schema check AFTER the ACL and before the handler, and
+		// this is it. Without it a model could hand a handler any shape at all: the schema
+		// path travelled into the prompt and was never applied to what came back.
+		ToolArguments: validateToolArgumentsWith(appvalidation.Against),
+		Artifacts:     database.NewArtifactVerifier(connection),
+		Clock:         clock,
+		IDs:           ids,
 	})
 	return &agentWiring{
 		runtime: runtime, assembly: assembly, tools: tools,
@@ -516,16 +520,35 @@ func (g *textGenerator) choice(ctx context.Context, named string) (string, error
 // function is where that is noticed.
 func validateWith(against func(string, []byte) ([]appvalidation.Violation, error)) agentruntime.Validator {
 	return func(schemaPath string, raw []byte) ([]agentruntime.Violation, error) {
-		violations, err := against(schemaPath, raw)
-		if err != nil {
-			return nil, err
-		}
-		out := make([]agentruntime.Violation, 0, len(violations))
-		for _, violation := range violations {
-			out = append(out, agentruntime.Violation{Path: violation.Path, Message: violation.Message})
-		}
-		return out, nil
+		return convertViolations(against, schemaPath, raw)
 	}
+}
+
+// validateToolArgumentsWith adapts the validation package to the runtime's
+// ToolArgumentValidator type.
+//
+// It exists separately from validateWith because the two are DISTINCT named function types in
+// the runtime: one validates an agent's output document and one validates a tool call's
+// arguments, and section 6.1 makes them different steps of the chain. Collapsing them into one
+// type would let a caller wire the wrong one at a call site the compiler could not question —
+// which is exactly the class of mistake the separation catches.
+func validateToolArgumentsWith(against func(string, []byte) ([]appvalidation.Violation, error)) agentruntime.ToolArgumentValidator {
+	return func(schemaPath string, raw []byte) ([]agentruntime.Violation, error) {
+		return convertViolations(against, schemaPath, raw)
+	}
+}
+
+// convertViolations runs the validator and translates its violations.
+func convertViolations(against func(string, []byte) ([]appvalidation.Violation, error), schemaPath string, raw []byte) ([]agentruntime.Violation, error) {
+	violations, err := against(schemaPath, raw)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]agentruntime.Violation, 0, len(violations))
+	for _, violation := range violations {
+		out = append(out, agentruntime.Violation{Path: violation.Path, Message: violation.Message})
+	}
+	return out, nil
 }
 
 // Compile-time proof that the adapter satisfies the bridge's port and that the extraction

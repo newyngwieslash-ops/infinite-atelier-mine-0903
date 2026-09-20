@@ -213,6 +213,23 @@ func (a *app) startup(ctx context.Context) {
 							agentruntime.NewInspector(database.NewAgentRepository(handle.SQL())))
 						desktop.AttachAgentRegistry(a.agentBinding, agentStack.assembly.Registry())
 					}
+					// The extraction service is REBUILT with the runtime as its Extractor and
+					// re-attached, which is what closes the seam WP-06 recorded: "如果 Agent
+					// Runtime 尚未完成，Event Extraction 先通过明确的 Application Service +
+					// Mock/Provider 适配实现，WP-07 再接入统一 Runtime".
+					//
+					// Composing it and not attaching it was the defect an independent review
+					// found: the drama stack's extractor-less service stayed on the binding, so
+					// the runtime's Extractor implementation had no call site in a production
+					// build — the "interface with no real path" AGENTS section 12 refuses. The
+					// compile-time assertion proved the port was SATISFIED, not that anything
+					// used it.
+					//
+					// The attachment goes through the drama stack's own binding, which is the
+					// object the frontend already calls.
+					if a.importBinding != nil {
+						desktop.AttachExtraction(a.importBinding, ctx, agentStack.ExtractionService(dramaStack))
+					}
 					a.agentStack = agentStack
 				}
 			}

@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	agentruntime "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/agentruntime"
+
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/providers"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/provider"
 
@@ -599,3 +601,44 @@ type collectingSink struct {
 func (s *collectingSink) OnDelta(delta string)        { s.content += delta }
 func (s *collectingSink) OnDone(providers.TextResult) { s.done = true }
 func (s *collectingSink) OnError(err error)           { s.err = err }
+
+// TestUntrustedTagsMatchTheRuntimeAssembler pins the one string this package duplicates.
+//
+// The mock reads the untrusted marker out of a prompt to find the chapter's text, and the
+// runtime's assembler is what writes it. The two constants are separate by design — this
+// package must not import the runtime — so the agreement is asserted here rather than assumed,
+// because a rename on one side would silently empty the mock's task text and the extraction
+// branch would propose nothing.
+func TestUntrustedTagsMatchTheRuntimeAssembler(t *testing.T) {
+	if UntrustedOpening != agentruntime.UntrustedOpen {
+		t.Fatalf("the opening tag is %q here and %q in the assembler", UntrustedOpening, agentruntime.UntrustedOpen)
+	}
+	if UntrustedClosing != agentruntime.UntrustedClose {
+		t.Fatalf("the closing tag is %q here and %q in the assembler", UntrustedClosing, agentruntime.UntrustedClose)
+	}
+}
+
+// TestMockAnswersTheExtractionContract covers the branch the wiring test needed.
+//
+// The extraction agent's output contract is the event graph's, not an ExecutionResult's, so the
+// mock must answer that agent in that shape. Its absence was invisible until something drove
+// the extraction path through the runtime: the contract refused the reply, and the runtime
+// reported a schema failure that looked like a model problem rather than a mock gap.
+func TestMockAnswersTheExtractionContract(t *testing.T) {
+	adapter := NewMockTextAdapter()
+	request := mockRequest("execution")
+	// The skill layer names the agent, which is how the mock tells the extraction agent from
+	// any other execution agent.
+	request.Messages = append(request.Messages, providers.TextMessage{
+		Role: "system", Content: "# script/script.execution.event_extraction\n\n# Role\n\nRead a chapter.",
+	})
+	request.Messages = append(request.Messages, providers.TextMessage{
+		Role: "user", Content: "This step's input, which may be document text:\n" +
+			UntrustedOpening + "\n白掌柜在望江楼三层低声念了一遍那个名字。\n" + UntrustedClosing,
+	})
+	result, err := adapter.Generate(context.Background(), request)
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	checkAgainstSchema(t, schemas.AgentEventExtractionPath, result.Content)
+}
