@@ -666,3 +666,46 @@ func (s *Service) ListShots(ctx context.Context, sceneID string) ([]scriptdomain
 	}
 	return s.repository.ListShots(ctx, sceneID)
 }
+
+// GetStorySkeletonVersion returns one skeleton version by id.
+//
+// It is a READ, and it exists because the agent runtime's tools need it: an
+// execution agent creating a new version must be able to read what the previous one
+// said, and a supervisor must be able to load the artifact it is reviewing rather
+// than reading the executor's summary of it (AGENT_CONTRACTS section 5.1's rule that
+// a reviewer loads the artifact with its own tools).
+func (s *Service) GetStorySkeletonVersion(ctx context.Context, id string) (scriptdomain.StorySkeletonVersion, error) {
+	if !s.Available() {
+		return scriptdomain.StorySkeletonVersion{}, storageFailure()
+	}
+	return s.repository.GetStorySkeletonVersion(ctx, id)
+}
+
+// GetAdaptationStrategyVersion returns one strategy version by id.
+func (s *Service) GetAdaptationStrategyVersion(ctx context.Context, id string) (scriptdomain.AdaptationStrategyVersion, error) {
+	if !s.Available() {
+		return scriptdomain.AdaptationStrategyVersion{}, storageFailure()
+	}
+	return s.repository.GetAdaptationStrategyVersion(ctx, id)
+}
+
+// GetScriptVersion returns one script version by id, and it reads the version
+// whatever its approval status: a supervisor reviewing a draft needs the draft, and
+// a read that silently returned only approved versions would make the review look at
+// something other than what it was asked about.
+func (s *Service) GetScriptVersion(ctx context.Context, id string) (scriptdomain.ScriptVersion, error) {
+	if !s.Available() {
+		return scriptdomain.ScriptVersion{}, storageFailure()
+	}
+	return s.repository.GetScriptVersion(ctx, id)
+}
+
+// GetScript returns one script by id, and it is the read a version needs to reach its
+// episode: a ScriptVersion carries a ScriptID and the episode is the script's, so a
+// caller checking which project an artifact belongs to walks version → script → episode.
+func (s *Service) GetScript(ctx context.Context, id string) (scriptdomain.Script, error) {
+	if !s.Available() {
+		return scriptdomain.Script{}, storageFailure()
+	}
+	return s.repository.GetScript(ctx, id)
+}

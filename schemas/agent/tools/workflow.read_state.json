@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://infinite-atelier.invalid/schemas/agent/tools/workflow.read_state.json",
+  "title": "workflow.read_state input",
+  "description": "Returns the workflow run's stages and their statuses, read from the database. This is the fact every decision is checked against; a model does not get to assert it.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "workflowRunId": {
+      "type": "string",
+      "description": "The workflow run to read. Empty means the run the caller is part of.",
+      "minLength": 1,
+      "maxLength": 200
+    }
+  }
+}

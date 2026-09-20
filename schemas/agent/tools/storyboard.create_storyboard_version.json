@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://infinite-atelier.invalid/schemas/agent/tools/storyboard.create_storyboard_version.json",
+  "title": "storyboard.create_storyboard_version input",
+  "description": "Appends a storyboard version for an episode. Section 9.3 makes the script and the director plan FIELDS of the version rather than provenance, so both are required and both must belong to this episode.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "episodeId": {
+      "type": "string",
+      "description": "The episode this version belongs to.",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "scriptVersionId": {
+      "type": "string",
+      "description": "The script version this board was built from.",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "directorPlanVersionId": {
+      "type": "string",
+      "description": "The director plan version this board follows.",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "basedOnVersionId": {
+      "type": "string",
+      "description": "The version this one revises, or empty for the first.",
+      "maxLength": 200
+    },
+    "changeReason": {
+      "type": "string",
+      "description": "Why this version exists, in one sentence.",
+      "maxLength": 500
+    }
+  },
+  "required": [
+    "episodeId",
+    "scriptVersionId",
+    "directorPlanVersionId"
+  ]
+}

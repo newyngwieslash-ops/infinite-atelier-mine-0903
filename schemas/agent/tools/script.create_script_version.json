@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://infinite-atelier.invalid/schemas/agent/tools/script.create_script_version.json",
+  "title": "script.create_script_version input",
+  "description": "Appends a script version for an episode's script. It is a draft, and the artifacts it cites must exist: an invented id fails the stage.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "episodeId": {
+      "type": "string",
+      "description": "The episode whose script this version belongs to.",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "basedOnVersionId": {
+      "type": "string",
+      "description": "The version this one revises, or empty for the first.",
+      "maxLength": 200
+    },
+    "storySkeletonVersionId": {
+      "type": "string",
+      "description": "The skeleton version this script was written from.",
+      "maxLength": 200
+    },
+    "adaptationStrategyVersionId": {
+      "type": "string",
+      "description": "The strategy version this script followed.",
+      "maxLength": 200
+    },
+    "summary": {
+      "type": "string",
+      "description": "What this version contains, in a sentence or two.",
+      "maxLength": 4000
+    },
+    "estimatedDurationSeconds": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 36000
+    },
+    "changeReason": {
+      "type": "string",
+      "description": "Why this version exists, in one sentence.",
+      "maxLength": 500
+    }
+  },
+  "required": [
+    "episodeId"
+  ]
+}

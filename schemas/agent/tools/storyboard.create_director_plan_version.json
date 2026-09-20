@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://infinite-atelier.invalid/schemas/agent/tools/storyboard.create_director_plan_version.json",
+  "title": "storyboard.create_director_plan_version input",
+  "description": "Appends a director plan version for an episode. It is a draft, and the script version it cites must belong to the same episode.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "episodeId": {
+      "type": "string",
+      "description": "The episode this version belongs to.",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "scriptVersionId": {
+      "type": "string",
+      "description": "The script version this plan was written against.",
+      "maxLength": 200
+    },
+    "basedOnVersionId": {
+      "type": "string",
+      "description": "The version this one revises, or empty for the first.",
+      "maxLength": 200
+    },
+    "visualRhythm": {
+      "type": "string",
+      "description": "The visual rhythm the episode should have.",
+      "maxLength": 4000
+    },
+    "cameraLanguage": {
+      "type": "string",
+      "description": "The camera language for the episode.",
+      "maxLength": 4000
+    },
+    "colorLighting": {
+      "type": "string",
+      "description": "The colour and lighting direction.",
+      "maxLength": 4000
+    },
+    "staging": {
+      "type": "string",
+      "description": "How scenes are staged.",
+      "maxLength": 4000
+    },
+    "continuityRules": {
+      "type": "string",
+      "description": "Continuity rules this episode must respect.",
+      "maxLength": 4000
+    },
+    "audioDirection": {
+      "type": "string",
+      "description": "The audio direction.",
+      "maxLength": 4000
+    },
+    "changeReason": {
+      "type": "string",
+      "description": "Why this version exists, in one sentence.",
+      "maxLength": 500
+    }
+  },
+  "required": [
+    "episodeId"
+  ]
+}

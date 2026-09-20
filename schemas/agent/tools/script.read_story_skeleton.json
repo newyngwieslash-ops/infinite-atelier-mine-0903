@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://infinite-atelier.invalid/schemas/agent/tools/script.read_story_skeleton.json",
+  "title": "script.read_story_skeleton input",
+  "description": "Returns one skeleton version and its approval status. A supervisor loads the artifact itself rather than reading the executor's summary of it.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "versionId": {
+      "type": "string",
+      "description": "The skeleton version to read.",
+      "minLength": 1,
+      "maxLength": 200
+    }
+  },
+  "required": [
+    "versionId"
+  ]
+}

@@ -570,6 +570,39 @@ func (s *Service) SubmitGateDecision(ctx context.Context, request SubmitGateDeci
 	return record, nil
 }
 
+// GetRun returns one workflow run.
+//
+// It exists because WP-07's engine drives transitions through this service, and its
+// StageTransitioner interface loads a run's state before deciding anything. The gap
+// was found by trying to write the compile-time assertion that the REAL service
+// satisfies that interface: before this method nothing could, so the engine could only
+// ever have been driven by a test double — which is the "interface with no real path"
+// AGENTS section 12 forbids.
+func (s *Service) GetRun(ctx context.Context, id string) (workflow.WorkflowRun, error) {
+	if !s.Available() {
+		return workflow.WorkflowRun{}, storageFailure()
+	}
+	if strings.TrimSpace(id) == "" {
+		return workflow.WorkflowRun{}, workflow.InvalidError("A workflow run is required.")
+	}
+	return s.runs.GetRun(ctx, id)
+}
+
+// GetStage returns one stage attempt.
+//
+// It is the read the runtime's stage-scope checks need: a tool handed a stage
+// identifier must establish which run that stage belongs to before it can decide
+// whether the caller may touch it.
+func (s *Service) GetStage(ctx context.Context, id string) (workflow.StageRun, error) {
+	if !s.Available() {
+		return workflow.StageRun{}, storageFailure()
+	}
+	if strings.TrimSpace(id) == "" {
+		return workflow.StageRun{}, workflow.InvalidError("A stage run is required.")
+	}
+	return s.stages.GetStage(ctx, id)
+}
+
 // ListRuns returns a project's runs newest first.
 func (s *Service) ListRuns(ctx context.Context, projectID string) ([]workflow.WorkflowRun, error) {
 	if !s.Available() {

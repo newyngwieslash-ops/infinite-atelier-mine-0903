@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://infinite-atelier.invalid/schemas/agent/tools/story.read_rules.json",
+  "title": "story.read_rules input",
+  "description": "Returns the project's rules and facts that a person approved, with their strength. Unapproved candidates are not returned: they are not facts yet.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "category": {
+      "type": "string",
+      "description": "Narrow the list to one rule category. Empty means every category.",
+      "maxLength": 200
+    }
+  }
+}

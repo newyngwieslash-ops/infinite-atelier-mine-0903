@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://infinite-atelier.invalid/schemas/agent/tools/memory.deep_recall.json",
+  "title": "memory.deep_recall input",
+  "description": "Returns recent messages for the current scope. WP-07 implements the RECENT window; semantic recall with a threshold and a rerank is WP-10's. The scope is the run's and cannot be widened by an argument.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "limit": {
+      "type": "integer",
+      "description": "How many messages to recall.",
+      "minimum": 1,
+      "maximum": 200
+    },
+    "excludeMessageId": {
+      "type": "string",
+      "description": "The message being answered, so it does not recall itself. Empty recalls everything in scope.",
+      "maxLength": 200
+    }
+  }
+}

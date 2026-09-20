@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://infinite-atelier.invalid/schemas/agent/tools/script.create_story_skeleton_version.json",
+  "title": "script.create_story_skeleton_version input",
+  "description": "Appends a skeleton version for an episode. The version is a draft: this tool cannot approve it, which is the user's gate.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "episodeId": {
+      "type": "string",
+      "description": "The episode this version belongs to.",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "basedOnVersionId": {
+      "type": "string",
+      "description": "The version this one revises, or empty for the first.",
+      "maxLength": 200
+    },
+    "openingHook": {
+      "type": "string",
+      "description": "The opening hook.",
+      "maxLength": 2000
+    },
+    "coreConflict": {
+      "type": "string",
+      "description": "The core conflict.",
+      "maxLength": 2000
+    },
+    "turningPointsJson": {
+      "type": "string",
+      "description": "The turning points, as a JSON array.",
+      "maxLength": 8000
+    },
+    "climax": {
+      "type": "string",
+      "description": "The climax.",
+      "maxLength": 2000
+    },
+    "endingHook": {
+      "type": "string",
+      "description": "The ending hook.",
+      "maxLength": 2000
+    },
+    "estimatedDurationSeconds": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 36000
+    },
+    "changeReason": {
+      "type": "string",
+      "description": "Why this version exists, in one sentence.",
+      "maxLength": 500
+    }
+  },
+  "required": [
+    "episodeId"
+  ]
+}

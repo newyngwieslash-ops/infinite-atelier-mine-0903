@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://infinite-atelier.invalid/schemas/agent/tools/script.read_script_version.json",
+  "title": "script.read_script_version input",
+  "description": "Returns one script version, whatever its approval status: a reviewer of a draft needs the draft.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "versionId": {
+      "type": "string",
+      "description": "The script version to read.",
+      "minLength": 1,
+      "maxLength": 200
+    }
+  },
+  "required": [
+    "versionId"
+  ]
+}

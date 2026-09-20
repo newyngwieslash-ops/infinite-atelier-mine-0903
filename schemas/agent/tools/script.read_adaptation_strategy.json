@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://infinite-atelier.invalid/schemas/agent/tools/script.read_adaptation_strategy.json",
+  "title": "script.read_adaptation_strategy input",
+  "description": "Returns one strategy version and its approval status.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "versionId": {
+      "type": "string",
+      "description": "The strategy version to read.",
+      "minLength": 1,
+      "maxLength": 200
+    }
+  },
+  "required": [
+    "versionId"
+  ]
+}

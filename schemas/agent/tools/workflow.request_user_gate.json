@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://infinite-atelier.invalid/schemas/agent/tools/workflow.request_user_gate.json",
+  "title": "workflow.request_user_gate input",
+  "description": "Parks a stage at a user quality gate. It moves the stage to where a person is asked and does not decide for them: approving, fixing or redoing is the user's command and is not reachable from a tool.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "stageRunId": {
+      "type": "string",
+      "description": "The stage attempt to park. Empty means the stage the caller is part of.",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "reason": {
+      "type": "string",
+      "description": "Why a person is needed, in one short sentence.",
+      "maxLength": 500
+    }
+  },
+  "required": [
+    "reason"
+  ]
+}

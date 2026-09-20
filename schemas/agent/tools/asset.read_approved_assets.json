@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://infinite-atelier.invalid/schemas/agent/tools/asset.read_approved_assets.json",
+  "title": "asset.read_approved_assets input",
+  "description": "Returns the project's APPROVED asset versions, with their types and file references. Candidate versions are not returned: an unapproved asset is not a fact about the project.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "types": {
+      "type": "array",
+      "description": "Narrow the list to these asset types. Empty means every type.",
+      "maxItems": 20,
+      "items": {
+        "type": "string",
+        "maxLength": 60
+      }
+    },
+    "limit": {
+      "type": "integer",
+      "description": "How many assets to return.",
+      "minimum": 1,
+      "maximum": 200
+    }
+  }
+}

@@ -454,3 +454,36 @@ func (s *Service) ListPanels(ctx context.Context, storyboardItemID string) ([]st
 	}
 	return s.panels.ListPanelVersions(ctx, storyboardItemID)
 }
+
+// GetDirectorPlanVersion returns one plan version by id.
+func (s *Service) GetDirectorPlanVersion(ctx context.Context, id string) (storyboard.DirectorPlanVersion, error) {
+	if !s.Available() {
+		return storyboard.DirectorPlanVersion{}, storageFailure()
+	}
+	return s.directorPlans.GetDirectorPlanVersion(ctx, id)
+}
+
+// GetStoryboardVersion returns one storyboard version by id.
+func (s *Service) GetStoryboardVersion(ctx context.Context, id string) (storyboard.StoryboardVersion, error) {
+	if !s.Available() {
+		return storyboard.StoryboardVersion{}, storageFailure()
+	}
+	return s.storyboards.GetStoryboardVersion(ctx, id)
+}
+
+// GetStoryboard returns one storyboard identity by id.
+func (s *Service) GetStoryboard(ctx context.Context, id string) (storyboard.Storyboard, error) {
+	if !s.Available() {
+		return storyboard.Storyboard{}, storageFailure()
+	}
+	return s.storyboards.GetStoryboard(ctx, id)
+}
+
+// GetStoryboardItem returns one item by id, which is the read a panel command needs to
+// find the version and, through it, the episode a caller must be authorized for.
+func (s *Service) GetStoryboardItem(ctx context.Context, id string) (storyboard.StoryboardItem, error) {
+	if !s.Available() {
+		return storyboard.StoryboardItem{}, storageFailure()
+	}
+	return s.items.GetStoryboardItem(ctx, id)
+}

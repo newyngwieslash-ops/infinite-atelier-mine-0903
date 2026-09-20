@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://infinite-atelier.invalid/schemas/agent/tools/storyboard.create_storyboard_panel_version.json",
+  "title": "storyboard.create_storyboard_panel_version input",
+  "description": "Appends a panel version for one storyboard item. It records what a panel should show; it does not generate an image, which is a Job rather than an agent's tool.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "itemId": {
+      "type": "string",
+      "description": "The storyboard item this panel belongs to.",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "prompt": {
+      "type": "string",
+      "description": "What the panel depicts, as a generation prompt.",
+      "maxLength": 4000
+    },
+    "negativePrompt": {
+      "type": "string",
+      "description": "What the panel must not contain.",
+      "maxLength": 2000
+    },
+    "basedOnVersionId": {
+      "type": "string",
+      "description": "The panel version this one revises, or empty for the first.",
+      "maxLength": 200
+    },
+    "changeReason": {
+      "type": "string",
+      "description": "Why this version exists, in one sentence.",
+      "maxLength": 500
+    }
+  },
+  "required": [
+    "itemId"
+  ]
+}

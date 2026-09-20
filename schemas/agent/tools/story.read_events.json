@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://infinite-atelier.invalid/schemas/agent/tools/story.read_events.json",
+  "title": "story.read_events input",
+  "description": "Returns a project's story events in story order. Bounded and paginated: a whole novel does not travel through a tool result (AGENT_CONTRACTS section 6.4).",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "chapterId": {
+      "type": "string",
+      "description": "Narrow the list to one chapter. Empty means the whole project.",
+      "maxLength": 200
+    },
+    "status": {
+      "type": "string",
+      "description": "Filter by fact status. Empty means every status.",
+      "enum": [
+        "",
+        "candidate",
+        "accepted",
+        "rejected",
+        "locked"
+      ]
+    },
+    "limit": {
+      "type": "integer",
+      "description": "How many events to return.",
+      "minimum": 1,
+      "maximum": 200
+    }
+  }
+}

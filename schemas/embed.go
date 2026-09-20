@@ -22,7 +22,7 @@ import (
 
 // files holds every schema in this directory tree.
 //
-//go:embed agent/*.json
+//go:embed agent/*.json agent/tools/*.json
 var files embed.FS
 
 // AgentEventExtractionPath is the path AGENT_CONTRACTS section 4.2's manifest
