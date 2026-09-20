@@ -306,9 +306,12 @@ func TestMockToolCallReadsTheAgentsOwnContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
+	// A WRITE tool is preferred, so the scenario exercises the path where the runtime DOES
+	// what the model asked: a read call would leave the artifact and its verification
+	// untested. That is the correction the canary found.
 	key := onlyToolCallKey(t, reply)
-	if key != "workflow.read_state" {
-		t.Fatalf("the reply asks for %q, want the first tool in the agent's own contract", key)
+	if key != "script.create_script_version" {
+		t.Fatalf("the reply asks for %q, want the write tool in the agent's own contract", key)
 	}
 	// The document must still satisfy its schema: the call travelled beside it.
 	checkAgainstSchema(t, schemas.AgentExecutionResultPath, reply.Content)

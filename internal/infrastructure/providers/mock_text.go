@@ -117,9 +117,16 @@ func NewMockTextAdapter() *MockTextAdapter {
 
 // SetScenario chooses what the next replies should be.
 //
-// This is the third guard from the file comment: a scenario is set explicitly, so
-// no production composition can select a failing mock by accident. It returns the
-// adapter so a caller can chain it.
+// It RESETS the per-conversation counters, and that is a correction rather than a
+// convenience: the counts exist to distinguish "the first reply for this conversation" from
+// a repeat, and a scenario change is a new situation rather than a repeat of the old one. The
+// first version kept the counts, so a test that ran the invalid-once scenario and then the
+// invalid-always scenario got a VALID second reply — because the always-invalid scenario's
+// first call was counted as the once-scenario's second. The canary found it: an assertion
+// about a refusal saw a success.
+//
+// It is the third guard from the file comment made explicit, and it returns the adapter so a
+// caller can chain it.
 func (m *MockTextAdapter) SetScenario(scenario MockScenario) *MockTextAdapter {
 	if m == nil {
 		return m
@@ -127,6 +134,7 @@ func (m *MockTextAdapter) SetScenario(scenario MockScenario) *MockTextAdapter {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.scenario = scenario
+	m.seen = map[string]int{}
 	return m
 }
 
@@ -200,10 +208,15 @@ func (m *MockTextAdapter) Generate(ctx context.Context, request providers.TextRe
 	// reads what the prompt's contract says the agent may and may not call.
 	result := m.reply(mockReplyFor(request, scenario, call), request.Model)
 	if scenario == MockScenarioToolCall {
-		result.ToolCalls = []providers.TextToolCall{{Key: mockOwnTool(request), Arguments: json.RawMessage(`{}`)}}
+		key := mockOwnTool(request)
+		result.ToolCalls = []providers.TextToolCall{{
+			Key: key, Arguments: mockToolArguments(key, request),
+		}}
 	}
 	if scenario == MockScenarioIllegalTool {
-		result.ToolCalls = []providers.TextToolCall{{Key: mockForeignTool(request), Arguments: json.RawMessage(`{}`)}}
+		result.ToolCalls = []providers.TextToolCall{{
+			Key: mockForeignTool(request), Arguments: json.RawMessage(`{}`),
+		}}
 	}
 	return result, nil
 }
@@ -415,7 +428,8 @@ func mockReviewReport(request providers.TextRequest, passed bool) string {
 // artifact. The runtime's own rule — section 7.4's "success 至少有预期 artifact" —
 // is what would refuse a success here, and this reply does not need to be refused.
 func mockToolCallDocument(request providers.TextRequest) string {
-	if mockLayerOf(request) == "decision" {
+	switch mockLayerOf(request) {
+	case "decision":
 		stage, _ := mockStageOf(request)
 		document := map[string]any{
 			"schemaVersion": 1,
@@ -429,16 +443,35 @@ func mockToolCallDocument(request providers.TextRequest) string {
 			document["currentStage"] = stage
 		}
 		return mockJSON(document)
+	case "supervision":
+		// A supervision agent's contract is the REVIEW REPORT, and it shares no fields with
+		// an execution result. Without this branch a supervisor asking for a tool received an
+		// execution-shaped document, which the review-report schema refused — so the ACL was
+		// never reached and a test of the REFUSAL would have been testing the validator
+		// instead. The canary found it.
+		stage, stageRun := mockStageOf(request)
+		return mockJSON(map[string]any{
+			"schemaVersion":     1,
+			"passed":            true,
+			"severity":          "none",
+			"stage":             stage,
+			"stageRunId":        stageRun,
+			"rulesetVersion":    mockRulesetVersion,
+			"issues":            []any{},
+			"summary":           "The mock read what it needed and has nothing to report.",
+			"recommendedAction": "pass",
+		})
+	default:
+		stage, stageRun := mockStageOf(request)
+		return mockJSON(map[string]any{
+			"schemaVersion": 1,
+			"status":        "partial",
+			"stage":         stage,
+			"stageRunId":    stageRun,
+			"nextAction":    "wait_user",
+			"summary":       "The mock asked for one tool and has no result to report yet.",
+		})
 	}
-	stage, stageRun := mockStageOf(request)
-	return mockJSON(map[string]any{
-		"schemaVersion": 1,
-		"status":        "partial",
-		"stage":         stage,
-		"stageRunId":    stageRun,
-		"nextAction":    "wait_user",
-		"summary":       "The mock asked for one tool and has no result to report yet.",
-	})
 }
 
 // mockStageOf reads the stage and stage-run identifiers out of the prompt.
@@ -489,6 +522,13 @@ func fieldOnLine(state, name string) string {
 // rather than the denial path.
 func mockOwnTool(request providers.TextRequest) string {
 	contract := mockToolContractOf(request)
+	// A WRITE tool is preferred, and that is the correction the canary found: the scenario
+	// exists to exercise the path where a model asks for something and the runtime DOES it,
+	// so a call that only reads would leave the interesting half — the artifact the stage
+	// reports and the verification that follows it — untested. The first version returned the
+	// first tool in the contract, which for every execution agent is a read tool, so the
+	// stage's write path was never reached by this scenario at all.
+	fallback := ""
 	for _, line := range strings.Split(contract, "\n") {
 		line = strings.TrimSpace(line)
 		if !strings.HasPrefix(line, "- ") {
@@ -498,9 +538,19 @@ func mockOwnTool(request providers.TextRequest) string {
 		if len(fields) == 0 {
 			continue
 		}
-		if key := fields[0]; strings.Contains(key, ".") && !strings.HasSuffix(key, "s:") {
+		key := fields[0]
+		if !strings.Contains(key, ".") || strings.HasSuffix(key, "s:") {
+			continue
+		}
+		if strings.Contains(line, "(write)") {
 			return key
 		}
+		if fallback == "" {
+			fallback = key
+		}
+	}
+	if fallback != "" {
+		return fallback
 	}
 	// No tool contract means the agent has no tools, which is legitimate. The reply
 	// then names a key that is certainly not registered, so the denial path runs and
@@ -577,3 +627,44 @@ func mockJSON(document map[string]any) string {
 
 // Compile-time proof that the mock satisfies the port it stands in for.
 var _ providers.TextPort = (*MockTextAdapter)(nil)
+
+// mockToolArguments builds the arguments a mock tool call carries.
+//
+// The FIRST version sent `{}` for every tool, which the tool's own input schema then refused
+// — so the runtime recorded a tool failure rather than the success the scenario exists to
+// produce, and a test of the write path was testing the failure path instead. The canary
+// found it: the stage failed with "a tool this step needed did not complete".
+//
+// The values come from the PROMPT, which is where the runtime put them: the workflow-state
+// layer carries the episode and the stage run, so a call that writes a version can name the
+// episode the run is about. An argument this cannot supply is omitted, and the schema then
+// refuses the call — which is the honest outcome for a scenario whose prompt did not carry
+// what the tool needs, rather than a fabricated identifier.
+func mockToolArguments(key string, request providers.TextRequest) json.RawMessage {
+	state := mockWorkflowStateOf(request)
+	arguments := map[string]any{}
+	// Every write tool that creates a version for an episode takes this field, and the
+	// runtime's own state layer named the episode when the caller supplied one.
+	if episode := fieldOnLine(state, "episode="); episode != "" {
+		arguments["episodeId"] = episode
+	}
+	// The storyboard panel tool takes an item rather than an episode, and the state layer
+	// names one when the run is a panel run.
+	if item := fieldOnLine(state, "storyboard_item="); item != "" {
+		arguments["itemId"] = item
+	}
+	// A read that narrows by chapter takes one, for the same reason.
+	if chapter := fieldOnLine(state, "chapter="); chapter != "" {
+		arguments["chapterId"] = chapter
+	}
+	if len(arguments) == 0 {
+		// Nothing usable was in the prompt. An empty object is returned rather than a guess,
+		// and the tool's schema decides whether that is acceptable.
+		return json.RawMessage(`{}`)
+	}
+	encoded, err := json.Marshal(arguments)
+	if err != nil {
+		return json.RawMessage(`{}`)
+	}
+	return encoded
+}

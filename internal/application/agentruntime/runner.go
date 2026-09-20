@@ -220,6 +220,13 @@ type Invocation struct {
 }
 
 // Outcome is what one invocation produced.
+//
+// A REFUSAL STILL CARRIES THE RunID. The run row is written before the model is called, so
+// by the time any refusal below happens the record exists — and a caller that received only
+// an error would have no way to look up what happened. The canary found this: its assertion
+// "the run records the refusal" could not be written, because the identifier it needed was
+// being discarded. So every return after CreateRun sets RunID, and the zero Outcome is
+// reserved for the refusals that happen BEFORE a row exists.
 type Outcome struct {
 	RunID string
 	// Output is the validated output, as the schema describes it. It is returned to
@@ -321,7 +328,7 @@ func (r *Runtime) Run(ctx context.Context, invocation Invocation) (Outcome, erro
 		if err := runCtx.Err(); err != nil {
 			// A deadline or a cancel is reported as itself, and the stage is left
 			// for the engine to mark cancelled.
-			_ = r.finish(ctx, record, agent.RunCancelled, "", "agent.cancelled", nil)
+			_ = r.finishOnly(ctx, record, agent.RunCancelled, "", "agent.cancelled", nil)
 			return Outcome{}, &CancelledError{Cause: err}
 		}
 		reply, err := r.models.Complete(runCtx, ModelRequest{
@@ -341,8 +348,8 @@ func (r *Runtime) Run(ctx context.Context, invocation Invocation) (Outcome, erro
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				status = agent.RunCancelled
 			}
-			_ = r.finish(ctx, record, status, "", code, nil)
-			return Outcome{}, err
+			_ = r.finishOnly(ctx, record, status, "", code, nil)
+			return Outcome{RunID: runID}, err
 		}
 		attempted = true
 
@@ -363,8 +370,8 @@ func (r *Runtime) Run(ctx context.Context, invocation Invocation) (Outcome, erro
 			// that is AC-AGENT-003: the run must not be marked successful and the
 			// workflow must not advance.
 			if artifactErr := r.verifyArtifacts(runCtx, spec, json.RawMessage(reply.Content)); artifactErr != nil {
-				_ = r.finish(ctx, record, agent.RunFailed, "", artifactCode(artifactErr), nil)
-				return Outcome{}, artifactErr
+				_ = r.finishOnly(ctx, record, agent.RunFailed, "", artifactCode(artifactErr), nil)
+				return Outcome{RunID: runID}, artifactErr
 			}
 			// The tool calls the model asked for are checked against its budget here,
 			// BEFORE any of them runs: AC-AGENT-005's "Tool Calls 超限停止" is about a
@@ -376,8 +383,8 @@ func (r *Runtime) Run(ctx context.Context, invocation Invocation) (Outcome, erro
 				if errors.As(quotaErr, &quota) {
 					code = quota.Code()
 				}
-				_ = r.finish(ctx, record, agent.RunFailed, "", code, nil)
-				return Outcome{}, quotaErr
+				_ = r.finishOnly(ctx, record, agent.RunFailed, "", code, nil)
+				return Outcome{RunID: runID}, quotaErr
 			}
 			output = json.RawMessage(reply.Content)
 			requested = reply.ToolCalls
@@ -386,8 +393,8 @@ func (r *Runtime) Run(ctx context.Context, invocation Invocation) (Outcome, erro
 		if validationErr != nil {
 			// The validator itself failed, which is a configuration defect rather than
 			// a model failure, so it is reported as one and not repaired.
-			_ = r.finish(ctx, record, agent.RunFailed, "", "agent.validator_failed", nil)
-			return Outcome{}, validationErr
+			_ = r.finishOnly(ctx, record, agent.RunFailed, "", "agent.validator_failed", nil)
+			return Outcome{RunID: runID}, validationErr
 		}
 		failures = violations
 		// Send the violations back once. The prompt gains a layer rather than being
@@ -407,8 +414,8 @@ func (r *Runtime) Run(ctx context.Context, invocation Invocation) (Outcome, erro
 	if output == nil {
 		// Both attempts were invalid, which section 14.3 makes final.
 		code := "agent.output_schema_invalid"
-		_ = r.finish(ctx, record, agent.RunFailed, "", code, failures)
-		return Outcome{}, &SchemaError{Stage: spec.Key, Violations: failures, Repaired: attempted && repaired}
+		_ = r.finishOnly(ctx, record, agent.RunFailed, "", code, failures)
+		return Outcome{RunID: runID}, &SchemaError{Stage: spec.Key, Violations: failures, Repaired: attempted && repaired}
 	}
 
 	// Tool calls, which the reply carried beside its document. They run AFTER
@@ -421,19 +428,19 @@ func (r *Runtime) Run(ctx context.Context, invocation Invocation) (Outcome, erro
 		if call.Status == agent.ToolCallDenied {
 			// AC-AGENT-001: an illegal call is refused, the run records the failure and
 			// the invocation stops rather than continuing as if nothing happened.
-			_ = r.finish(ctx, record, agent.RunFailed, "", CodeToolNotAllowed, nil)
-			return Outcome{}, &ToolNotAllowedError{
+			_ = r.finishOnly(ctx, record, agent.RunFailed, "", CodeToolNotAllowed, nil)
+			return Outcome{RunID: runID}, &ToolNotAllowedError{
 				Layer: spec.Layer, Mode: agent.ToolMode(""), Tool: call.ToolKey, NotGranted: true,
 			}
 		}
 		if call.Status == agent.ToolCallFailed {
-			_ = r.finish(ctx, record, agent.RunFailed, "", call.ErrorCode, nil)
-			return Outcome{}, agent.StorageError("A tool this step needed did not complete.", nil)
+			_ = r.finishOnly(ctx, record, agent.RunFailed, "", call.ErrorCode, nil)
+			return Outcome{RunID: runID}, agent.StorageError("A tool this step needed did not complete.", nil)
 		}
 	}
 
-	if err := r.finish(ctx, record, agent.RunSucceeded, string(output), "", nil); err != nil {
-		return Outcome{}, err
+	if _, err := r.finish(ctx, record, agent.RunSucceeded, string(output), "", nil); err != nil {
+		return Outcome{RunID: runID}, err
 	}
 	return Outcome{
 		RunID:     runID,
@@ -445,8 +452,20 @@ func (r *Runtime) Run(ctx context.Context, invocation Invocation) (Outcome, erro
 	}, nil
 }
 
-// finish records the run's outcome.
-func (r *Runtime) finish(ctx context.Context, record agent.AgentRun, status agent.RunStatus, output, errorCode string, violations []Violation) error {
+// finish records the run's outcome and reports the row's NEW revision.
+//
+// The revision comes back rather than being incremented on a local copy, and that is a
+// correction rather than a preference. The first version took `record` by value, incremented
+// its own copy at the end and discarded the result — so a second call within one run reused
+// the ORIGINAL revision. The repository's optimistic guard then found no row at
+// (id, revision) and reported a not-found, which is what the canary saw: an
+// unrelated-looking "the requested agent record no longer exists" in place of the refusal it
+// was asserting. Nothing failed, because the two-iteration repair loop is the only caller
+// that writes twice.
+//
+// The rule is therefore stated in the signature: a caller that writes a run more than once
+// must carry the returned revision forward.
+func (r *Runtime) finish(ctx context.Context, record agent.AgentRun, status agent.RunStatus, output, errorCode string, violations []Violation) (int64, error) {
 	finished := record
 	finished.Status = status
 	finished.ValidatedOutputJSON = output
@@ -456,15 +475,12 @@ func (r *Runtime) finish(ctx context.Context, record agent.AgentRun, status agen
 	}
 	// A terminal status needs a finish time, and the domain refuses one without it.
 	finished.FinishedAt = r.now()
-	if status == agent.RunSucceeded {
-		_ = violations
-	}
-	// The expected revision is what the row holds, which is what CreateRun wrote.
+	_ = violations
+	// The expected revision is what the row holds, which is what the last write left.
 	if err := r.runs.FinishRun(ctx, finished, record.Revision); err != nil {
-		return err
+		return record.Revision, err
 	}
-	record.Revision = record.Revision + 1
-	return nil
+	return record.Revision + 1, nil
 }
 
 // message builds one message row.
@@ -556,6 +572,7 @@ func (r *Runtime) callTool(ctx context.Context, runID string, spec agent.Spec, i
 		EpisodeID:     invocation.EpisodeID,
 		WorkflowRunID: invocation.WorkflowRunID,
 		StageRunID:    invocation.StageRunID,
+		AgentRunID:    runID,
 		Arguments:     request.Arguments,
 	})
 	call.FinishedAt = r.now()
@@ -799,4 +816,15 @@ func scopeKey(invocation Invocation) string {
 // place to put its value rather than a shape to change.
 func ScopeParts(invocation Invocation) [6]string {
 	return [6]string{"local", "", invocation.ProjectID, invocation.EpisodeID, invocation.AgentKey, ""}
+}
+
+// finishOnly records an outcome and discards the new revision.
+//
+// It exists for the refusal paths, which write the run once and then return: there is no
+// second write for the revision to matter to, and threading a value through eight returns
+// that ignore it would add noise to the one path that does not. The paths that write twice
+// (the repair loop, and the success path after it) call finish directly and carry the value.
+func (r *Runtime) finishOnly(ctx context.Context, record agent.AgentRun, status agent.RunStatus, output, errorCode string, violations []Violation) error {
+	_, err := r.finish(ctx, record, status, output, errorCode, violations)
+	return err
 }

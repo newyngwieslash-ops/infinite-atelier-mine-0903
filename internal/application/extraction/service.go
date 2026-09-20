@@ -88,6 +88,20 @@ func repairSupport(extractor Extractor) (RepairingExtractor, bool) {
 // read the whole project could correlate across chapters, which is a different
 // stage with different evidence rules.
 type Request struct {
+	// ProjectID is the chapter's project, taken from the reader's own walk so it
+	// cannot disagree with the text.
+	//
+	// WP-07 added this field, and the reason is worth stating because this type's
+	// comment above used to say the request carries "no project identifier". That
+	// comment was about CAPABILITY, not about a scalar: it forbids an extractor that
+	// can READ the project's other chapters and facts, which is what would let it
+	// correlate across chapters. A project id is the opposite — it is the scope a run
+	// must be filed under, and the runtime refuses an invocation without one
+	// (agent.AgentRun has a foreign key to projects). An extractor given this value
+	// can file its work correctly and still cannot read anything else, which is why
+	// the field is additive rather than a reopening of the earlier decision. ADR-0011
+	// records the ruling.
+	ProjectID string
 	// ChapterID names the chapter, so an extractor's log line can point at what
 	// it read.
 	ChapterID string
@@ -248,6 +262,7 @@ func (s *Service) ExtractChapterEventCandidates(ctx context.Context, chapterID s
 		return Result{}, extractiondomain.InvalidRequestError("That chapter has no text to read.")
 	}
 	request := Request{
+		ProjectID: chapter.ProjectID,
 		ChapterID: chapter.Chapter.ID,
 		Title:     chapter.Chapter.Title,
 		Text:      chapter.Text,

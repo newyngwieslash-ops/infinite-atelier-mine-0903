@@ -277,8 +277,13 @@ func limitOf(requested, fallback, ceiling int) int {
 }
 
 // agentActor is the created-by attribution every write tool records.
+//
+// The identifier is the AGENT RUN rather than the stage, and the distinction is what
+// DOMAIN_MODEL section 13.4 is for: a version's created-by names WHO produced it, and a
+// stage is the workflow position where it happened. A run that was superseded and re-run in
+// the same stage is a different author, which is exactly the fact a reviewer needs to see.
 func agentActor(request agentruntime.ToolRequest) (versioning.CreatedByType, string) {
-	return createdByAgent, request.StageRunID
+	return createdByAgent, request.AgentRunID
 }
 
 // storyStatusFilter reads an optional status filter argument.

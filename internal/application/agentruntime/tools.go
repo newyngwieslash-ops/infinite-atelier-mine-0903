@@ -62,6 +62,15 @@ type ToolRequest struct {
 	// workflow.
 	WorkflowRunID string
 	StageRunID    string
+	// AgentRunID is the agent run that asked for this call.
+	//
+	// It is separate from StageRunID because the two answer different questions and a
+	// write needs BOTH: the stage is what the artifact is attached to, and the run is
+	// what DOMAIN_MODEL section 13.4's created-by attribution names. The first version of
+	// this struct had only the stage, so a version written by a tool recorded the stage as
+	// its author — which the canary caught by asserting the field against the run it had
+	// just made.
+	AgentRunID string
 	// Arguments is the model's JSON arguments, already schema-validated and size
 	// bounded.
 	Arguments json.RawMessage
