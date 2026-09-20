@@ -66,6 +66,15 @@ func (s *memoryRunStore) CreateRun(_ context.Context, run agent.AgentRun) error 
 	return nil
 }
 
+func (s *memoryRunStore) findRun(id string) (agent.AgentRun, error) {
+	for _, run := range s.runs {
+		if run.ID == id {
+			return run, nil
+		}
+	}
+	return agent.AgentRun{}, errors.New("no such run")
+}
+
 func (s *memoryRunStore) FinishRun(_ context.Context, run agent.AgentRun, _ int64) error {
 	s.runs = append(s.runs, run)
 	s.finishes = append(s.finishes, run.Status)
@@ -615,4 +624,202 @@ func TestToolCallScopesComeFromTheRun(t *testing.T) {
 		t.Fatalf("the arguments were not passed through: %q", captured.Arguments)
 	}
 	_ = json.RawMessage(nil)
+}
+
+// The four tests below are REGRESSION tests for defects the canary found, written at the unit
+// level so they fail in a second rather than after assembling a database. Each names the
+// defect it pins.
+
+// TestFinishReportsTheRevisionItWrote pins the contract a second write depends on.
+//
+// Runtime.finish took its record BY VALUE and incremented its own copy, so the value it
+// returned to nobody was discarded. That is invisible while a run writes once — which is
+// every path except one — and the canary found the consequence before this test could: with
+// the repair loop writing twice, the second write reused the ORIGINAL revision, the
+// repository's optimistic guard matched no row, and the caller saw
+// "the requested agent record no longer exists" in place of the refusal under test.
+//
+// The runner now writes once per run (the loop validates, repairs, and refuses in one pass),
+// so the sequence cannot be reproduced through Run. What CAN be asserted is the contract
+// itself, and that is what this does: finish reports the revision the next write must expect,
+// and a caller that ignores it is the bug.
+func TestFinishReportsTheRevisionItWrote(t *testing.T) {
+	store := &revisionTrackingStore{}
+	harness := newHarness(t, []string{`{"summary":"first"}`}, func(options *Options) {
+		options.Runs = store
+	})
+	runtime := harness.runtime
+	record := agent.AgentRun{
+		ID: "run-direct", ProjectID: "project-1",
+		Layer: agent.LayerExecution, AgentKey: "script.execution.x",
+		SkillVersionID: "sv-1", Status: agent.RunRunning,
+		StartedAt: fixedRuntimeClock{}.Now(), Revision: 1,
+	}
+	// The first write reports 2, which is what the row now holds.
+	next, err := runtime.finish(context.Background(), record, agent.RunSucceeded, "{}", "", nil)
+	if err != nil {
+		t.Fatalf("the first finish failed: %v", err)
+	}
+	if next != 2 {
+		t.Fatalf("finish reported revision %d, want 2", next)
+	}
+	// A caller that carried it forward can write again; a caller that reused 1 cannot. The
+	// store records what each write expected, so the difference is visible here.
+	record.Revision = next
+	if _, err := runtime.finish(context.Background(), record, agent.RunSucceeded, "{}", "", nil); err != nil {
+		t.Fatalf("the second finish failed: %v", err)
+	}
+	if len(store.expectedRevisions) != 2 {
+		t.Fatalf("the store saw %d writes, want 2", len(store.expectedRevisions))
+	}
+	if store.expectedRevisions[0] != 1 || store.expectedRevisions[1] != 2 {
+		t.Fatalf("the writes expected revisions %v, want [1 2]", store.expectedRevisions)
+	}
+	// And the value really matters: writing again at the STALE revision is what the defect
+	// did, and the double refuses it so the failure is a test failure rather than a silent
+	// overwrite.
+	stale := record
+	stale.Revision = 1
+	if _, err := runtime.finish(context.Background(), stale, agent.RunSucceeded, "{}", "", nil); err == nil {
+		t.Fatal("a stale revision was accepted, so the guard this pins does nothing")
+	}
+}
+
+// revisionTrackingStore records the revision each FinishRun was told to expect.
+//
+// It exists because the defect above is invisible to a store that ignores the value, which
+// is what the package's other double does — and that is WHY the defect survived.
+type revisionTrackingStore struct {
+	memoryRunStore
+	expectedRevisions []int64
+	// revision is the row's current revision, which the double advances on each write so a
+	// stale one can be refused.
+	revision int64
+}
+
+func (s *revisionTrackingStore) FinishRun(ctx context.Context, run agent.AgentRun, expectedRevision int64) error {
+	s.expectedRevisions = append(s.expectedRevisions, expectedRevision)
+	// A stale revision is REFUSED, exactly as the repository's revision-guarded UPDATE
+	// refuses one. Without this the assertion above would pass whatever the runner did,
+	// because a double that accepts any revision cannot tell a carried-forward value from a
+	// discarded one.
+	if expectedRevision < s.revision {
+		return agent.ConflictError("The agent run was changed by someone else.")
+	}
+	s.revision = expectedRevision + 1
+	return s.memoryRunStore.FinishRun(ctx, run, expectedRevision)
+}
+
+// TestRefusalsCarryTheRunID pins the identifiers every refusal after CreateRun must return.
+//
+// The run row is written BEFORE the model is called, so a caller that received only an error
+// could not look up what happened — and the canary could not be written without it: its
+// assertion "the run records the refusal" had no identifier to reach the row with. The
+// zero Outcome is reserved for the refusals that happen before a row exists.
+func TestRefusalsCarryTheRunID(t *testing.T) {
+	cases := []struct {
+		name     string
+		replies  []string
+		mutate   func(*Options)
+		toolCall []ToolCallRequest
+	}{
+		{name: "schema refusal", replies: []string{`{"nope":1}`, `{"nope":1}`},
+			mutate: func(options *Options) { options.Validate = refusingValidator }},
+		// The verifier is only reached when the output NAMES an artifact: an output with none
+		// has none to check, which is legitimate for a stage that reports only a decision. So
+		// the reply carries a reference, and the refusing verifier then refuses it.
+		{name: "artifact refusal",
+			replies: []string{`{"summary":"x","artifacts":[{"entityType":"story_skeleton_version","entityId":"invented"}]}`},
+			mutate: func(options *Options) {
+				options.Artifacts = refusingArtifacts{}
+			}},
+		{name: "tool denial", replies: []string{`{"summary":"x"}`},
+			toolCall: []ToolCallRequest{{Key: "script.create_script_version", Arguments: json.RawMessage(`{}`)}}},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			harness := newHarness(t, testCase.replies, testCase.mutate)
+			if testCase.toolCall != nil {
+				harness.model.toolCalls = [][]ToolCallRequest{testCase.toolCall}
+			}
+			// The agent is the supervisor for the denial case, whose ACL refuses a write.
+			agentKey := "script.execution.x"
+			if testCase.toolCall != nil {
+				agentKey = "script.supervision.x"
+			}
+			outcome, err := harness.runtime.Run(context.Background(), invocationFor(agentKey))
+			if err == nil {
+				t.Fatal("the run succeeded")
+			}
+			if outcome.RunID == "" {
+				t.Fatal("the refusal discarded the run id")
+			}
+			// And the row really is there, which is what makes the identifier useful.
+			if _, readErr := harness.store.findRun(outcome.RunID); readErr != nil {
+				t.Fatalf("the returned run id names no row: %v", readErr)
+			}
+		})
+	}
+}
+
+// refusingValidator refuses every document, so a test can reach a refusal path without
+// depending on what an output happens to contain. It is a function rather than a type because
+// Validator IS a function type: a method-carrying struct would need a method value at each
+// call site.
+func refusingValidator(string, []byte) ([]Violation, error) {
+	return []Violation{{Path: "/", Message: "refused by the test"}}, nil
+}
+
+// refusingArtifacts refuses every reference, for the artifact case above.
+type refusingArtifacts struct{}
+
+func (refusingArtifacts) VerifyArtifacts(context.Context, []ArtifactRef) error {
+	return &ArtifactError{EntityType: "story_skeleton_version", EntityID: "invented"}
+}
+
+// TestToolRequestCarriesTheAgentRunID pins the attribution a write depends on.
+//
+// ToolRequest had only the stage run, so a tool that recorded WHO produced a version filled
+// the field with a stage id — wrong per DOMAIN_MODEL section 13.4, where a run that was
+// superseded and re-run in the same stage is a different author. The canary caught it by
+// asserting the field against the run it had just made.
+func TestToolRequestCarriesTheAgentRunID(t *testing.T) {
+	var captured ToolRequest
+	table, err := NewTools([]Tool{
+		{
+			Spec:       agent.ToolSpec{Key: "story.read_events", Mode: agent.ToolRead, Scope: "project", MaxOutputBytes: 1024},
+			SchemaPath: "schemas/agent/tools/story.read_events.json",
+			Handler: func(_ context.Context, request ToolRequest) (any, error) {
+				captured = request
+				return map[string]any{"ok": true}, nil
+			},
+		},
+		testTool("script.create_script_version", agent.ToolWrite, 1024),
+		testTool("workflow.read_state", agent.ToolRead, 1024),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	harness := newHarness(t, []string{`{"summary":"x"}`}, func(options *Options) { options.Tools = table })
+	harness.model.toolCalls = [][]ToolCallRequest{{
+		{Key: "story.read_events", Arguments: json.RawMessage(`{}`)},
+	}}
+	invocation := invocationFor("script.execution.x")
+	outcome, err := harness.runtime.Run(context.Background(), invocation)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if captured.AgentRunID == "" {
+		t.Fatal("the handler received no agent run id, so a write could not be attributed")
+	}
+	if captured.AgentRunID != outcome.RunID {
+		t.Fatalf("the handler received run %q, want %q", captured.AgentRunID, outcome.RunID)
+	}
+	// The stage is still there and still distinct: both are needed, for different reasons.
+	if captured.StageRunID != invocation.StageRunID {
+		t.Fatalf("the handler received stage %q, want %q", captured.StageRunID, invocation.StageRunID)
+	}
+	if captured.AgentRunID == captured.StageRunID {
+		t.Fatal("the run id and the stage id are the same value, so the two fields are redundant")
+	}
 }
