@@ -3,6 +3,7 @@ package script
 import (
 	"context"
 	eventsapp "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/events"
+	"sort"
 	"sync"
 	"testing"
 	"time"
@@ -41,16 +42,22 @@ func (fixedClock) Now() time.Time { return time.Date(2026, 9, 17, 9, 0, 0, 0, ti
 // error. ApproveScriptVersion reproduces the repository's one-transaction
 // supersede, so the rule under test is the one the real store implements.
 type memoryStore struct {
-	mu           sync.Mutex
-	episodes     map[string]scriptdomain.Episode
-	skeletons    map[string]scriptdomain.StorySkeletonVersion
-	strategies   map[string]scriptdomain.AdaptationStrategyVersion
-	scripts      map[string]scriptdomain.Script
-	versions     map[string]scriptdomain.ScriptVersion
-	scenes       map[string]scriptdomain.Scene
-	shots        map[string]scriptdomain.Shot
-	failCreate   error
-	approveCalls int
+	mu         sync.Mutex
+	episodes   map[string]scriptdomain.Episode
+	skeletons  map[string]scriptdomain.StorySkeletonVersion
+	strategies map[string]scriptdomain.AdaptationStrategyVersion
+	scripts    map[string]scriptdomain.Script
+	versions   map[string]scriptdomain.ScriptVersion
+	scenes     map[string]scriptdomain.Scene
+	shots      map[string]scriptdomain.Shot
+	lines      map[string]scriptdomain.DialogueLine
+	locks      map[string]scriptdomain.FieldLock
+	// The two event-link maps are keyed by version id and hold the whole set, because the write
+	// path replaces a version's links as a whole rather than amending them.
+	skeletonEvents map[string][]string
+	strategyEvents map[string][]scriptdomain.StrategyEventLink
+	failCreate     error
+	approveCalls   int
 	// events records what the approval commands wrote, so a test can assert the
 	// governance record exists rather than only that the status moved.
 	events []event.Event
@@ -58,13 +65,17 @@ type memoryStore struct {
 
 func newMemoryStore() *memoryStore {
 	return &memoryStore{
-		episodes:   map[string]scriptdomain.Episode{},
-		skeletons:  map[string]scriptdomain.StorySkeletonVersion{},
-		strategies: map[string]scriptdomain.AdaptationStrategyVersion{},
-		scripts:    map[string]scriptdomain.Script{},
-		versions:   map[string]scriptdomain.ScriptVersion{},
-		scenes:     map[string]scriptdomain.Scene{},
-		shots:      map[string]scriptdomain.Shot{},
+		episodes:       map[string]scriptdomain.Episode{},
+		skeletons:      map[string]scriptdomain.StorySkeletonVersion{},
+		strategies:     map[string]scriptdomain.AdaptationStrategyVersion{},
+		scripts:        map[string]scriptdomain.Script{},
+		versions:       map[string]scriptdomain.ScriptVersion{},
+		scenes:         map[string]scriptdomain.Scene{},
+		shots:          map[string]scriptdomain.Shot{},
+		lines:          map[string]scriptdomain.DialogueLine{},
+		locks:          map[string]scriptdomain.FieldLock{},
+		skeletonEvents: map[string][]string{},
+		strategyEvents: map[string][]scriptdomain.StrategyEventLink{},
 	}
 }
 
@@ -1044,5 +1055,248 @@ func (s *memoryStore) ApproveAdaptationStrategyVersion(_ context.Context, versio
 	target.Status = versioning.StatusApproved
 	s.strategies[versionID] = target
 	s.events = append(s.events, record)
+	return nil
+}
+
+// The WP-08 additions to the double: dialogue lines, the whole-structure write, field locks, the
+// two event-link tables, the version histories and the totals write.
+//
+// Each reproduces the real repository's failure semantics rather than accepting everything: a
+// duplicate ordinal is a conflict, a stale revision is a conflict, and a lock set is replaced as a
+// whole. A double that accepted anything would make the service tests assert about the double.
+
+func (s *memoryStore) CreateDialogueLine(_ context.Context, record scriptdomain.DialogueLine) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.failCreate != nil {
+		return s.failCreate
+	}
+	for _, existing := range s.lines {
+		if existing.SceneID == record.SceneID && existing.Ordinal == record.Ordinal {
+			return scriptdomain.ConflictError("That line position is already used in this scene.")
+		}
+	}
+	s.lines[record.ID] = record
+	return nil
+}
+
+func (s *memoryStore) GetDialogueLine(_ context.Context, id string) (scriptdomain.DialogueLine, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	record, ok := s.lines[id]
+	if !ok {
+		return scriptdomain.DialogueLine{}, scriptdomain.NotFoundError()
+	}
+	return record, nil
+}
+
+func (s *memoryStore) ListDialogueLines(_ context.Context, sceneID string) ([]scriptdomain.DialogueLine, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	records := []scriptdomain.DialogueLine{}
+	for _, record := range s.lines {
+		if record.SceneID == sceneID {
+			records = append(records, record)
+		}
+	}
+	sort.Slice(records, func(i, j int) bool { return records[i].Ordinal < records[j].Ordinal })
+	return records, nil
+}
+
+func (s *memoryStore) SetDialogueLineLocked(_ context.Context, lineID string, locked bool, expectedRevision int64, _ time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	record, ok := s.lines[lineID]
+	if !ok {
+		return scriptdomain.NotFoundError()
+	}
+	if record.Revision != expectedRevision {
+		return scriptdomain.ConflictError("That dialogue line was changed by someone else.")
+	}
+	record.Locked = locked
+	record.Revision = expectedRevision + 1
+	s.lines[lineID] = record
+	return nil
+}
+
+// CreateScriptStructure reproduces the real repository's all-or-nothing write: the scenes, lines
+// and shots are staged and only committed when every one succeeded, so a failure part way through
+// leaves nothing behind. A double that wrote as it went would let a test pass that the real store
+// would refuse.
+func (s *memoryStore) CreateScriptStructure(ctx context.Context, structure scriptdomain.ScriptStructure) error {
+	s.mu.Lock()
+	scenes := map[string]scriptdomain.Scene{}
+	lines := map[string]scriptdomain.DialogueLine{}
+	shots := map[string]scriptdomain.Shot{}
+	for _, scene := range structure.Scenes {
+		scenes[scene.ID] = scene.Scene
+		for _, line := range scene.DialogueLines {
+			lines[line.ID] = line
+		}
+		for _, shot := range scene.Shots {
+			shots[shot.ID] = shot
+		}
+	}
+	for id, record := range scenes {
+		s.scenes[id] = record
+	}
+	for id, record := range lines {
+		s.lines[id] = record
+	}
+	for id, record := range shots {
+		s.shots[id] = record
+	}
+	s.mu.Unlock()
+	_ = ctx
+	return nil
+}
+
+func (s *memoryStore) GetScriptStructure(_ context.Context, scriptVersionID string) (scriptdomain.ScriptStructure, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	structure := scriptdomain.ScriptStructure{ScriptVersionID: scriptVersionID}
+	var scenes []scriptdomain.Scene
+	for _, record := range s.scenes {
+		if record.ScriptVersionID == scriptVersionID {
+			scenes = append(scenes, record)
+		}
+	}
+	sort.Slice(scenes, func(i, j int) bool { return scenes[i].Ordinal < scenes[j].Ordinal })
+	for _, scene := range scenes {
+		entry := scriptdomain.SceneStructure{Scene: scene, DialogueLines: []scriptdomain.DialogueLine{}, Shots: []scriptdomain.Shot{}}
+		for _, line := range s.lines {
+			if line.SceneID == scene.ID {
+				entry.DialogueLines = append(entry.DialogueLines, line)
+			}
+		}
+		sort.Slice(entry.DialogueLines, func(i, j int) bool {
+			return entry.DialogueLines[i].Ordinal < entry.DialogueLines[j].Ordinal
+		})
+		for _, shot := range s.shots {
+			if shot.SceneID == scene.ID {
+				entry.Shots = append(entry.Shots, shot)
+			}
+		}
+		sort.Slice(entry.Shots, func(i, j int) bool { return entry.Shots[i].Ordinal < entry.Shots[j].Ordinal })
+		structure.Scenes = append(structure.Scenes, entry)
+	}
+	return structure, nil
+}
+
+func (s *memoryStore) LockScriptField(_ context.Context, record scriptdomain.FieldLock) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.locks[record.VersionID+"\x00"+string(record.Field)] = record
+	return nil
+}
+
+func (s *memoryStore) UnlockScriptField(_ context.Context, versionID string, field scriptdomain.LockableField) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.locks, versionID+"\x00"+string(field))
+	return nil
+}
+
+func (s *memoryStore) ListScriptFieldLocks(_ context.Context, versionID string) ([]scriptdomain.FieldLock, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	locks := []scriptdomain.FieldLock{}
+	for _, record := range s.locks {
+		if record.VersionID == versionID {
+			locks = append(locks, record)
+		}
+	}
+	sort.Slice(locks, func(i, j int) bool { return locks[i].Field < locks[j].Field })
+	return locks, nil
+}
+
+func (s *memoryStore) LinkSkeletonEvents(_ context.Context, versionID string, eventIDs []string, _ time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(eventIDs) == 0 {
+		delete(s.skeletonEvents, versionID)
+		return nil
+	}
+	s.skeletonEvents[versionID] = append([]string(nil), eventIDs...)
+	return nil
+}
+
+func (s *memoryStore) ListSkeletonEventIDs(_ context.Context, versionID string) ([]string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.skeletonEvents[versionID]...), nil
+}
+
+func (s *memoryStore) LinkStrategyEvents(_ context.Context, versionID string, links []scriptdomain.StrategyEventLink, _ time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(links) == 0 {
+		delete(s.strategyEvents, versionID)
+		return nil
+	}
+	stored := make([]scriptdomain.StrategyEventLink, 0, len(links))
+	for index, link := range links {
+		link.Ordinal = index + 1
+		stored = append(stored, link)
+	}
+	s.strategyEvents[versionID] = stored
+	return nil
+}
+
+func (s *memoryStore) ListStrategyEventLinks(_ context.Context, versionID string) ([]scriptdomain.StrategyEventLink, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]scriptdomain.StrategyEventLink(nil), s.strategyEvents[versionID]...), nil
+}
+
+func (s *memoryStore) ListStorySkeletonVersions(_ context.Context, episodeID string) ([]scriptdomain.StorySkeletonVersion, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	records := []scriptdomain.StorySkeletonVersion{}
+	for _, record := range s.skeletons {
+		if record.EpisodeID == episodeID {
+			records = append(records, record)
+		}
+	}
+	sort.Slice(records, func(i, j int) bool { return records[i].VersionNumber > records[j].VersionNumber })
+	return records, nil
+}
+
+func (s *memoryStore) ListAdaptationStrategyVersions(_ context.Context, episodeID string) ([]scriptdomain.AdaptationStrategyVersion, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	records := []scriptdomain.AdaptationStrategyVersion{}
+	for _, record := range s.strategies {
+		if record.EpisodeID == episodeID {
+			records = append(records, record)
+		}
+	}
+	sort.Slice(records, func(i, j int) bool { return records[i].VersionNumber > records[j].VersionNumber })
+	return records, nil
+}
+
+func (s *memoryStore) ListScriptVersions(_ context.Context, scriptID string) ([]scriptdomain.ScriptVersion, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	records := []scriptdomain.ScriptVersion{}
+	for _, record := range s.versions {
+		if record.ScriptID == scriptID {
+			records = append(records, record)
+		}
+	}
+	sort.Slice(records, func(i, j int) bool { return records[i].VersionNumber > records[j].VersionNumber })
+	return records, nil
+}
+
+func (s *memoryStore) SetScriptVersionTotals(_ context.Context, versionID string, totalDurationSeconds int, summary string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	record, ok := s.versions[versionID]
+	if !ok {
+		return scriptdomain.NotFoundError()
+	}
+	record.EstimatedDurationSeconds = totalDurationSeconds
+	record.Summary = summary
+	s.versions[versionID] = record
 	return nil
 }

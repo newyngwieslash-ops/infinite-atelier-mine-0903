@@ -51,17 +51,23 @@ type dramaStore struct {
 	scriptVers   map[string]scriptdomain.ScriptVersion
 	scenes       map[string]scriptdomain.Scene
 	shots        map[string]scriptdomain.Shot
-	plans        map[string]storyboard.DirectorPlanVersion
-	boards       map[string]storyboard.Storyboard
-	boardVers    map[string]storyboard.StoryboardVersion
-	items        map[string]storyboard.StoryboardItem
-	panels       map[string]storyboard.StoryboardPanelVersion
-	runs         map[string]workflow.WorkflowRun
-	stages       map[string]workflow.StageRun
-	reports      map[string]workflow.ReviewReport
-	issues       map[string][]workflow.ReviewIssue
-	decisions    map[string]workflow.UserGateDecision
-	audit        map[string][]workflow.WorkflowEvent
+	// The WP-08 state: dialogue lines, the field locks keyed by version and field, and the two
+	// event-link sets keyed by version.
+	lines          map[string]scriptdomain.DialogueLine
+	fieldLocks     map[string]scriptdomain.FieldLock
+	skeletonEvents map[string][]string
+	strategyEvents map[string][]scriptdomain.StrategyEventLink
+	plans          map[string]storyboard.DirectorPlanVersion
+	boards         map[string]storyboard.Storyboard
+	boardVers      map[string]storyboard.StoryboardVersion
+	items          map[string]storyboard.StoryboardItem
+	panels         map[string]storyboard.StoryboardPanelVersion
+	runs           map[string]workflow.WorkflowRun
+	stages         map[string]workflow.StageRun
+	reports        map[string]workflow.ReviewReport
+	issues         map[string][]workflow.ReviewIssue
+	decisions      map[string]workflow.UserGateDecision
+	audit          map[string][]workflow.WorkflowEvent
 
 	// failNext makes the next write fail, so a storage failure is testable.
 	failNext error
@@ -94,6 +100,10 @@ func newDramaStore() *dramaStore {
 		scriptVers:      map[string]scriptdomain.ScriptVersion{},
 		scenes:          map[string]scriptdomain.Scene{},
 		shots:           map[string]scriptdomain.Shot{},
+		lines:           map[string]scriptdomain.DialogueLine{},
+		fieldLocks:      map[string]scriptdomain.FieldLock{},
+		skeletonEvents:  map[string][]string{},
+		strategyEvents:  map[string][]scriptdomain.StrategyEventLink{},
 		plans:           map[string]storyboard.DirectorPlanVersion{},
 		boards:          map[string]storyboard.Storyboard{},
 		boardVers:       map[string]storyboard.StoryboardVersion{},
@@ -2808,5 +2818,194 @@ func (s *dramaStore) MergeChapters(_ context.Context, merged storydomain.Chapter
 	}
 	merged.Revision = expectedRevision + 1
 	s.chapters[merged.ID] = merged
+	return nil
+}
+
+// The WP-08 additions to the double: dialogue lines, the whole-structure write, field locks, the
+// event-link tables, the version histories and the totals write.
+//
+// The binding tests are about TRANSPORT — does a DTO map onto the right service call — so these
+// record what they were handed rather than reproducing the real store's constraints. The
+// constraints themselves are asserted where they live: in the repository's own integration tests
+// and in the service's tests over its own double.
+
+func (s *dramaStore) CreateDialogueLine(_ context.Context, record scriptdomain.DialogueLine) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.lines[record.ID] = record
+	return nil
+}
+
+func (s *dramaStore) GetDialogueLine(_ context.Context, id string) (scriptdomain.DialogueLine, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	record, ok := s.lines[id]
+	if !ok {
+		return scriptdomain.DialogueLine{}, scriptdomain.NotFoundError()
+	}
+	return record, nil
+}
+
+func (s *dramaStore) ListDialogueLines(_ context.Context, sceneID string) ([]scriptdomain.DialogueLine, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	records := []scriptdomain.DialogueLine{}
+	for _, record := range s.lines {
+		if record.SceneID == sceneID {
+			records = append(records, record)
+		}
+	}
+	return records, nil
+}
+
+func (s *dramaStore) SetDialogueLineLocked(_ context.Context, lineID string, locked bool, _ int64, _ time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	record, ok := s.lines[lineID]
+	if !ok {
+		return scriptdomain.NotFoundError()
+	}
+	record.Locked = locked
+	s.lines[lineID] = record
+	return nil
+}
+
+func (s *dramaStore) CreateScriptStructure(_ context.Context, structure scriptdomain.ScriptStructure) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, scene := range structure.Scenes {
+		s.scenes[scene.ID] = scene.Scene
+		for _, line := range scene.DialogueLines {
+			s.lines[line.ID] = line
+		}
+		for _, shot := range scene.Shots {
+			s.shots[shot.ID] = shot
+		}
+	}
+	return nil
+}
+
+func (s *dramaStore) GetScriptStructure(_ context.Context, scriptVersionID string) (scriptdomain.ScriptStructure, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	structure := scriptdomain.ScriptStructure{ScriptVersionID: scriptVersionID}
+	for _, scene := range s.scenes {
+		if scene.ScriptVersionID != scriptVersionID {
+			continue
+		}
+		entry := scriptdomain.SceneStructure{Scene: scene}
+		for _, line := range s.lines {
+			if line.SceneID == scene.ID {
+				entry.DialogueLines = append(entry.DialogueLines, line)
+			}
+		}
+		for _, shot := range s.shots {
+			if shot.SceneID == scene.ID {
+				entry.Shots = append(entry.Shots, shot)
+			}
+		}
+		structure.Scenes = append(structure.Scenes, entry)
+	}
+	return structure, nil
+}
+
+func (s *dramaStore) LockScriptField(_ context.Context, record scriptdomain.FieldLock) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.fieldLocks[record.VersionID+"\x00"+string(record.Field)] = record
+	return nil
+}
+
+func (s *dramaStore) UnlockScriptField(_ context.Context, versionID string, field scriptdomain.LockableField) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.fieldLocks, versionID+"\x00"+string(field))
+	return nil
+}
+
+func (s *dramaStore) ListScriptFieldLocks(_ context.Context, versionID string) ([]scriptdomain.FieldLock, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	locks := []scriptdomain.FieldLock{}
+	for _, record := range s.fieldLocks {
+		if record.VersionID == versionID {
+			locks = append(locks, record)
+		}
+	}
+	return locks, nil
+}
+
+func (s *dramaStore) LinkSkeletonEvents(_ context.Context, versionID string, eventIDs []string, _ time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.skeletonEvents[versionID] = append([]string(nil), eventIDs...)
+	return nil
+}
+
+func (s *dramaStore) ListSkeletonEventIDs(_ context.Context, versionID string) ([]string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.skeletonEvents[versionID]...), nil
+}
+
+func (s *dramaStore) LinkStrategyEvents(_ context.Context, versionID string, links []scriptdomain.StrategyEventLink, _ time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.strategyEvents[versionID] = append([]scriptdomain.StrategyEventLink(nil), links...)
+	return nil
+}
+
+func (s *dramaStore) ListStrategyEventLinks(_ context.Context, versionID string) ([]scriptdomain.StrategyEventLink, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]scriptdomain.StrategyEventLink(nil), s.strategyEvents[versionID]...), nil
+}
+
+func (s *dramaStore) ListStorySkeletonVersions(_ context.Context, episodeID string) ([]scriptdomain.StorySkeletonVersion, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	records := []scriptdomain.StorySkeletonVersion{}
+	for _, record := range s.skeletons {
+		if record.EpisodeID == episodeID {
+			records = append(records, record)
+		}
+	}
+	return records, nil
+}
+
+func (s *dramaStore) ListAdaptationStrategyVersions(_ context.Context, episodeID string) ([]scriptdomain.AdaptationStrategyVersion, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	records := []scriptdomain.AdaptationStrategyVersion{}
+	for _, record := range s.strategies {
+		if record.EpisodeID == episodeID {
+			records = append(records, record)
+		}
+	}
+	return records, nil
+}
+
+func (s *dramaStore) ListScriptVersions(_ context.Context, scriptID string) ([]scriptdomain.ScriptVersion, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	records := []scriptdomain.ScriptVersion{}
+	for _, record := range s.scriptVers {
+		if record.ScriptID == scriptID {
+			records = append(records, record)
+		}
+	}
+	return records, nil
+}
+
+func (s *dramaStore) SetScriptVersionTotals(_ context.Context, versionID string, totalDurationSeconds int, summary string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	record, ok := s.scriptVers[versionID]
+	if !ok {
+		return scriptdomain.NotFoundError()
+	}
+	record.EstimatedDurationSeconds = totalDurationSeconds
+	record.Summary = summary
+	s.scriptVers[versionID] = record
 	return nil
 }

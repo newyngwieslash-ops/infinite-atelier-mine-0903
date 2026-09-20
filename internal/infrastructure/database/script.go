@@ -718,6 +718,27 @@ func scanShot(row rowScanner) (script.Shot, error) {
 	return record, nil
 }
 
+// scanDialogueLine reads one dialogue line row.
+//
+// It lives here rather than in script_structure.go because it belongs with its siblings: the
+// column lists and their scanners are one unit, and splitting them across files is how a column is
+// added to the list and forgotten in the scanner.
+func scanDialogueLine(row rowScanner) (script.DialogueLine, error) {
+	var record script.DialogueLine
+	var lineType, createdAt, updatedAt string
+	var locked int
+	if err := row.Scan(&record.ID, &record.SceneID, &record.Ordinal, &lineType,
+		&record.CharacterEntityID, &record.Text, &record.Emotion, &record.PerformanceNote,
+		&record.SourceStoryEventID, &locked, &createdAt, &updatedAt, &record.Revision); err != nil {
+		return script.DialogueLine{}, err
+	}
+	record.Type = script.LineType(lineType)
+	record.Locked = locked == 1
+	record.CreatedAt = parseTime(createdAt)
+	record.UpdatedAt = parseTime(updatedAt)
+	return record, nil
+}
+
 // Ensure the repository satisfies the application port.
 var _ scriptapp.Repository = (*ScriptRepository)(nil)
 

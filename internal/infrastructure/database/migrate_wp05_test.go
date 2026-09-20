@@ -47,6 +47,7 @@ func wp05Migrations(t *testing.T) fstest.MapFS {
 		"000014_story_import.sql":                {Data: wp05SQL(t, "000014_story_import.sql")},
 		"000015_agent_runtime.sql":               {Data: wp05SQL(t, "000015_agent_runtime.sql")},
 		"000016_agent_response_model.sql":        {Data: wp05SQL(t, "000016_agent_response_model.sql")},
+		"000017_script_field_locks.sql":          {Data: wp05SQL(t, "000017_script_field_locks.sql")},
 	}
 }
 
@@ -55,7 +56,7 @@ func wp05Migrations(t *testing.T) fstest.MapFS {
 // The helper keeps its wp05 name because every test calls it by that name and
 // the set is the same set; only its head moves as migrations are added. It is 15
 // since WP-07 added the agent runtime tables.
-const wp05HeadVersion = 16
+const wp05HeadVersion = 17
 
 // applyMigrationFileSplits runs one migration file the way the runner does:
 // splitSQL on the raw text, then execute each fragment in order. It returns the

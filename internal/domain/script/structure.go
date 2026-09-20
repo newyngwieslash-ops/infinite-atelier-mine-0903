@@ -302,3 +302,63 @@ func (l FieldLock) Validate() error {
 func ContentIsFrozen(status versioning.Status) bool {
 	return versioning.IsContentFrozen(status)
 }
+
+// EventTreatment is what one strategy version decided about one story event
+// (DOMAIN_MODEL §7.5).
+//
+// The vocabulary is migration 000008's CHECK list, and §7.5's own words are "retained, removed or
+// reordered" — the three things FR-040's S2 must report. A strategy that neither kept nor dropped
+// an event has reordered it, which is why there is no fourth value.
+type EventTreatment string
+
+const (
+	TreatmentRetained  EventTreatment = "retained"
+	TreatmentRemoved   EventTreatment = "removed"
+	TreatmentReordered EventTreatment = "reordered"
+)
+
+// EventTreatments lists the three in the schema's order.
+var EventTreatments = []EventTreatment{TreatmentRetained, TreatmentRemoved, TreatmentReordered}
+
+// IsValidEventTreatment reports whether a treatment may be persisted.
+func IsValidEventTreatment(value EventTreatment) bool {
+	for _, candidate := range EventTreatments {
+		if candidate == value {
+			return true
+		}
+	}
+	return false
+}
+
+// StrategyEventLink is one strategy version's decision about one story event (§7.5).
+//
+// It is a row of `adaptation_strategy_event_links` rather than a member of a JSON array, which is
+// what §7.5 requires: "Which events were retained, removed or reordered is a link table, because
+// §2.6 forbids carrying a queryable state in JSON." The `ordinal` is what makes "reordered"
+// meaningful — the order the events appear in the adaptation is the state, and the treatment
+// alone cannot express it.
+type StrategyEventLink struct {
+	StrategyVersionID string
+	StoryEventID      string
+	Treatment         EventTreatment
+	// Ordinal is the event's position in the adaptation, from one. It is 0 only for a row an
+	// older build wrote before this type existed.
+	Ordinal int
+}
+
+// Validate checks a link before it is stored.
+func (l StrategyEventLink) Validate() error {
+	if strings.TrimSpace(l.StrategyVersionID) == "" {
+		return InvalidError("An event link must belong to a strategy version.")
+	}
+	if strings.TrimSpace(l.StoryEventID) == "" {
+		return InvalidError("An event link must name the story event it is about.")
+	}
+	if !IsValidEventTreatment(l.Treatment) {
+		return InvalidError("That event treatment is not recognised.")
+	}
+	if l.Ordinal < 0 {
+		return InvalidError("An event ordinal cannot be negative.")
+	}
+	return nil
+}

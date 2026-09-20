@@ -101,6 +101,13 @@ type ScriptRepository interface {
 	// MaxScriptVersionNumber reports the highest version number a script has, or
 	// zero when it has none.
 	MaxScriptVersionNumber(ctx context.Context, scriptID string) (int, error)
+	// SetScriptVersionTotals writes the summed duration and the summary onto a version row.
+	//
+	// It is a narrow UPDATE rather than a general one because those two are the only fields a
+	// version's CONTENT changes after it is created: its scenes and lines are written once by the
+	// structure write, and its status moves by approval. A general update would have to decide
+	// what else it may change, and the answer for this build is nothing.
+	SetScriptVersionTotals(ctx context.Context, versionID string, totalDurationSeconds int, summary string) error
 	// CurrentApprovedScriptVersion returns the script's approved version. The
 	// boolean is false rather than an error when none is approved yet, because
 	// "no approval" is the ordinary state of a new script.
@@ -140,6 +147,95 @@ type ShotRepository interface {
 	CountShotsAtOrdinal(ctx context.Context, sceneID string, ordinal int) (int, error)
 }
 
+// DialogueRepository persists dialogue lines of a scene.
+//
+// It was missing until WP-08: migration 000008 created `dialogue_lines`, the domain type existed
+// with its validation, and NOTHING could write one. A script without its lines is not a script —
+// FR-040's S3 output lists 对白 and 旁白 as first-class — so this port is what makes the third
+// stage's artifact real rather than a version row with a summary.
+type DialogueRepository interface {
+	// CreateDialogueLine stores a line. A duplicate (scene, ordinal) pair is a conflict.
+	CreateDialogueLine(ctx context.Context, record scriptdomain.DialogueLine) error
+	// GetDialogueLine returns one line by id.
+	GetDialogueLine(ctx context.Context, id string) (scriptdomain.DialogueLine, error)
+	// ListDialogueLines returns a scene's lines in order.
+	ListDialogueLines(ctx context.Context, sceneID string) ([]scriptdomain.DialogueLine, error)
+	// SetDialogueLineLocked records whether a line is protected from regeneration. It is a
+	// command of its own rather than a field of a general update, because a lock is the only
+	// thing a user changes about a line in this build — a line's TEXT is rewritten wholesale by
+	// a new version, which is what makes a version immutable.
+	//
+	// updatedAt is the caller's, like every other timestamp in this package: a repository that
+	// read its own clock would be a second source of truth for the same fact.
+	SetDialogueLineLocked(ctx context.Context, lineID string, locked bool, expectedRevision int64, updatedAt time.Time) error
+}
+
+// StructureRepository writes a whole script version's content in ONE transaction.
+//
+// It exists rather than three separate loops over SceneRepository, DialogueRepository and
+// ShotRepository because the three are one unit of work: PRD FR-040's S3 produces one version,
+// and a version that existed with half its scenes would be an artifact nobody could judge —
+// including its own duration, which is a sum over those scenes. The single transaction is the
+// point of the port, so a caller cannot write a version in pieces by accident.
+type StructureRepository interface {
+	// CreateScriptStructure writes a version's scenes, lines and shots, in one transaction,
+	// replacing nothing: the version is new or this fails.
+	CreateScriptStructure(ctx context.Context, structure scriptdomain.ScriptStructure) error
+	// GetScriptStructure reads a version's whole content: its scenes with their lines and shots.
+	GetScriptStructure(ctx context.Context, scriptVersionID string) (scriptdomain.ScriptStructure, error)
+}
+
+// FieldLockRepository persists the fields a user pinned (AC-SCRIPT-002).
+//
+// The family travels with the version id because the three version families live in three
+// tables, so a lock cannot be a foreign key and the field vocabulary has to be validated against
+// the right one. The write path reads the version row first and states its family here, which is
+// what keeps the table honest.
+type FieldLockRepository interface {
+	// LockScriptField records a lock. Locking a field twice is idempotent rather than a
+	// conflict: the user's intent is "this stays", and repeating it changes nothing.
+	LockScriptField(ctx context.Context, record scriptdomain.FieldLock) error
+	// UnlockScriptField removes a lock. Unlocking an unlocked field is idempotent for the same
+	// reason.
+	UnlockScriptField(ctx context.Context, versionID string, field scriptdomain.LockableField) error
+	// ListScriptFieldLocks returns a version's locks, in the order the family declares its
+	// fields so a caller sees a stable list.
+	ListScriptFieldLocks(ctx context.Context, versionID string) ([]scriptdomain.FieldLock, error)
+}
+
+// EventLinkRepository writes the two link tables migration 000008 created and no writer used.
+//
+// DOMAIN_MODEL section 7.4 says a skeleton's selected events are a LINK TABLE and not JSON
+// ("Lists must be link tables or controlled structures, not Markdown"), and section 7.5 says the
+// same for a strategy's retained/removed/reordered sets. Both tables existed since WP-05 and both
+// had no writer until WP-08, so FR-040's "忠实保留、合并、删减和新增项" had nowhere to land.
+type EventLinkRepository interface {
+	// LinkSkeletonEvents records which story events one skeleton version selected.
+	LinkSkeletonEvents(ctx context.Context, versionID string, eventIDs []string, createdAt time.Time) error
+	// ListSkeletonEventIDs returns the events one skeleton version selected, in the order it
+	// recorded them.
+	ListSkeletonEventIDs(ctx context.Context, versionID string) ([]string, error)
+	// LinkStrategyEvents records one strategy version's per-event treatments.
+	LinkStrategyEvents(ctx context.Context, versionID string, links []scriptdomain.StrategyEventLink, createdAt time.Time) error
+	// ListStrategyEventLinks returns one strategy version's treatments.
+	ListStrategyEventLinks(ctx context.Context, versionID string) ([]scriptdomain.StrategyEventLink, error)
+}
+
+// VersionListRepository reads a version family's history for one episode.
+//
+// The Agent Center and the Script UI both need "every version of this artifact", and neither the
+// existing ports nor the bindings had it: only MAX and CURRENT-APPROVED were ever asked for,
+// which is enough to number the next version and not enough to show a history or to diff two of
+// them.
+type VersionListRepository interface {
+	// ListStorySkeletonVersions returns an episode's skeleton versions newest first.
+	ListStorySkeletonVersions(ctx context.Context, episodeID string) ([]scriptdomain.StorySkeletonVersion, error)
+	// ListAdaptationStrategyVersions returns an episode's strategy versions newest first.
+	ListAdaptationStrategyVersions(ctx context.Context, episodeID string) ([]scriptdomain.AdaptationStrategyVersion, error)
+	// ListScriptVersions returns a script's versions newest first.
+	ListScriptVersions(ctx context.Context, scriptID string) ([]scriptdomain.ScriptVersion, error)
+}
+
 // Repository is everything the script service drives. Infrastructure supplies
 // one implementation of each family over the same database handle.
 type Repository interface {
@@ -149,6 +245,11 @@ type Repository interface {
 	ScriptRepository
 	SceneRepository
 	ShotRepository
+	DialogueRepository
+	StructureRepository
+	FieldLockRepository
+	EventLinkRepository
+	VersionListRepository
 }
 
 // Service holds the episode and script commands and queries.
@@ -170,6 +271,10 @@ type Service struct {
 	clock      Clock
 	ids        IDGenerator
 	events     EventRecorder
+	// projector writes canvas nodes for projected entities. It is optional, and its absence is a
+	// REFUSAL for the projection command rather than a silent no-op: a caller asking for a
+	// projection and getting success would have no way to tell it did not happen.
+	projector CanvasProjector
 }
 
 // Options configures a Service.
@@ -180,4 +285,7 @@ type Options struct {
 	// Events enables the commands that must record a domain event. A nil value
 	// leaves those commands failing closed; every other command still works.
 	Events EventRecorder
+	// Projector enables the canvas-projection command. A nil value leaves that one
+	// command failing closed, which is what a build with no canvas wants.
+	Projector CanvasProjector
 }
