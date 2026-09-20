@@ -24,6 +24,17 @@ const (
 	// storage because it is a configuration fact rather than a persistence failure,
 	// and section 14.2 does not retry it.
 	CategoryUnavailable ErrorCategory = "unavailable"
+	// CategoryModel covers the failures that are the model's: an output that does
+	// not match its contract, a budget the attempt spent, an identifier it invented.
+	// Section 7.7 lists it, and its members are the ones a repair round or a person
+	// addresses rather than a transport retry.
+	CategoryModel ErrorCategory = "model"
+	// CategoryTool covers a tool that ran and failed, which is different from a call
+	// the ACL refused (that is CategorySecurity).
+	CategoryTool ErrorCategory = "tool"
+	// CategoryCancelled reports a caller's cancellation, which section 15 requires
+	// to be recorded as cancelled rather than failed.
+	CategoryCancelled ErrorCategory = "cancelled"
 )
 
 // Error is a domain error with a safe message and no payload.
