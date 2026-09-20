@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"sync"
 
+	agentruntime "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/agentruntime"
 	appfiles "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/files"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/health"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/buildinfo"
@@ -51,12 +52,19 @@ type app struct {
 	// webview in bounded chunks, so a large novel does not cross as one message.
 	importBinding       *desktop.ImportBinding
 	importUploadBinding *desktop.ImportUploadBinding
-	providerWiring      *providerWiring
-	jobWiring           *jobWiring
-	projectWiring       *projectWiring
-	dramaWiring         *dramaWiring
-	emit                func(context.Context, string, ...interface{})
-	newEnvelope         func(string, any) (desktop.Envelope, error)
+	// agentBinding is the WP-07 surface. It is declared before Wails starts so it
+	// exists on the binding surface, and its services are attached only when the
+	// agent stack composes.
+	agentBinding *desktop.AgentBinding
+	// agentStack is the composed WP-07 runtime, held so a later package can reach
+	// the extraction service the runtime is the Extractor for.
+	agentStack     *agentWiring
+	providerWiring *providerWiring
+	jobWiring      *jobWiring
+	projectWiring  *projectWiring
+	dramaWiring    *dramaWiring
+	emit           func(context.Context, string, ...interface{})
+	newEnvelope    func(string, any) (desktop.Envelope, error)
 }
 
 func newApp(shutdown func(context.Context) error) *app {
@@ -191,6 +199,22 @@ func (a *app) startup(ctx context.Context) {
 				}
 				dramaStack.attach(ctx)
 				a.dramaWiring = dramaStack
+
+				// The WP-07 agent stack is composed AFTER the drama stack, because
+				// every tool's handler calls one of its services: the order here is
+				// the dependency direction, made visible in one place.
+				agentStack := composeAgents(agentDeps{
+					Handle: handle, Drama: dramaStack,
+					Providers: wiring.registry, Files: a.files,
+				})
+				if agentStack != nil {
+					if a.agentBinding != nil {
+						desktop.AttachAgent(a.agentBinding, ctx,
+							agentruntime.NewInspector(database.NewAgentRepository(handle.SQL())))
+						desktop.AttachAgentRegistry(a.agentBinding, agentStack.assembly.Registry())
+					}
+					a.agentStack = agentStack
+				}
 			}
 		}
 	}

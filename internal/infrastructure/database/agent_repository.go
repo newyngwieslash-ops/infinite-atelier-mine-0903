@@ -53,6 +53,10 @@ var (
 	_ agentruntime.RevisionCounter = (*AgentRepository)(nil)
 	_ agentruntime.StageRunLocator = (*AgentRepository)(nil)
 	_ memoryapp.Store              = (*AgentRepository)(nil)
+	// The Agent Center's read surface. The same four queries the runtime's writes use, which is
+	// why they are one type: a second reader would be a second place for the row shape to be
+	// got wrong.
+	_ agentruntime.RunReader = (*AgentRepository)(nil)
 )
 
 // CreateRun writes one run.

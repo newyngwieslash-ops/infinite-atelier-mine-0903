@@ -62,6 +62,11 @@ func run() error {
 	application.dramaBinding = &desktop.DramaBinding{}
 	application.importBinding = &desktop.ImportBinding{}
 	application.importUploadBinding = &desktop.ImportUploadBinding{}
+	// The WP-07 agent surface: the Agent Center's run views and the agent
+	// inventory. Its services are attached only when startup composes a
+	// writable database, so a safe-mode build lists its agents and shows no
+	// runs — the agents exist in the binary either way.
+	application.agentBinding = &desktop.AgentBinding{}
 	application.assetsBinding = &desktop.AssetsBinding{}
 	application.emit = wailsruntime.EventsEmit
 	shutdown := newShutdownSequence(application.closeDatabase, logger, logCloser.Close, reportIndependent)
@@ -96,6 +101,7 @@ func run() error {
 			application.assetsBinding,
 			application.importBinding,
 			application.importUploadBinding,
+			application.agentBinding,
 		},
 		SingleInstanceLock: &options.SingleInstanceLock{
 			UniqueId: singleInstanceID,

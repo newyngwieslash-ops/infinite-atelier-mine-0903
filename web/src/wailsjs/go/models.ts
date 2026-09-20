@@ -1,3 +1,126 @@
+export namespace agentruntime {
+	
+	export class MessageView {
+	    id: string;
+	    role: string;
+	    content: string;
+	    createdAt: string;
+	    scopeKey: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new MessageView(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.role = source["role"];
+	        this.content = source["content"];
+	        this.createdAt = source["createdAt"];
+	        this.scopeKey = source["scopeKey"];
+	    }
+	}
+	export class RunSummary {
+	    id: string;
+	    agentKey: string;
+	    layer: string;
+	    status: string;
+	    skillVersionId: string;
+	    modelConfigId: string;
+	    workflowRunId: string;
+	    stageRunId: string;
+	    inputSummary: string;
+	    errorCode: string;
+	    startedAt: string;
+	    finishedAt: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new RunSummary(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.agentKey = source["agentKey"];
+	        this.layer = source["layer"];
+	        this.status = source["status"];
+	        this.skillVersionId = source["skillVersionId"];
+	        this.modelConfigId = source["modelConfigId"];
+	        this.workflowRunId = source["workflowRunId"];
+	        this.stageRunId = source["stageRunId"];
+	        this.inputSummary = source["inputSummary"];
+	        this.errorCode = source["errorCode"];
+	        this.startedAt = source["startedAt"];
+	        this.finishedAt = source["finishedAt"];
+	    }
+	}
+	export class ToolCallView {
+	    id: string;
+	    sequence: number;
+	    toolKey: string;
+	    status: string;
+	    errorCode: string;
+	    inputJson: string;
+	    outputJson: string;
+	    startedAt: string;
+	    finishedAt: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ToolCallView(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.sequence = source["sequence"];
+	        this.toolKey = source["toolKey"];
+	        this.status = source["status"];
+	        this.errorCode = source["errorCode"];
+	        this.inputJson = source["inputJson"];
+	        this.outputJson = source["outputJson"];
+	        this.startedAt = source["startedAt"];
+	        this.finishedAt = source["finishedAt"];
+	    }
+	}
+	export class RunTrace {
+	    run: RunSummary;
+	    messages: MessageView[];
+	    toolCalls: ToolCallView[];
+	    output: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new RunTrace(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.run = this.convertValues(source["run"], RunSummary);
+	        this.messages = this.convertValues(source["messages"], MessageView);
+	        this.toolCalls = this.convertValues(source["toolCalls"], ToolCallView);
+	        this.output = source["output"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+
+}
+
 export namespace desktop {
 	
 	export class AddSourceDocumentVersionRequest {
@@ -60,6 +183,61 @@ export namespace desktop {
 	        this.legacyMetadata = source["legacyMetadata"];
 	    }
 	}
+	export class AgentSpecDTO {
+	    key: string;
+	    layer: string;
+	    skill: string;
+	    allowedTools: string[];
+	    maxToolCalls: number;
+	    maxDurationSeconds: number;
+	    policyLayer: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new AgentSpecDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.key = source["key"];
+	        this.layer = source["layer"];
+	        this.skill = source["skill"];
+	        this.allowedTools = source["allowedTools"];
+	        this.maxToolCalls = source["maxToolCalls"];
+	        this.maxDurationSeconds = source["maxDurationSeconds"];
+	        this.policyLayer = source["policyLayer"];
+	    }
+	}
+	export class AgentInventoryDTO {
+	    agents: AgentSpecDTO[];
+	
+	    static createFrom(source: any = {}) {
+	        return new AgentInventoryDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.agents = this.convertValues(source["agents"], AgentSpecDTO);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	
 	export class AppendImportUploadChunkRequest {
 	    uploadId: string;
 	    chunk: string;
@@ -3347,10 +3525,25 @@ export namespace providers {
 	        this.content = source["content"];
 	    }
 	}
+	export class TextToolCall {
+	    key: string;
+	    arguments?: number[];
+	
+	    static createFrom(source: any = {}) {
+	        return new TextToolCall(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.key = source["key"];
+	        this.arguments = source["arguments"];
+	    }
+	}
 	export class TextResult {
 	    content: string;
 	    finishReason?: string;
 	    model?: string;
+	    toolCalls?: TextToolCall[];
 	
 	    static createFrom(source: any = {}) {
 	        return new TextResult(source);
@@ -3361,7 +3554,26 @@ export namespace providers {
 	        this.content = source["content"];
 	        this.finishReason = source["finishReason"];
 	        this.model = source["model"];
+	        this.toolCalls = this.convertValues(source["toolCalls"], TextToolCall);
 	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 
 }
