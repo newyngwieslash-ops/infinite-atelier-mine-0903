@@ -50,3 +50,4 @@
 | 0009 | Domain event stream and approval semantics | Accepted |
 | 0010 | Document import, the event extraction contract, and the story graph | Accepted |
 | 0011 | The agent runtime, its tool table, and the stage-key rulings | Accepted |
+| 0012 | The script pipeline: one payload, field locks, derived duration, and the stated stage map | Accepted |
