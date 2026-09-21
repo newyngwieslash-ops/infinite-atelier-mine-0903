@@ -188,27 +188,15 @@ func toolTableForTest(keys []string) []agentruntime.Tool {
 	return tools
 }
 
-// TestEveryStageArtifactTypeIsAWriteToolTarget covers the artifact-type field against the tool table.
+// (The artifact-type assertion moved.) This file used to hold `TestEveryStageArtifactTypeIsAWriteToolTarget`,
+// which compared the stage map against a `registered` map LITERAL written in the same file — so changing a
+// stage's artifact type to another value in that literal set stayed green, and the assertion never read
+// the tool table it claimed to check. A mutation run reported it as surviving, correctly.
 //
-// The pipeline names an artifact type so a caller knows what the stage writes, and the name is also how
-// the FIX path finds the version a stage produced — by looking for the write tool whose key ends in
-// `create_<artifact type>`. So an artifact type with no such tool is a stage whose version can never be
-// found, and the failure would be silent: no locks stated, and a revision that respected nothing.
-func TestEveryStageArtifactTypeIsAWriteToolTarget(t *testing.T) {
-	// The two new script tools, plus the version writes the two upstream stages use.
-	registered := map[string]bool{
-		"story_skeleton_version":      true,
-		"adaptation_strategy_version": true,
-		"script_version":              true,
-	}
-	for _, stage := range Stages() {
-		agents, _ := AgentsForStage(stage)
-		if !registered[agents.ArtifactType] {
-			t.Errorf("%s: the artifact type %q is not one of the write tools this build registers",
-				stage, agents.ArtifactType)
-		}
-	}
-}
+// The replacement is `TestTheStageMapStatesTheArtifactTypeAndFamilyTheBuildActuallyHas` in
+// `revision_wp08_test.go`, and it reads `schemas/agent/tools/KEYS.txt` and `skills/script/manifest.json` —
+// the files the build actually loads — so the map is checked against the build rather than against a
+// second copy of itself.
 
 // TestArtifactIDsComeFromToolCallsRatherThanTheAnswer covers AC-AGENT-003's division.
 //

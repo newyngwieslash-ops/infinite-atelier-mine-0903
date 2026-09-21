@@ -149,19 +149,47 @@ func TestMissingStoryReferencesIsScopedToTheProject(t *testing.T) {
 	if len(missing) != 0 {
 		t.Fatalf("its own event came back missing: %v", missing)
 	}
-	// The entity query is the same statement over another table, asserted so a change to one cannot
-	// leave the other behind.
+	// The entity query is the same statement over another table, and it is asserted the SAME WAY as the
+	// event query — with an entity of OUR project that must NOT come back missing.
+	//
+	// The first version asked only about another project's entity, so a query with the project id
+	// hard-coded to the literal this test passes stayed GREEN: the mutant and the correct code gave the
+	// same answer for the only input the test used. A mutation run found it, which is why both directions
+	// are asserted now — the same shape the event query above already had.
+	if _, err := db.ExecContext(ctx, `INSERT INTO story_entities
+		(id, project_id, entity_type, canonical_name, status, created_at, updated_at)
+		VALUES ('entity-ours', 'drama-project', 'character', 'Ours', 'accepted', '`+structureStamp+`', '`+structureStamp+`')`); err != nil {
+		t.Fatalf("seeding our entity: %v", err)
+	}
 	if _, err := db.ExecContext(ctx, `INSERT INTO story_entities
 		(id, project_id, entity_type, canonical_name, status, created_at, updated_at)
 		VALUES ('entity-elsewhere', 'other-drama', 'character', 'Theirs', 'accepted', '`+structureStamp+`', '`+structureStamp+`')`); err != nil {
 		t.Fatalf("seeding the other project's entity: %v", err)
 	}
-	missingEntities, err := repo.MissingStoryEntityIDs(ctx, "drama-project", []string{"entity-elsewhere"})
+	// Our own entity is NOT missing.
+	missingEntities, err := repo.MissingStoryEntityIDs(ctx, "drama-project", []string{"entity-ours"})
+	if err != nil {
+		t.Fatalf("MissingStoryEntityIDs: %v", err)
+	}
+	if len(missingEntities) != 0 {
+		t.Fatalf("our own entity came back missing: %v", missingEntities)
+	}
+	// The other project's is, asked about from ours.
+	missingEntities, err = repo.MissingStoryEntityIDs(ctx, "drama-project", []string{"entity-elsewhere"})
 	if err != nil {
 		t.Fatalf("MissingStoryEntityIDs: %v", err)
 	}
 	if len(missingEntities) != 1 {
 		t.Fatalf("another project's entity resolved for us: %v", missingEntities)
+	}
+	// And it is NOT missing when its own project asks, so the predicate is a comparison rather than a
+	// constant that hides everything.
+	missingEntities, err = repo.MissingStoryEntityIDs(ctx, "other-drama", []string{"entity-elsewhere"})
+	if err != nil {
+		t.Fatalf("MissingStoryEntityIDs: %v", err)
+	}
+	if len(missingEntities) != 0 {
+		t.Fatalf("its own entity came back missing: %v", missingEntities)
 	}
 }
 
