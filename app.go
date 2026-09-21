@@ -8,6 +8,7 @@ import (
 	agentruntime "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/agentruntime"
 	appfiles "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/files"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/health"
+	appprojects "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/projects"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/buildinfo"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/desktop"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/apperror"
@@ -183,7 +184,14 @@ func (a *app) startup(ctx context.Context) {
 			// services, but it fails closed on the same condition: a handle in
 			// safe mode has no SQL pool, so composeDrama returns nil and every
 			// drama method reports unavailable.
-			dramaStack := composeDrama(handle, store)
+			// The canvas writer travels from the project stack into the drama stack, so the script
+			// service's projection command has an implementation in a real build. Without it every
+			// projection refuses, and the refusal is invisible until a user asks for one.
+			var canvasWriter *appprojects.Service
+			if a.projectWiring != nil {
+				canvasWriter = a.projectWiring.projects
+			}
+			dramaStack := composeDrama(handle, store, canvasWriter)
 			if dramaStack != nil {
 				if a.dramaBinding != nil {
 					dramaStack.dramaBinding = a.dramaBinding
@@ -229,6 +237,16 @@ func (a *app) startup(ctx context.Context) {
 					// object the frontend already calls.
 					if a.importBinding != nil {
 						desktop.AttachExtraction(a.importBinding, ctx, agentStack.ExtractionService(dramaStack))
+					}
+					// The script pipeline is attached to the DRAMA binding, because that is the object the
+					// frontend already calls for episodes and scripts. It is attached here rather than in
+					// `dramaStack.attach` because it is composed by the agent stack — which is built after
+					// the drama stack, since every tool's handler calls one of its services.
+					//
+					// Without this the pipeline existed, was tested, and was unreachable: WP-08's stage
+					// commands had no caller, which is the same shape of gap as the canvas projector.
+					if dramaStack != nil && a.dramaBinding != nil {
+						desktop.AttachPipeline(a.dramaBinding, ctx, agentStack.Pipeline())
 					}
 					a.agentStack = agentStack
 				}

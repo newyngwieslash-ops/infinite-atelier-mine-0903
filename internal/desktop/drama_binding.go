@@ -47,6 +47,9 @@ type DramaBinding struct {
 	workflow   *appworkflow.Service
 	staleness  *appstaleness.Service
 	events     *appevents.Service
+	// pipeline drives the three script stages. It is attached by the agent stack, which is where the
+	// runtime and the engine are composed, and a nil one leaves the stage commands failing closed.
+	pipeline StagePipeline
 }
 
 // AttachStory supplies the story service. A nil service leaves the story

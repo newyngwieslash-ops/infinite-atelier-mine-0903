@@ -7,6 +7,7 @@ import (
 	appevents "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/events"
 	appextraction "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/extraction"
 	appimporting "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/importing"
+	appprojects "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/projects"
 	appscript "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/script"
 	appstaleness "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/staleness"
 	appstory "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/story"
@@ -52,7 +53,24 @@ type dramaWiring struct {
 // the story repository satisfies all six of the story aggregate's read and
 // write interfaces, the storyboard repository satisfies its four, and so on.
 // They share the single connection the handle owns.
-func composeDrama(handle *database.Handle, store *filestore.Store) *dramaWiring {
+// composeDrama builds the drama stack over a writable database. It returns nil
+// when the database is unavailable so the bindings stay unattached.
+//
+// `canvas` is the projects service, supplied by the composition root, and it is what the script service's
+// projection command writes through. It comes from the CALLER rather than being built here, and that is a
+// dependency decision: the projects service is composed by `composeProjects`, and a second instance over
+// the same connection would be a second answer to "what is a projection" — the relation registry's
+// validation lives in that service, so two of them could disagree about what may be projected.
+//
+// A nil canvas leaves the projector UNCOMPOSED, and the script service then refuses every projection rather
+// than reporting a silent no-op. That is the honest state for a build whose project stack failed to
+// compose, and the refusal names it.
+//
+// One repository instance per family serves every port that family declares:
+// the story repository satisfies all six of the story aggregate's read and
+// write interfaces, the storyboard repository satisfies its four, and so on.
+// They share the single connection the handle owns.
+func composeDrama(handle *database.Handle, store *filestore.Store, canvas *appprojects.Service) *dramaWiring {
 	if handle == nil || handle.SQL() == nil {
 		return nil
 	}
@@ -98,6 +116,7 @@ func composeDrama(handle *database.Handle, store *filestore.Store) *dramaWiring 
 			Clock:      clock,
 			IDs:        ids,
 			Events:     eventService,
+			Projector:  canvasProjectorFor(canvas),
 		}),
 		storyboard: appstoryboard.NewService(appstoryboard.Options{
 			DirectorPlans: storyboardRepository,
@@ -175,3 +194,48 @@ func (w *dramaWiring) attach(ctx context.Context) {
 		}
 	}
 }
+
+// canvasProjector adapts the projects service's canvas writer to the script service's port.
+//
+// IT EXISTS BECAUSE THE PORT HAD NO PRODUCTION IMPLEMENTATION.  WP-08 wrote `ProjectScriptVersion` with an
+// interface and a refusal for a build without one, and `composeDrama` supplied nothing — so every
+// projection from the desktop refused with "this build cannot project onto a canvas", and
+// `CanvasProjectionCreated` never fired.  The canary did not catch it because the canary's assertion used
+// a TEST DOUBLE: a double that satisfies the port cannot notice that production does not compose one.
+// That is the shape of gap a wiring change closes and a unit test cannot.
+//
+// The adapter is thin on purpose. The projects service owns what a projection IS — the relation registry's
+// validation, the create-or-move semantics, the node's box — and this only translates one projector call
+// into that command.
+type canvasProjector struct {
+	projects *appprojects.Service
+}
+
+// canvasProjectorFor returns the projector for a canvas writer, or nil when there is none.
+//
+// Returning a NIL INTERFACE rather than a non-nil adapter over a nil service is deliberate: the script
+// service tests `s.projector == nil`, so an adapter whose method returned an error would take the other
+// branch and report a storage failure instead of "this build cannot project".
+func canvasProjectorFor(canvas *appprojects.Service) appscript.CanvasProjector {
+	if canvas == nil {
+		return nil
+	}
+	return &canvasProjector{projects: canvas}
+}
+
+// ProjectEntity writes or re-labels one entity's canvas node.
+func (p *canvasProjector) ProjectEntity(ctx context.Context, projectID, entityType, entityID, label string) (string, error) {
+	node, err := p.projects.CreateCanvasProjection(ctx, appprojects.ProjectionRequest{
+		ProjectID:  projectID,
+		EntityType: entityType,
+		EntityID:   entityID,
+		Title:      label,
+	})
+	if err != nil {
+		return "", err
+	}
+	return node.ID, nil
+}
+
+// Compile-time proof that the adapter satisfies what the script service asks for.
+var _ appscript.CanvasProjector = (*canvasProjector)(nil)

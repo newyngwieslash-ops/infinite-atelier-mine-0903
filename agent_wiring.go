@@ -14,6 +14,7 @@ import (
 	appmemory "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/memory"
 	appprojects "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/projects"
 	appproviders "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/providers"
+	appscriptpipeline "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/scriptpipeline"
 	appvalidation "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/validation"
 	appworkflow "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/workflow"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/desktop"
@@ -60,6 +61,11 @@ type agentWiring struct {
 	projectService *appprojects.Service
 	// memoryService is the basic Memory Port of scope item 15.
 	memoryService *appmemory.Service
+	// pipeline drives the three script stages. It lives in this stack rather than the drama one
+	// because it needs the runtime and the ENGINE, which are composed here, and the drama stack's
+	// services, which `agentDeps` already carries. Composing it in the drama stack would mean passing
+	// the runtime and the engine across a module boundary to reach a package that needs both.
+	pipeline *appscriptpipeline.Service
 }
 
 // agentDeps are what composeAgents needs from the other composition roots.
@@ -141,25 +147,54 @@ func composeAgents(deps agentDeps) *agentWiring {
 		Clock:         clock,
 		IDs:           ids,
 	})
+	engine := agentruntime.NewEngine(agentruntime.EngineOptions{
+		Runtime: runtime,
+		// The transitioner is the WORKFLOW service, which owns stage transitions and
+		// writes their audit events in the same transaction (ADR-0009). The
+		// repository below is what adds the two capabilities that service does not
+		// have: counting an attempt's revisions from the event trail, and finding
+		// which run a stage belongs to.
+		//
+		// Composing it this way is what makes the engine drivable by the REAL
+		// services rather than only by a test double — the gap WP-07's engine tests
+		// left open, and the reason workflow.Service gained GetRun.
+		Transitioner: stageTransitioner{workflow: deps.Drama.workflow, revisions: repository},
+		Clock:        clock,
+		IDs:          ids,
+	})
+	// The script pipeline, over this stack's runtime and engine and the drama stack's services.
+	//
+	// It is composed HERE because every dependency it drives is in scope: the engine and the runtime are
+	// this function's, the script and workflow services arrive through `deps.Drama`, and the assembly
+	// carries the skills. Composing it anywhere else would mean passing three of those across a module
+	// boundary — and until this existed the package was reachable only from tests, so no user command
+	// could run a script stage. That is the same shape of gap as the canvas projector: a package with a
+	// real implementation and no production caller.
+	var pipeline *appscriptpipeline.Service
+	if deps.Drama != nil && deps.Drama.script != nil && deps.Drama.workflow != nil {
+		pipeline = appscriptpipeline.New(appscriptpipeline.Options{
+			Engine:   engine,
+			Runtime:  runtime,
+			Script:   deps.Drama.script,
+			Workflow: deps.Drama.workflow,
+			Assembly: assembly,
+			Runs:     repository,
+		})
+	}
 	return &agentWiring{
 		runtime: runtime, assembly: assembly, tools: tools,
 		projectService: projectService, memoryService: memoryService,
-		engine: agentruntime.NewEngine(agentruntime.EngineOptions{
-			Runtime: runtime,
-			// The transitioner is the WORKFLOW service, which owns stage transitions and
-			// writes their audit events in the same transaction (ADR-0009). The
-			// repository below is what adds the two capabilities that service does not
-			// have: counting an attempt's revisions from the event trail, and finding
-			// which run a stage belongs to.
-			//
-			// Composing it this way is what makes the engine drivable by the REAL
-			// services rather than only by a test double — the gap WP-07's engine tests
-			// left open, and the reason workflow.Service gained GetRun.
-			Transitioner: stageTransitioner{workflow: deps.Drama.workflow, revisions: repository},
-			Clock:        clock,
-			IDs:          ids,
-		}),
+		engine:   engine,
+		pipeline: pipeline,
 	}
+}
+
+// Pipeline returns the script pipeline, or nil when this stack is not composed.
+func (w *agentWiring) Pipeline() *appscriptpipeline.Service {
+	if w == nil {
+		return nil
+	}
+	return w.pipeline
 }
 
 // Available reports whether the agent stack is composed.

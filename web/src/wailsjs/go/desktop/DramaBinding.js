@@ -14,6 +14,14 @@ export function AddSourceDocumentVersion(arg1) {
   return window['go']['desktop']['DramaBinding']['AddSourceDocumentVersion'](arg1);
 }
 
+export function ApplyScriptGate(arg1) {
+  return window['go']['desktop']['DramaBinding']['ApplyScriptGate'](arg1);
+}
+
+export function ApproveAdaptationStrategyVersion(arg1) {
+  return window['go']['desktop']['DramaBinding']['ApproveAdaptationStrategyVersion'](arg1);
+}
+
 export function ApprovePanelImage(arg1) {
   return window['go']['desktop']['DramaBinding']['ApprovePanelImage'](arg1);
 }
@@ -22,12 +30,20 @@ export function ApproveScriptVersion(arg1) {
   return window['go']['desktop']['DramaBinding']['ApproveScriptVersion'](arg1);
 }
 
+export function ApproveStorySkeletonVersion(arg1) {
+  return window['go']['desktop']['DramaBinding']['ApproveStorySkeletonVersion'](arg1);
+}
+
 export function ClearStaleMark(arg1) {
   return window['go']['desktop']['DramaBinding']['ClearStaleMark'](arg1);
 }
 
 export function CountDomainEvents(arg1) {
   return window['go']['desktop']['DramaBinding']['CountDomainEvents'](arg1);
+}
+
+export function CreateAdaptationStrategyVersion(arg1) {
+  return window['go']['desktop']['DramaBinding']['CreateAdaptationStrategyVersion'](arg1);
 }
 
 export function CreateChapter(arg1) {
@@ -78,6 +94,10 @@ export function CreateStoryRelation(arg1) {
   return window['go']['desktop']['DramaBinding']['CreateStoryRelation'](arg1);
 }
 
+export function CreateStorySkeletonVersion(arg1) {
+  return window['go']['desktop']['DramaBinding']['CreateStorySkeletonVersion'](arg1);
+}
+
 export function CreateStoryboardItem(arg1) {
   return window['go']['desktop']['DramaBinding']['CreateStoryboardItem'](arg1);
 }
@@ -90,6 +110,10 @@ export function CreateWorkflowRun(arg1) {
   return window['go']['desktop']['DramaBinding']['CreateWorkflowRun'](arg1);
 }
 
+export function DiffVersions(arg1, arg2, arg3) {
+  return window['go']['desktop']['DramaBinding']['DiffVersions'](arg1, arg2, arg3);
+}
+
 export function EnsureScript(arg1) {
   return window['go']['desktop']['DramaBinding']['EnsureScript'](arg1);
 }
@@ -100,6 +124,14 @@ export function EnsureStoryboard(arg1) {
 
 export function GetReviewReport(arg1) {
   return window['go']['desktop']['DramaBinding']['GetReviewReport'](arg1);
+}
+
+export function GetScriptStructure(arg1) {
+  return window['go']['desktop']['DramaBinding']['GetScriptStructure'](arg1);
+}
+
+export function ListAdaptationStrategyVersions(arg1) {
+  return window['go']['desktop']['DramaBinding']['ListAdaptationStrategyVersions'](arg1);
 }
 
 export function ListChapters(arg1) {
@@ -124,6 +156,10 @@ export function ListPanels(arg1) {
 
 export function ListScenes(arg1) {
   return window['go']['desktop']['DramaBinding']['ListScenes'](arg1);
+}
+
+export function ListScriptFieldLocks(arg1) {
+  return window['go']['desktop']['DramaBinding']['ListScriptFieldLocks'](arg1);
 }
 
 export function ListShots(arg1) {
@@ -170,6 +206,10 @@ export function ListStoryRelations(arg1, arg2) {
   return window['go']['desktop']['DramaBinding']['ListStoryRelations'](arg1, arg2);
 }
 
+export function ListStorySkeletonVersions(arg1) {
+  return window['go']['desktop']['DramaBinding']['ListStorySkeletonVersions'](arg1);
+}
+
 export function ListStoryboardItems(arg1) {
   return window['go']['desktop']['DramaBinding']['ListStoryboardItems'](arg1);
 }
@@ -182,12 +222,24 @@ export function ListWorkflowRuns(arg1) {
   return window['go']['desktop']['DramaBinding']['ListWorkflowRuns'](arg1);
 }
 
+export function LockScriptField(arg1, arg2, arg3) {
+  return window['go']['desktop']['DramaBinding']['LockScriptField'](arg1, arg2, arg3);
+}
+
 export function LockStoryEntity(arg1) {
   return window['go']['desktop']['DramaBinding']['LockStoryEntity'](arg1);
 }
 
 export function LockStoryEvent(arg1) {
   return window['go']['desktop']['DramaBinding']['LockStoryEvent'](arg1);
+}
+
+export function LockableFields() {
+  return window['go']['desktop']['DramaBinding']['LockableFields']();
+}
+
+export function ManualEditScript(arg1) {
+  return window['go']['desktop']['DramaBinding']['ManualEditScript'](arg1);
 }
 
 export function MarkStale(arg1) {
@@ -200,6 +252,10 @@ export function MergeChapter(arg1) {
 
 export function OpenStoryConflict(arg1) {
   return window['go']['desktop']['DramaBinding']['OpenStoryConflict'](arg1);
+}
+
+export function ProjectScriptVersion(arg1) {
+  return window['go']['desktop']['DramaBinding']['ProjectScriptVersion'](arg1);
 }
 
 export function RecordReview(arg1) {
@@ -222,8 +278,28 @@ export function ReviseChapter(arg1) {
   return window['go']['desktop']['DramaBinding']['ReviseChapter'](arg1);
 }
 
+export function RunScriptStage(arg1) {
+  return window['go']['desktop']['DramaBinding']['RunScriptStage'](arg1);
+}
+
+export function RunScriptSupervision(arg1) {
+  return window['go']['desktop']['DramaBinding']['RunScriptSupervision'](arg1);
+}
+
+export function SaveScriptStructure(arg1) {
+  return window['go']['desktop']['DramaBinding']['SaveScriptStructure'](arg1);
+}
+
+export function SetDialogueLineLocked(arg1) {
+  return window['go']['desktop']['DramaBinding']['SetDialogueLineLocked'](arg1);
+}
+
 export function SplitChapter(arg1) {
   return window['go']['desktop']['DramaBinding']['SplitChapter'](arg1);
+}
+
+export function StartScriptRevision(arg1) {
+  return window['go']['desktop']['DramaBinding']['StartScriptRevision'](arg1);
 }
 
 export function SubmitGateDecision(arg1) {
@@ -236,6 +312,10 @@ export function TransitionStageRun(arg1) {
 
 export function TransitionWorkflowRun(arg1) {
   return window['go']['desktop']['DramaBinding']['TransitionWorkflowRun'](arg1);
+}
+
+export function UnlockScriptField(arg1, arg2) {
+  return window['go']['desktop']['DramaBinding']['UnlockScriptField'](arg1, arg2);
 }
 
 export function UnlockStoryEntity(arg1) {

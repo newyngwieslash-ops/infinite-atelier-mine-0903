@@ -8,13 +8,21 @@ export function AcceptStoryEvent(arg1:desktop.DecideStoryEventRequest):Promise<d
 
 export function AddSourceDocumentVersion(arg1:desktop.AddSourceDocumentVersionRequest):Promise<desktop.SourceDocumentVersionDTO>;
 
+export function ApplyScriptGate(arg1:desktop.ApplyScriptGateRequest):Promise<desktop.StageRunDTO>;
+
+export function ApproveAdaptationStrategyVersion(arg1:string):Promise<desktop.AdaptationStrategyVersionDTO>;
+
 export function ApprovePanelImage(arg1:desktop.ApprovePanelImageRequest):Promise<desktop.StoryboardPanelVersionDTO>;
 
 export function ApproveScriptVersion(arg1:desktop.ApproveScriptVersionRequest):Promise<desktop.ScriptVersionDTO>;
 
+export function ApproveStorySkeletonVersion(arg1:string):Promise<desktop.StorySkeletonVersionDTO>;
+
 export function ClearStaleMark(arg1:desktop.ClearStaleMarkRequest):Promise<boolean>;
 
 export function CountDomainEvents(arg1:desktop.ListDomainEventsRequest):Promise<number>;
+
+export function CreateAdaptationStrategyVersion(arg1:desktop.CreateAdaptationStrategyVersionRequest):Promise<desktop.AdaptationStrategyVersionDTO>;
 
 export function CreateChapter(arg1:desktop.CreateChapterRequest):Promise<desktop.ChapterDTO>;
 
@@ -40,17 +48,25 @@ export function CreateStoryEvent(arg1:desktop.CreateStoryEventRequest):Promise<d
 
 export function CreateStoryRelation(arg1:desktop.CreateStoryRelationRequest):Promise<desktop.StoryRelationDTO>;
 
+export function CreateStorySkeletonVersion(arg1:desktop.CreateStorySkeletonVersionRequest):Promise<desktop.StorySkeletonVersionDTO>;
+
 export function CreateStoryboardItem(arg1:desktop.CreateStoryboardItemRequest):Promise<desktop.StoryboardItemDTO>;
 
 export function CreateStoryboardVersion(arg1:desktop.CreateStoryboardVersionRequest):Promise<desktop.StoryboardVersionDTO>;
 
 export function CreateWorkflowRun(arg1:desktop.CreateWorkflowRunRequest):Promise<desktop.WorkflowRunDTO>;
 
+export function DiffVersions(arg1:string,arg2:string,arg3:string):Promise<desktop.VersionDiffDTO>;
+
 export function EnsureScript(arg1:string):Promise<desktop.ScriptDTO>;
 
 export function EnsureStoryboard(arg1:string):Promise<desktop.StoryboardDTO>;
 
 export function GetReviewReport(arg1:string):Promise<desktop.ReviewReportDTO>;
+
+export function GetScriptStructure(arg1:string):Promise<desktop.ScriptStructureDTO>;
+
+export function ListAdaptationStrategyVersions(arg1:string):Promise<Array<desktop.AdaptationStrategyVersionDTO>>;
 
 export function ListChapters(arg1:string):Promise<Array<desktop.ChapterDTO>>;
 
@@ -63,6 +79,8 @@ export function ListOpenStaleMarks(arg1:string):Promise<Array<desktop.StaleMarkD
 export function ListPanels(arg1:string):Promise<Array<desktop.StoryboardPanelVersionDTO>>;
 
 export function ListScenes(arg1:string):Promise<Array<desktop.SceneDTO>>;
+
+export function ListScriptFieldLocks(arg1:string):Promise<Array<desktop.FieldLockDTO>>;
 
 export function ListShots(arg1:string):Promise<Array<desktop.ShotDTO>>;
 
@@ -86,21 +104,31 @@ export function ListStoryFactSources(arg1:string,arg2:string):Promise<Array<desk
 
 export function ListStoryRelations(arg1:string,arg2:string):Promise<Array<desktop.StoryRelationDTO>>;
 
+export function ListStorySkeletonVersions(arg1:string):Promise<Array<desktop.StorySkeletonVersionDTO>>;
+
 export function ListStoryboardItems(arg1:string):Promise<Array<desktop.StoryboardItemDTO>>;
 
 export function ListWorkflowEvents(arg1:string):Promise<Array<desktop.WorkflowEventDTO>>;
 
 export function ListWorkflowRuns(arg1:string):Promise<Array<desktop.WorkflowRunDTO>>;
 
+export function LockScriptField(arg1:string,arg2:string,arg3:string):Promise<Array<desktop.FieldLockDTO>>;
+
 export function LockStoryEntity(arg1:desktop.LockStoryEntityRequest):Promise<desktop.StoryEntityDTO>;
 
 export function LockStoryEvent(arg1:desktop.LockStoryEntityRequest):Promise<desktop.StoryEventDTO>;
+
+export function LockableFields():Promise<Array<desktop.LockableFieldDTO>>;
+
+export function ManualEditScript(arg1:desktop.ManualEditScriptRequest):Promise<desktop.ScriptStageResultDTO>;
 
 export function MarkStale(arg1:desktop.MarkStaleRequest):Promise<desktop.StaleMarkDTO>;
 
 export function MergeChapter(arg1:desktop.MergeChapterRequest):Promise<desktop.ChapterDTO>;
 
 export function OpenStoryConflict(arg1:desktop.OpenStoryConflictRequest):Promise<desktop.StoryFactConflictDTO>;
+
+export function ProjectScriptVersion(arg1:desktop.ProjectScriptVersionRequest):Promise<desktop.ProjectScriptVersionResult>;
 
 export function RecordReview(arg1:desktop.RecordReviewRequest):Promise<desktop.ReviewReportDTO>;
 
@@ -112,13 +140,25 @@ export function ResolveStoryConflict(arg1:desktop.ResolveStoryConflictRequest):P
 
 export function ReviseChapter(arg1:desktop.ReviseChapterRequest):Promise<desktop.ChapterDTO>;
 
+export function RunScriptStage(arg1:desktop.RunScriptStageRequest):Promise<desktop.ScriptStageResultDTO>;
+
+export function RunScriptSupervision(arg1:desktop.RunScriptSupervisionRequest):Promise<desktop.ReviewReportDTO>;
+
+export function SaveScriptStructure(arg1:desktop.SaveScriptStructureRequest):Promise<desktop.ScriptVersionDTO>;
+
+export function SetDialogueLineLocked(arg1:desktop.SetDialogueLineLockedRequest):Promise<desktop.DialogueLineDTO>;
+
 export function SplitChapter(arg1:desktop.SplitChapterRequest):Promise<Array<desktop.ChapterDTO>>;
+
+export function StartScriptRevision(arg1:string):Promise<desktop.StageRunDTO>;
 
 export function SubmitGateDecision(arg1:desktop.SubmitGateDecisionRequest):Promise<desktop.UserGateDecisionDTO>;
 
 export function TransitionStageRun(arg1:desktop.TransitionStageRunRequest):Promise<desktop.StageRunDTO>;
 
 export function TransitionWorkflowRun(arg1:desktop.TransitionWorkflowRunRequest):Promise<desktop.WorkflowRunDTO>;
+
+export function UnlockScriptField(arg1:string,arg2:string):Promise<Array<desktop.FieldLockDTO>>;
 
 export function UnlockStoryEntity(arg1:desktop.LockStoryEntityRequest):Promise<desktop.StoryEntityDTO>;
 

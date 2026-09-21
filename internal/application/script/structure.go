@@ -677,6 +677,35 @@ func (s *Service) ListVersions(ctx context.Context, family scriptdomain.VersionF
 	}
 }
 
+// ListSkeletonEventIDs returns the story events one skeleton version selected (§7.4's link set).
+//
+// It is a read the interface needs and the service did not expose: the link table could be WRITTEN through
+// `CreateStorySkeletonVersion` and never read back through this layer, so a UI showing "which events does
+// this episode contain" had no route to the answer. §7.4 makes the set a link table precisely so that
+// question can be asked, and a writer with no reader is the shape AGENTS §12 refuses.
+func (s *Service) ListSkeletonEventIDs(ctx context.Context, versionID string) ([]string, error) {
+	if !s.Available() {
+		return nil, storageFailure()
+	}
+	trimmed := strings.TrimSpace(versionID)
+	if trimmed == "" {
+		return nil, scriptdomain.InvalidError("A version is required.")
+	}
+	return s.repository.ListSkeletonEventIDs(ctx, trimmed)
+}
+
+// ListStrategyEventLinks returns one strategy version's per-event treatments (§7.5's link set).
+func (s *Service) ListStrategyEventLinks(ctx context.Context, versionID string) ([]scriptdomain.StrategyEventLink, error) {
+	if !s.Available() {
+		return nil, storageFailure()
+	}
+	trimmed := strings.TrimSpace(versionID)
+	if trimmed == "" {
+		return nil, scriptdomain.InvalidError("A version is required.")
+	}
+	return s.repository.ListStrategyEventLinks(ctx, trimmed)
+}
+
 // GetScriptStructure returns one script version's whole content.
 func (s *Service) GetScriptStructure(ctx context.Context, scriptVersionID string) (scriptdomain.ScriptStructure, error) {
 	if !s.Available() {
