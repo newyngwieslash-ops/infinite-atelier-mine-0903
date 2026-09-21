@@ -423,6 +423,20 @@ var dependentQueries = []dependentQuery{
 		},
 	},
 	{
+		// The image a panel approved is an asset version (§9.5), so approving a new one
+		// is a change the panels holding the old one must be told about. This is the
+		// query behind PRD FR-050's "替换批准版本时，系统列出受影响的分镜和镜头".
+		//
+		// Only the panels whose APPROVED image it is: a panel that merely HAS the version
+		// among its candidates is unaffected by which one is in force, which is the
+		// distinction `required`-vs-optional makes one level up.
+		dependent: staleness.ArtifactStoryboardPanel,
+		upstream:  staleness.ArtifactAssetVersion,
+		queries: []string{
+			`SELECT id FROM storyboard_panel_versions WHERE approved_image_asset_version_id = ?`,
+		},
+	},
+	{
 		dependent: staleness.ArtifactDirectorPlan,
 		upstream:  staleness.ArtifactScriptVersion,
 		queries: []string{

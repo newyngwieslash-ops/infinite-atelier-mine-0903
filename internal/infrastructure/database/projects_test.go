@@ -20,6 +20,36 @@ func openWP04Repo(t *testing.T) (*ProjectRepository, *CanvasRepository, *AssetRe
 	return NewProjectRepository(handle.SQL()), NewCanvasRepository(handle.SQL()), NewAssetRepository(handle.SQL())
 }
 
+// openHeadHandle is the production open path over the HEAD migration set.
+//
+// It exists because the asset repository stopped being a WP-04-era repository in WP-09.
+// `asset.Version` gained the five columns migration 000009 added and the mapper now reads
+// and writes all of them, so a test that writes a version must run against a schema that
+// HAS them. The WP-04 fixture is still right for the project and canvas repositories,
+// whose tables have not moved, and for the migration tests that assert what each upgrade
+// does to an old database.
+//
+// The alternative — writing only the columns both schemas share — is exactly the shape
+// that hid the five missing fields: a repository that silently drops columns its table
+// has looks identical to one whose table lacks them.
+func openHeadHandle(t *testing.T) *Handle {
+	t.Helper()
+	handle, err := open(context.Background(), filepath.Join(t.TempDir(), "app.db"),
+		filepath.Join(t.TempDir(), "snapshots"), wp05Migrations(t), time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := handle.Close(context.Background()); err != nil {
+			t.Error(err)
+		}
+	})
+	if handle.Mode() != ModeReady {
+		t.Fatalf("database not ready: %v", handle.Err())
+	}
+	return handle
+}
+
 // openWP04Handle returns the raw handle, for tests that need a repository this
 // helper does not construct (the legacy import store, for example) or that must
 // seed a row directly.

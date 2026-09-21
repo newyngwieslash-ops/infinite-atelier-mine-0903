@@ -13,9 +13,15 @@ import (
 
 // legacyHandle opens a fresh database for tests that need the import store or
 // must seed rows directly.
+//
+// It is the HEAD schema rather than the WP-04 one, and the change is WP-09's: the import
+// writes asset VERSIONS through `AssetRepository`, whose mapper now carries migration
+// 000009's five lineage columns. A database that lacked them could not accept the write at
+// all, and the test's own subject — that an imported project's assets and history survive
+// — is about the production schema, which is this one.
 func legacyHandle(t *testing.T) *Handle {
 	t.Helper()
-	return openWP04Handle(t)
+	return openHeadHandle(t)
 }
 
 // bundleFixture builds one importable project bundle.

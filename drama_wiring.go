@@ -14,6 +14,7 @@ import (
 	appstoryboard "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/storyboard"
 	appworkflow "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/workflow"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/desktop"
+	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/staleness"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/infrastructure/database"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/infrastructure/filestore"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/platform/id"
@@ -104,6 +105,22 @@ func composeDrama(handle *database.Handle, store *filestore.Store, canvas *apppr
 		IDs:        ids,
 		Events:     eventService,
 	})
+	// The propagator needs the finder to resolve references and the project resolver to
+	// keep a mark inside the project that asked for it; both read the same connection.
+	//
+	// It is a LOCAL because two services below use it: the asset approval's impact
+	// analysis reaches it through an adapter, and the drama binding's own propagation
+	// commands call it directly. Composing a second instance would be a second answer to
+	// "what does a change reach".
+	stalenessService := appstaleness.NewService(appstaleness.Options{
+		Marks:      stalenessRepository,
+		Dependents: database.NewDependentFinder(connection),
+		Projects:   database.NewProjectResolver(connection),
+		Clock:      clock,
+		IDs:        ids,
+		Events:     eventService,
+	})
+
 	importingService := appimporting.NewService(appimporting.Options{
 		Store:  desktop.NewDocumentStore(store),
 		Story:  storyService,
@@ -139,17 +156,7 @@ func composeDrama(handle *database.Handle, store *filestore.Store, canvas *apppr
 			IDs:       ids,
 			Recorder:  eventService,
 		}),
-		// The propagator needs the finder to resolve references and the project
-		// resolver to keep a mark inside the project that asked for it; both
-		// read the same connection.
-		staleness: appstaleness.NewService(appstaleness.Options{
-			Marks:      stalenessRepository,
-			Dependents: database.NewDependentFinder(connection),
-			Projects:   database.NewProjectResolver(connection),
-			Clock:      clock,
-			IDs:        ids,
-			Events:     eventService,
-		}),
+		staleness: stalenessService,
 		// WP-04 shipped this service with no composition root, recording that
 		// it "exists for WP-05". This is that root.
 		assets: appassets.NewService(appassets.Options{
@@ -157,6 +164,14 @@ func composeDrama(handle *database.Handle, store *filestore.Store, canvas *apppr
 			Clock:      clock,
 			IDs:        ids,
 			Events:     eventService,
+			// The impact half of an approval switch. It is supplied HERE rather than
+			// declared inside the assets package because that package sits below the
+			// staleness service in the dependency order: the service resolves projects
+			// through the asset tables, so importing it there would be a cycle. Without
+			// this adapter §15.1's trigger fires into nothing, which is the state WP-05
+			// left it in — the graph and the graph's four storyboard types existed and
+			// nothing joined them.
+			Propagator: stalenessPropagatorFor(stalenessService),
 		}),
 		// The gap report's own service, over its own port on the same repository. It is
 		// built HERE because a report is what AC-BOARD-001's batch gate reads: without a
@@ -251,3 +266,42 @@ func (p *canvasProjector) ProjectEntity(ctx context.Context, projectID, entityTy
 
 // Compile-time proof that the adapter satisfies what the script service asks for.
 var _ appscript.CanvasProjector = (*canvasProjector)(nil)
+
+// stalenessPropagator adapts the staleness service to the asset service's impact port.
+//
+// IT EXISTS FOR THE SAME REASON `canvasProjector` DOES, one package over: WP-05 built the
+// staleness graph with four storyboard artifact types and built the propagation service,
+// and NOTHING JOINED THEM to an approval switch. §15.1 lists "AssetVersion 默认批准版本
+// 切换" as a trigger, so the rule was written, the mechanism existed, and no code path
+// fired it.
+//
+// It is thin because the two request types differ only in which package declares the
+// artifact-type constant: the assets package cannot import the staleness application
+// service, so it states the same four fields as its own port and this translates them.
+type stalenessPropagator struct {
+	staleness *appstaleness.Service
+}
+
+// stalenessPropagatorFor returns the adapter for a staleness service, or nil when there
+// is none. A nil adapter is what makes the asset service's impact notice optional rather
+// than a refusal.
+func stalenessPropagatorFor(service *appstaleness.Service) appassets.ImpactPropagator {
+	if service == nil {
+		return nil
+	}
+	return &stalenessPropagator{staleness: service}
+}
+
+// PropagateFrom marks what a changed artifact reaches.
+func (p *stalenessPropagator) PropagateFrom(ctx context.Context, request appassets.ImpactRequest) error {
+	_, err := p.staleness.PropagateFrom(ctx, appstaleness.PropagateRequest{
+		ChangedType: staleness.ArtifactType(request.ChangedType),
+		ChangedID:   request.ChangedID,
+		ProjectID:   request.ProjectID,
+		Reason:      request.Reason,
+	})
+	return err
+}
+
+// Compile-time proof that the adapter satisfies the asset service's impact port.
+var _ appassets.ImpactPropagator = (*stalenessPropagator)(nil)

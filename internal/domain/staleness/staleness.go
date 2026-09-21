@@ -99,7 +99,8 @@ var Chain = []ArtifactType{
 //	director_plan        script_version_id
 //	storyboard_version   script_version_id and director_plan_version_id
 //	storyboard_item      storyboard_version_id and shot_id
-//	storyboard_panel     storyboard_item_id
+//	storyboard_panel     storyboard_item_id and the approved image's
+//	                     approved_image_asset_version_id
 //	stage_run            workflow_run_id
 //
 // canvas_node has no entry because a projection's dependency is whatever its
@@ -120,8 +121,16 @@ var dependsOn = map[ArtifactType][]ArtifactType{
 	ArtifactDirectorPlan:       {ArtifactScriptVersion},
 	ArtifactStoryboardVersion:  {ArtifactScriptVersion, ArtifactDirectorPlan},
 	ArtifactStoryboardItem:     {ArtifactStoryboardVersion, ArtifactShot},
-	ArtifactStoryboardPanel:    {ArtifactStoryboardItem},
-	ArtifactStageRun:           {ArtifactWorkflowRun},
+	// The panel consumes the asset version it approved, and this edge is what makes
+	// §15.1's "AssetVersion 默认批准版本切换" a trigger that REACHES anything.
+	//
+	// WP-05 declared only the item edge, so an asset version had no dependent in the
+	// graph at all and an approval switch propagated nowhere. The column is a real one —
+	// `storyboard_panel_versions.approved_image_asset_version_id` — which is what the
+	// table above requires of every edge: the graph is the schema's reference set rather
+	// than a wish about it.
+	ArtifactStoryboardPanel: {ArtifactStoryboardItem, ArtifactAssetVersion},
+	ArtifactStageRun:        {ArtifactWorkflowRun},
 }
 
 // IsValidArtifactType reports whether an artifact kind may be persisted.

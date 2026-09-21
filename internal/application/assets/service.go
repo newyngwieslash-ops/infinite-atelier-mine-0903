@@ -86,6 +86,10 @@ type Service struct {
 	clock      Clock
 	ids        IDGenerator
 	events     EventRecorder
+	// propagator announces an approval switch to the impact graph. It is optional and
+	// its absence is a WARNING rather than a refusal — see `propagate.go`, which states
+	// why the direction differs from the projector's.
+	propagator ImpactPropagator
 }
 
 // Options configures a Service.
@@ -95,11 +99,20 @@ type Options struct {
 	IDs        IDGenerator
 	// Events enables the commands that announce an asset version change.
 	Events EventRecorder
+	// Propagator enables the impact analysis §15.1 requires of an approval switch. A
+	// nil value skips the notice and leaves every command working.
+	Propagator ImpactPropagator
 }
 
 // NewService builds the asset service.
 func NewService(options Options) *Service {
-	return &Service{repository: options.Repository, clock: options.Clock, ids: options.IDs, events: options.Events}
+	return &Service{
+		repository: options.Repository,
+		clock:      options.Clock,
+		ids:        options.IDs,
+		events:     options.Events,
+		propagator: options.Propagator,
+	}
 }
 
 // Available reports whether the service can operate.
@@ -333,7 +346,12 @@ func (s *Service) ApproveVersion(ctx context.Context, request ApproveVersionRequ
 	if err != nil {
 		return asset.Version{}, err
 	}
+	// `replacedID` is the version this approval takes OUT of force, and it is read from
+	// the asset row BEFORE the switch so the propagation below can name it. It is empty
+	// for a first approval, which disturbs nothing.
+	replacedID := ""
 	if previous := record.CurrentApprovedVersionID; previous != "" && previous != version.ID {
+		replacedID = previous
 		// Supersede first, approve second: the schema's partial unique index
 		// allows at most one approved row per asset, so the order matters.
 		if err := s.repository.UpdateVersionStatus(ctx, previous, asset.VersionSuperseded); err != nil {
@@ -358,7 +376,19 @@ func (s *Service) ApproveVersion(ctx context.Context, request ApproveVersionRequ
 		AggregateID:   record.ID,
 		ProjectID:     record.ProjectID,
 	})
+	// Section 15.1's "AssetVersion 默认批准版本切换" is a TRIGGER, and this is where it
+	// fires. It propagates from the version being REPLACED, which is the artifact whose
+	// meaning changed — see `propagate.go`.
+	//
+	// The switch is committed by this point, so a failure here is REPORTED rather than
+	// rolled back: an approved version with no marks is a state the next propagation
+	// repairs, while a refused approval would leave the user unable to approve at all.
+	// The error is returned rather than swallowed, because a caller that asked for the
+	// switch is entitled to know the notice did not go out.
 	version.Status = asset.VersionApproved
+	if err := s.AnnounceAssetVersionChange(ctx, replacedID, "The asset's approved version was switched."); err != nil {
+		return version, err
+	}
 	return version, nil
 }
 

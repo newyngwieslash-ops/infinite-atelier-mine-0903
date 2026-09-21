@@ -134,6 +134,21 @@ func TestDirectDependentsAreTheSchemaEdges(t *testing.T) {
 			want: []ArtifactType{ArtifactStoryboardItem},
 			why:  "storyboard_items.shot_id",
 		},
+		{
+			// WP-09's edge, and the one §15.1's "AssetVersion 默认批准版本切换" needs to
+			// reach anything at all: before it, an asset version had NO dependent in the
+			// graph, so approving a new version propagated nowhere and PRD FR-050's
+			// "替换批准版本时，系统列出受影响的分镜和镜头" had no mechanism behind it.
+			from: ArtifactAssetVersion,
+			want: []ArtifactType{ArtifactStoryboardPanel},
+			why:  "storyboard_panel_versions.approved_image_asset_version_id",
+		},
+		{
+			// The panel keeps its item edge, so adding the asset edge did not replace it.
+			from: ArtifactStoryboardItem,
+			want: []ArtifactType{ArtifactStoryboardPanel},
+			why:  "storyboard_panel_versions.storyboard_item_id",
+		},
 	}
 	for _, testCase := range cases {
 		t.Run(string(testCase.from), func(t *testing.T) {

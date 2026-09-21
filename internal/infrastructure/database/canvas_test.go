@@ -2,6 +2,7 @@ package database
 
 import (
 	"context"
+	"database/sql"
 	"strings"
 	"testing"
 
@@ -312,17 +313,37 @@ func TestCanvasRepositoryChatSessionRoundTrip(t *testing.T) {
 	}
 }
 
+// seedHeadAssetParents writes the rows an asset on the HEAD schema hangs off: one
+// workspace, one project and nothing else. It is deliberately smaller than
+// `dramaSeedParents`, because these tests are about an ASSET and the episode, script and
+// workflow rows that fixture adds are for the storyboard and workflow families.
+func seedHeadAssetParents(t *testing.T, db *sql.DB) {
+	t.Helper()
+	statements := []string{
+		`INSERT INTO workspaces (id, name, kind, created_at, updated_at, revision)
+		 VALUES ('head-ws', 'Local', 'local', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 1)`,
+		`INSERT INTO projects (id, workspace_id, project_type, name, language, status, created_at, updated_at, revision)
+		 VALUES ('head-project', 'head-ws', 'drama', 'Drama', 'zh-CN', 'active', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 1)`,
+	}
+	for _, statement := range statements {
+		if _, err := db.ExecContext(context.Background(), statement); err != nil {
+			t.Fatalf("seeding the asset fixture failed: %v\n%s", err, statement)
+		}
+	}
+}
+
 // TestAssetRepositoryRoundTrip covers assets, versions and file links.
 func TestAssetRepositoryRoundTrip(t *testing.T) {
-	projectsRepo, _, assetsRepo := openWP04Repo(t)
+	// The HEAD schema, because the asset repository targets it: migration 000009 gave
+	// `asset_versions` the five lineage columns AC-ASSET-002 names, and a version written
+	// against the WP-04 table could only ever carry the subset both schemas share.
+	handle := openHeadHandle(t)
+	assetsRepo := NewAssetRepository(handle.SQL())
 	ctx := context.Background()
-	record := sampleProject(t, newTestIDGenerator())
-	if err := projectsRepo.CreateProject(ctx, record); err != nil {
-		t.Fatal(err)
-	}
+	seedHeadAssetParents(t, handle.SQL())
 
 	a := asset.Asset{
-		ID: "asset-1", ProjectID: record.ID, Type: asset.TypeImage, Name: "Hero",
+		ID: "asset-1", ProjectID: "head-project", Type: asset.TypeImage, Name: "Hero",
 		Status: asset.StatusActive, CreatedAt: fixedClock()(), UpdatedAt: fixedClock()(), Revision: 1,
 	}
 	if err := assetsRepo.CreateAsset(ctx, a); err != nil {
@@ -375,14 +396,13 @@ func TestAssetRepositoryRoundTrip(t *testing.T) {
 // TestAssetRepositoryFileLinkRequiresCommittedObject proves the foreign key
 // stops a version from advertising bytes that were never committed.
 func TestAssetRepositoryFileLinkRequiresCommittedObject(t *testing.T) {
-	projectsRepo, _, assetsRepo := openWP04Repo(t)
+	// The HEAD schema, for the reason the round-trip test states.
+	handle := openHeadHandle(t)
+	assetsRepo := NewAssetRepository(handle.SQL())
 	ctx := context.Background()
-	record := sampleProject(t, newTestIDGenerator())
-	if err := projectsRepo.CreateProject(ctx, record); err != nil {
-		t.Fatal(err)
-	}
+	seedHeadAssetParents(t, handle.SQL())
 	if err := assetsRepo.CreateAsset(ctx, asset.Asset{
-		ID: "asset-1", ProjectID: record.ID, Type: asset.TypeImage, Name: "Hero",
+		ID: "asset-1", ProjectID: "head-project", Type: asset.TypeImage, Name: "Hero",
 		Status: asset.StatusActive, CreatedAt: fixedClock()(), UpdatedAt: fixedClock()(), Revision: 1,
 	}); err != nil {
 		t.Fatal(err)

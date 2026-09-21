@@ -173,9 +173,11 @@ func (r *AssetRepository) UpdateAsset(ctx context.Context, record asset.Asset, e
 	return nil
 }
 
-const versionSelectColumns = `SELECT id, asset_id, version_number, status, based_on_version_id, prompt,
-	negative_prompt, provider_config_id, model_config_id, model_parameters_json, generation_job_id,
-	metadata_json, created_by_type, legacy_metadata_json, created_at FROM asset_versions`
+const versionSelectColumns = `SELECT id, asset_id, version_number, status, based_on_version_id,
+	parent_asset_version_id, variant_type, prompt, negative_prompt, provider_config_id,
+	model_config_id, model_parameters_json, seed, generation_job_id, source_agent_run_id,
+	metadata_json, created_by_type, created_by_id, legacy_metadata_json, created_at
+	FROM asset_versions`
 
 // CreateVersion stores an asset version.
 func (r *AssetRepository) CreateVersion(ctx context.Context, version asset.Version) error {
@@ -184,14 +186,17 @@ func (r *AssetRepository) CreateVersion(ctx context.Context, version asset.Versi
 		return storageError("ASSET_STORE_UNAVAILABLE", "The asset store is unavailable.", nil)
 	}
 	_, err := conn.ExecContext(ctx, `INSERT INTO asset_versions
-		(id, asset_id, version_number, status, based_on_version_id, prompt, negative_prompt,
-		 provider_config_id, model_config_id, model_parameters_json, generation_job_id,
-		 metadata_json, created_by_type, legacy_metadata_json, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		(id, asset_id, version_number, status, based_on_version_id, parent_asset_version_id,
+		 variant_type, prompt, negative_prompt, provider_config_id, model_config_id,
+		 model_parameters_json, seed, generation_job_id, source_agent_run_id, metadata_json,
+		 created_by_type, created_by_id, legacy_metadata_json, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		version.ID, version.AssetID, version.VersionNumber, string(version.Status),
-		version.BasedOnVersionID, version.Prompt, version.NegativePrompt, version.ProviderConfigID,
-		version.ModelConfigID, version.ModelParameters, version.GenerationJobID, version.Metadata,
-		string(version.CreatedByType), version.LegacyMetadata, formatTime(version.CreatedAt))
+		version.BasedOnVersionID, version.ParentAssetVersionID, version.VariantType,
+		version.Prompt, version.NegativePrompt, version.ProviderConfigID,
+		version.ModelConfigID, version.ModelParameters, version.Seed, version.GenerationJobID,
+		version.SourceAgentRunID, version.Metadata, string(version.CreatedByType),
+		version.CreatedByID, version.LegacyMetadata, formatTime(version.CreatedAt))
 	if err != nil {
 		if isUniqueViolation(err) {
 			return asset.ConflictError("That version number is already used for this asset.")
@@ -368,9 +373,11 @@ func scanVersion(row rowScanner) (asset.Version, error) {
 	var version asset.Version
 	var status, createdAt string
 	if err := row.Scan(&version.ID, &version.AssetID, &version.VersionNumber, &status,
-		&version.BasedOnVersionID, &version.Prompt, &version.NegativePrompt, &version.ProviderConfigID,
-		&version.ModelConfigID, &version.ModelParameters, &version.GenerationJobID, &version.Metadata,
-		&version.CreatedByType, &version.LegacyMetadata, &createdAt); err != nil {
+		&version.BasedOnVersionID, &version.ParentAssetVersionID, &version.VariantType,
+		&version.Prompt, &version.NegativePrompt, &version.ProviderConfigID,
+		&version.ModelConfigID, &version.ModelParameters, &version.Seed, &version.GenerationJobID,
+		&version.SourceAgentRunID, &version.Metadata, &version.CreatedByType,
+		&version.CreatedByID, &version.LegacyMetadata, &createdAt); err != nil {
 		return asset.Version{}, err
 	}
 	version.Status = asset.VersionStatus(status)

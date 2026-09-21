@@ -152,6 +152,14 @@ func IsValidCreatedByType(value CreatedByType) bool {
 }
 
 // Version is one version of an asset.
+//
+// EVERY COLUMN migration 000009 gave `asset_versions` has a field here, and the five
+// that were missing until WP-09 are the ones AC-ASSET-002 names. The statement that
+// each generated image must be traceable through "parent refs" and "agent/stage" was
+// NOT satisfiable before them: `ParentAssetVersionID` and `VariantType` are the parent
+// reference, `SourceAgentRunID` is the agent and stage the run recorded, `Seed` is what
+// makes a regeneration reproducible, and `CreatedByID` is which agent or user produced
+// it. A version stored with those columns blank is one whose lineage cannot be rebuilt.
 type Version struct {
 	ID            string
 	AssetID       string
@@ -159,18 +167,32 @@ type Version struct {
 	Status        VersionStatus
 	// BasedOnVersionID links a revision to the version it edited.
 	BasedOnVersionID string
+	// ParentAssetVersionID names the version this one was DERIVED from, which is a
+	// different relation from BasedOnVersionID: a revision follows a version of the
+	// same asset, while a derivation may cross assets — a prop extracted from a
+	// character's costume is derived from it without being a revision of it.
+	ParentAssetVersionID string
+	// VariantType names what kind of derivation this is, so §8.5's lineage edge carries
+	// the meaning as well as the link.
+	VariantType      string
 	Prompt           string
 	NegativePrompt   string
 	ProviderConfigID string
 	ModelConfigID    string
 	ModelParameters  string
+	// Seed is the provider's reproduction key. An empty seed is a version nothing can
+	// reproduce exactly, which is the ordinary state of a provider that returns none.
+	Seed string
 	// GenerationJobID links a version to the job that produced it, when it came
 	// from a generation.
 	GenerationJobID string
-	Metadata        string
-	CreatedByType   CreatedByType
-	LegacyMetadata  string
-	CreatedAt       time.Time
+	// SourceAgentRunID names the agent run that produced this version.
+	SourceAgentRunID string
+	Metadata         string
+	CreatedByType    CreatedByType
+	CreatedByID      string
+	LegacyMetadata   string
+	CreatedAt        time.Time
 }
 
 // Validate checks the invariants the schema also enforces.
@@ -345,17 +367,21 @@ func (r Relation) Validate() error {
 type ConsumerType string
 
 const (
-	ConsumerProjectStyle   ConsumerType = "project_style"
-	ConsumerScene          ConsumerType = "scene"
-	ConsumerShot           ConsumerType = "shot"
-	ConsumerStoryboardPane ConsumerType = "storyboard_panel"
-	ConsumerJob            ConsumerType = "job"
-	ConsumerExport         ConsumerType = "export"
+	ConsumerProjectStyle ConsumerType = "project_style"
+	ConsumerScene        ConsumerType = "scene"
+	ConsumerShot         ConsumerType = "shot"
+	// ConsumerStoryboardPanel is a storyboard panel's image reference (§9.5). The name
+	// was misspelled "Pane" until WP-09, and it was REFERENCED NOWHERE — which is why
+	// nothing caught it: a constant no code reads is a constant no compiler checks for
+	// sense. WP-09's batch is its first user.
+	ConsumerStoryboardPanel ConsumerType = "storyboard_panel"
+	ConsumerJob             ConsumerType = "job"
+	ConsumerExport          ConsumerType = "export"
 )
 
 // ConsumerTypes lists the documented consumers in the schema's order.
 var ConsumerTypes = []ConsumerType{
-	ConsumerProjectStyle, ConsumerScene, ConsumerShot, ConsumerStoryboardPane, ConsumerJob, ConsumerExport,
+	ConsumerProjectStyle, ConsumerScene, ConsumerShot, ConsumerStoryboardPanel, ConsumerJob, ConsumerExport,
 }
 
 // IsValidConsumerType reports whether a consumer kind may be persisted.
