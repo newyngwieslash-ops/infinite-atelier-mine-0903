@@ -6,9 +6,11 @@ story.read_rules
 script.read_story_skeleton
 script.read_adaptation_strategy
 script.read_script_version
+script.read_script_structure
 script.create_story_skeleton_version
 script.create_adaptation_strategy_version
 script.create_script_version
+script.create_script_structure
 storyboard.read_director_plan
 storyboard.read_storyboard
 storyboard.create_director_plan_version

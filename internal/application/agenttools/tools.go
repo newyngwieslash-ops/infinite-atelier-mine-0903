@@ -153,11 +153,19 @@ var table = []tableEntry{
 	{"script.read_story_skeleton", agent.ToolRead, "project", 128 * 1024, bindReadStorySkeleton},
 	{"script.read_adaptation_strategy", agent.ToolRead, "project", 128 * 1024, bindReadAdaptationStrategy},
 	{"script.read_script_version", agent.ToolRead, "project", 256 * 1024, bindReadScriptVersion},
+	// The structure is its own read with its own bound, and it is larger than the version row: a
+	// hundred scenes of dialogue and shots is the artifact itself, while the row is a summary of it.
+	{"script.read_script_structure", agent.ToolRead, "project", 256 * 1024, bindReadScriptStructure},
 
 	// --- Script writes ---
 	{"script.create_story_skeleton_version", agent.ToolWrite, "project", 16 * 1024, bindCreateStorySkeletonVersion},
 	{"script.create_adaptation_strategy_version", agent.ToolWrite, "project", 16 * 1024, bindCreateAdaptationStrategyVersion},
 	{"script.create_script_version", agent.ToolWrite, "project", 16 * 1024, bindCreateScriptVersion},
+	// The whole version's content in one call, and NO DURATION FIELD: §17 puts ID, order, uniqueness
+	// and 时长求和 in the code's column, so this tool states a shape and the service derives the rest.
+	// The bound is the output's; the INPUT is bounded by its schema, which is where a model's scene
+	// count is refused rather than truncated.
+	{"script.create_script_structure", agent.ToolWrite, "project", 16 * 1024, bindCreateScriptStructure},
 
 	// --- Storyboard reads ---
 	{"storyboard.read_director_plan", agent.ToolRead, "project", 128 * 1024, bindReadDirectorPlan},

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://infinite-atelier.invalid/schemas/agent/tools/script.create_script_version.json",
   "title": "script.create_script_version input",
-  "description": "Appends a script version for an episode's script. It is a draft, and the artifacts it cites must exist: an invented id fails the stage.",
+  "description": "Appends a script version for an episode's script. It is a DRAFT ROW with no content: write the scenes with script.create_script_structure. The artifacts it cites must exist, and an invented id fails the stage.",
   "type": "object",
   "additionalProperties": false,
   "properties": {
@@ -31,11 +31,6 @@
       "type": "string",
       "description": "What this version contains, in a sentence or two.",
       "maxLength": 4000
-    },
-    "estimatedDurationSeconds": {
-      "type": "integer",
-      "minimum": 0,
-      "maximum": 36000
     },
     "changeReason": {
       "type": "string",

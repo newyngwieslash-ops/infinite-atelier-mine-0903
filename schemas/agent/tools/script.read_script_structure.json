@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://infinite-atelier.invalid/schemas/agent/tools/script.read_script_structure.json",
+  "title": "script.read_script_structure input",
+  "description": "Returns one version's scenes with their dialogue lines and shots, paged by scene ordinal. Separate from reading the version row because the two answer different questions: the row says which version exists, the structure IS the artifact. The duration returned is summed over ALL the version's scenes, not over the page.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "versionId": {
+      "type": "string",
+      "description": "The script version whose content to read.",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "sceneFrom": {
+      "type": "integer",
+      "description": "The first scene ordinal to return, counting from one. Omitted or zero starts at the first scene.",
+      "minimum": 0,
+      "maximum": 200
+    },
+    "sceneTo": {
+      "type": "integer",
+      "description": "The last scene ordinal to return, inclusive. Omitted, zero, or past the end runs to the version's last scene.",
+      "minimum": 0,
+      "maximum": 200
+    }
+  },
+  "required": [
+    "versionId"
+  ]
+}

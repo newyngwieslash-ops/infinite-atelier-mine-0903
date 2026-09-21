@@ -447,6 +447,143 @@ func bindReadScriptVersion(deps Deps) agentruntime.ToolHandler {
 	}
 }
 
+// bindReadScriptStructure returns a version's whole content: its scenes, lines and shots.
+//
+// It is separate from `script.read_script_version` because the two answer different questions and
+// have different weights. The version's own row is small and a supervisor reads it to decide what to
+// load; the structure is the artifact, and section 6.4's "返回结构化、限长数据" is why it is bounded
+// and paged rather than returned with the row. A stage that needs the content asks for it; a stage
+// that needs to know WHICH version exists does not pay for it.
+//
+// The bound is the SCENE count, and over it the call is REFUSED rather than truncated — the rule the
+// whole-content write follows, and the reason is the same: half a script is not a smaller script, it
+// is a document whose duration, ordinals and scene count are all wrong in ways a reader cannot see.
+func bindReadScriptStructure(deps Deps) agentruntime.ToolHandler {
+	return func(ctx context.Context, request agentruntime.ToolRequest) (any, error) {
+		if err := contextDone(ctx); err != nil {
+			return nil, err
+		}
+		var arguments struct {
+			VersionID string `json:"versionId"`
+			SceneFrom int    `json:"sceneFrom"`
+			SceneTo   int    `json:"sceneTo"`
+		}
+		if err := decodeArguments(request.Arguments, &arguments); err != nil {
+			return nil, err
+		}
+		versionID, err := required(arguments.VersionID, "version")
+		if err != nil {
+			return nil, err
+		}
+		version, err := deps.Script.GetScriptVersion(ctx, versionID)
+		if err != nil {
+			return nil, err
+		}
+		script, err := deps.Script.GetScript(ctx, version.ScriptID)
+		if err != nil {
+			return nil, err
+		}
+		if err := assertEpisodeInProject(ctx, deps, request.ProjectID, script.EpisodeID); err != nil {
+			return nil, err
+		}
+		structure, err := deps.Script.GetScriptStructure(ctx, version.ID)
+		if err != nil {
+			return nil, err
+		}
+		from, to := structurePage(arguments.SceneFrom, arguments.SceneTo, len(structure.Scenes))
+		if from > to {
+			// An empty page is a legal answer — a caller asking for scenes beyond the end gets "there
+			// are none there" rather than an error — but a page whose range is INVERTED is a malformed
+			// request, and returning an empty list would read as "this version ends sooner than you
+			// thought".
+			return nil, agent.InvalidError("The requested scene range runs backwards.")
+		}
+		views := make([]map[string]any, 0, to-from+1)
+		for _, scene := range structure.Scenes[from-1 : to] {
+			views = append(views, sceneView(scene))
+		}
+		return map[string]any{
+			"versionId": version.ID,
+			"episodeId": script.EpisodeID,
+			"status":    string(version.Status),
+			// The version's own summed duration travels with every page, because it is a property of
+			// the whole version and a reader comparing it against the episode's target needs it even
+			// when it is looking at one scene.
+			"estimatedDurationSeconds": structure.TotalDurationSeconds(),
+			"sceneCount":               len(structure.Scenes),
+			"sceneFrom":                from,
+			"sceneTo":                  to,
+			"scenes":                   views,
+		}, nil
+	}
+}
+
+// sceneView renders one scene and its children.
+func sceneView(scene scriptdomain.SceneStructure) map[string]any {
+	lines := make([]map[string]any, 0, len(scene.DialogueLines))
+	for _, line := range scene.DialogueLines {
+		lines = append(lines, map[string]any{
+			"ordinal":            line.Ordinal,
+			"type":               string(line.Type),
+			"characterEntityId":  line.CharacterEntityID,
+			"text":               line.Text,
+			"emotion":            line.Emotion,
+			"sourceStoryEventId": line.SourceStoryEventID,
+			"locked":             line.Locked,
+		})
+	}
+	shots := make([]map[string]any, 0, len(scene.Shots))
+	for _, shot := range scene.Shots {
+		shots = append(shots, map[string]any{
+			"ordinal":           shot.Ordinal,
+			"shotNumber":        shot.ShotNumber,
+			"visualDescription": shot.VisualDescription,
+			"status":            string(shot.Status),
+		})
+	}
+	return map[string]any{
+		"sceneId":              scene.ID,
+		"ordinal":              scene.Ordinal,
+		"sceneNumber":          scene.SceneNumber,
+		"slugline":             scene.Slugline,
+		"interiorExterior":     string(scene.InteriorExterior),
+		"locationEntityId":     scene.LocationEntityID,
+		"timeOfDay":            scene.TimeOfDay,
+		"summary":              scene.Summary,
+		"dramaticGoal":         scene.DramaticGoal,
+		"durationSeconds":      scene.EstimatedDurationSeconds,
+		"sourceStoryEventId":   scene.SourceStoryEventID,
+		"isOriginalAdaptation": scene.IsOriginalAdaptation,
+		"dialogueLines":        lines,
+		"shots":                shots,
+	}
+}
+
+// structurePage resolves a caller's scene range into an inclusive window of 1-based ordinals.
+//
+// A page is CLAMPED rather than refused when it runs past the end, because a caller that asked for
+// scenes 1..50 of a 12-scene version has asked a well-formed question whose answer is "twelve": the
+// bound is the runtime's, and section 6.4's paging exists so a caller does not have to know the size
+// in advance. An INVERTED range is the caller's own error and is refused by the caller.
+func structurePage(from, to, total int) (int, int) {
+	if total == 0 {
+		// A version whose content was never written. There is no page to return, and 1..0 is the
+		// empty range the caller's own check turns into a refusal — the honest answer, because
+		// "this version has no structure" is not something a page of it can express.
+		return 1, 0
+	}
+	if from <= 0 {
+		from = 1
+	}
+	if from > total {
+		from = total
+	}
+	if to <= 0 || to > total {
+		to = total
+	}
+	return from, to
+}
+
 // ---------------------------------------------------------------------------
 // Script writes
 // ---------------------------------------------------------------------------
@@ -457,15 +594,16 @@ func bindCreateStorySkeletonVersion(deps Deps) agentruntime.ToolHandler {
 			return nil, err
 		}
 		var arguments struct {
-			EpisodeID                string `json:"episodeId"`
-			BasedOnVersionID         string `json:"basedOnVersionId"`
-			OpeningHook              string `json:"openingHook"`
-			CoreConflict             string `json:"coreConflict"`
-			TurningPointsJSON        string `json:"turningPointsJson"`
-			Climax                   string `json:"climax"`
-			EndingHook               string `json:"endingHook"`
-			EstimatedDurationSeconds int    `json:"estimatedDurationSeconds"`
-			ChangeReason             string `json:"changeReason"`
+			EpisodeID                string   `json:"episodeId"`
+			BasedOnVersionID         string   `json:"basedOnVersionId"`
+			OpeningHook              string   `json:"openingHook"`
+			CoreConflict             string   `json:"coreConflict"`
+			TurningPointsJSON        string   `json:"turningPointsJson"`
+			Climax                   string   `json:"climax"`
+			EndingHook               string   `json:"endingHook"`
+			EstimatedDurationSeconds int      `json:"estimatedDurationSeconds"`
+			SelectedEventIDs         []string `json:"selectedEventIds"`
+			ChangeReason             string   `json:"changeReason"`
 		}
 		if err := decodeArguments(request.Arguments, &arguments); err != nil {
 			return nil, err
@@ -487,10 +625,15 @@ func bindCreateStorySkeletonVersion(deps Deps) agentruntime.ToolHandler {
 			Climax:                   arguments.Climax,
 			EndingHook:               arguments.EndingHook,
 			EstimatedDurationSeconds: arguments.EstimatedDurationSeconds,
-			SourceAgentRunID:         request.AgentRunID,
-			CreatedByType:            createdBy,
-			CreatedByID:              createdByID,
-			ChangeReason:             arguments.ChangeReason,
+			// The selected events are written as §7.4's LINK TABLE rather than as part of the JSON
+			// turning points: which events an episode contains is a queryable relation, and §2.6
+			// forbids carrying queryable state in Markdown or JSON. The service checks each id against
+			// the project and refuses a set that names an event which does not exist.
+			SelectedEventIDs: arguments.SelectedEventIDs,
+			SourceAgentRunID: request.AgentRunID,
+			CreatedByType:    createdBy,
+			CreatedByID:      createdByID,
+			ChangeReason:     arguments.ChangeReason,
 		})
 		if err != nil {
 			return nil, err
@@ -506,15 +649,16 @@ func bindCreateAdaptationStrategyVersion(deps Deps) agentruntime.ToolHandler {
 			return nil, err
 		}
 		var arguments struct {
-			EpisodeID             string `json:"episodeId"`
-			BasedOnVersionID      string `json:"basedOnVersionId"`
-			StrategySummary       string `json:"strategySummary"`
-			AdaptationMode        string `json:"adaptationMode"`
-			MergedEventGroupsJSON string `json:"mergedEventGroupsJson"`
-			OriginalAdditions     string `json:"originalAdditions"`
-			Rationale             string `json:"rationale"`
-			Risks                 string `json:"risks"`
-			ChangeReason          string `json:"changeReason"`
+			EpisodeID             string               `json:"episodeId"`
+			BasedOnVersionID      string               `json:"basedOnVersionId"`
+			StrategySummary       string               `json:"strategySummary"`
+			AdaptationMode        string               `json:"adaptationMode"`
+			MergedEventGroupsJSON string               `json:"mergedEventGroupsJson"`
+			OriginalAdditions     string               `json:"originalAdditions"`
+			Rationale             string               `json:"rationale"`
+			Risks                 string               `json:"risks"`
+			EventLinks            []scriptEventLinkArg `json:"eventLinks"`
+			ChangeReason          string               `json:"changeReason"`
 		}
 		if err := decodeArguments(request.Arguments, &arguments); err != nil {
 			return nil, err
@@ -526,6 +670,26 @@ func bindCreateAdaptationStrategyVersion(deps Deps) agentruntime.ToolHandler {
 		if err := assertEpisodeInProject(ctx, deps, request.ProjectID, episodeID); err != nil {
 			return nil, err
 		}
+		// The treatments are validated HERE rather than left to the database, because the treatment
+		// column has a CHECK and a value that reached it would come back as a constraint failure
+		// instead of a refusal a model can act on. The ORDINAL is not taken from the arguments: the
+		// array's own order is the adaptation's order, which is the only thing §7.5's "reordered" can
+		// mean, and a payload that stated both could state two different ones.
+		links := make([]scriptdomain.StrategyEventLink, 0, len(arguments.EventLinks))
+		for _, link := range arguments.EventLinks {
+			eventID := strings.TrimSpace(link.StoryEventID)
+			if eventID == "" {
+				continue
+			}
+			treatment := scriptdomain.EventTreatment(strings.TrimSpace(link.Treatment))
+			if !scriptdomain.IsValidEventTreatment(treatment) {
+				return nil, agent.InvalidError("That story event treatment is not recognised: " + link.Treatment + ".")
+			}
+			links = append(links, scriptdomain.StrategyEventLink{
+				StoryEventID: eventID,
+				Treatment:    treatment,
+			})
+		}
 		createdBy, createdByID := agentActor(request)
 		version, err := deps.Script.CreateAdaptationStrategyVersion(ctx, appscript.CreateAdaptationStrategyVersionRequest{
 			EpisodeID:             episodeID,
@@ -536,6 +700,7 @@ func bindCreateAdaptationStrategyVersion(deps Deps) agentruntime.ToolHandler {
 			OriginalAdditions:     arguments.OriginalAdditions,
 			Rationale:             arguments.Rationale,
 			Risks:                 arguments.Risks,
+			EventLinks:            links,
 			SourceAgentRunID:      request.AgentRunID,
 			CreatedByType:         createdBy,
 			CreatedByID:           createdByID,
@@ -549,6 +714,14 @@ func bindCreateAdaptationStrategyVersion(deps Deps) agentruntime.ToolHandler {
 	}
 }
 
+// scriptEventLinkArg is one strategy treatment as a model states it.
+//
+// It has no ordinal, for the reason the handler comment gives: the array's position IS the order.
+type scriptEventLinkArg struct {
+	StoryEventID string `json:"storyEventId"`
+	Treatment    string `json:"treatment"`
+}
+
 func bindCreateScriptVersion(deps Deps) agentruntime.ToolHandler {
 	return func(ctx context.Context, request agentruntime.ToolRequest) (any, error) {
 		if err := contextDone(ctx); err != nil {
@@ -560,7 +733,6 @@ func bindCreateScriptVersion(deps Deps) agentruntime.ToolHandler {
 			StorySkeletonVersionID      string `json:"storySkeletonVersionId"`
 			AdaptationStrategyVersionID string `json:"adaptationStrategyVersionId"`
 			Summary                     string `json:"summary"`
-			EstimatedDurationSeconds    int    `json:"estimatedDurationSeconds"`
 			ChangeReason                string `json:"changeReason"`
 		}
 		if err := decodeArguments(request.Arguments, &arguments); err != nil {
@@ -612,7 +784,6 @@ func bindCreateScriptVersion(deps Deps) agentruntime.ToolHandler {
 			BasedOnVersionID:            strings.TrimSpace(arguments.BasedOnVersionID),
 			StorySkeletonVersionID:      strings.TrimSpace(arguments.StorySkeletonVersionID),
 			AdaptationStrategyVersionID: strings.TrimSpace(arguments.AdaptationStrategyVersionID),
-			EstimatedDurationSeconds:    arguments.EstimatedDurationSeconds,
 			Summary:                     arguments.Summary,
 			SourceAgentRunID:            request.AgentRunID,
 			CreatedByType:               createdBy,
@@ -625,6 +796,222 @@ func bindCreateScriptVersion(deps Deps) agentruntime.ToolHandler {
 		return artifactResult("script_generation", "script_version", version.ID,
 			version.VersionNumber, string(version.Status), "script"), nil
 	}
+}
+
+// bindCreateScriptStructure writes a version's whole content: its scenes, lines and shots.
+//
+// IT TAKES NO IDENTIFIERS AND NO ORDINALS, and that is AGENT_CONTRACTS §17 rather than a schema
+// shortcut. "ID、顺序和唯一性" is code's business, so the payload states the shape and the service
+// mints every id, numbers every ordinal from its position, and attaches every line and shot to the
+// scene it was nested under. A model cannot invent a scene id, and it cannot produce a gap in the
+// ordinals, because it never states either.
+//
+// It also takes no DURATION, for the same reason: §17 puts 时长求和 in the code's column, and the
+// version's total is derived by summing its scenes. A declared total and a computed one can disagree
+// while only one of them is checkable.
+//
+// The version must already exist — `script.create_script_version` writes the row and this fills it
+// in — because a version IS its identity and its status, and a content write that created the row
+// would have to decide both.
+func bindCreateScriptStructure(deps Deps) agentruntime.ToolHandler {
+	return func(ctx context.Context, request agentruntime.ToolRequest) (any, error) {
+		if err := contextDone(ctx); err != nil {
+			return nil, err
+		}
+		var arguments struct {
+			EpisodeID        string                    `json:"episodeId"`
+			VersionID        string                    `json:"versionId"`
+			BasedOnVersionID string                    `json:"basedOnVersionId"`
+			Summary          string                    `json:"summary"`
+			ChangeReason     string                    `json:"changeReason"`
+			Scenes           []scriptStructureSceneArg `json:"scenes"`
+		}
+		if err := decodeArguments(request.Arguments, &arguments); err != nil {
+			return nil, err
+		}
+		versionID, err := required(arguments.VersionID, "script version")
+		if err != nil {
+			return nil, err
+		}
+		// The version is read FIRST so its episode can be checked against the run's project. A content
+		// write is the largest write a stage makes, so a scope error here would be the worst one: a
+		// hundred rows of another project's script.
+		version, err := deps.Script.GetScriptVersion(ctx, versionID)
+		if err != nil {
+			return nil, err
+		}
+		script, err := deps.Script.GetScript(ctx, version.ScriptID)
+		if err != nil {
+			return nil, err
+		}
+		if err := assertEpisodeInProject(ctx, deps, request.ProjectID, script.EpisodeID); err != nil {
+			return nil, err
+		}
+		// A caller that ALSO named an episode must be naming this one, otherwise the argument is a
+		// second, unchecked statement of where the write goes.
+		if stated := strings.TrimSpace(arguments.EpisodeID); stated != "" && stated != script.EpisodeID {
+			return nil, agent.InvalidError("That version belongs to a different episode than the one named.")
+		}
+		draft, err := scriptDraftFromArguments(arguments.Scenes)
+		if err != nil {
+			return nil, err
+		}
+		updated, err := deps.Script.CreateScriptStructure(ctx, appscript.CreateScriptStructureRequest{
+			ScriptID:        script.ID,
+			ScriptVersionID: version.ID,
+			// The BASE is not taken from the arguments: the service reads the version row's own
+			// `based_on_version_id`, which a caller cannot restate. The field is passed through only
+			// so a caller's intent is visible in the record.
+			BasedOnVersionID: strings.TrimSpace(arguments.BasedOnVersionID),
+			Draft:            draft,
+			// The project is what makes the reference check possible: a scene citing a story event or
+			// entity is checked against THIS project, and the run's own project is the only one it can
+			// legitimately be.
+			ProjectID:        request.ProjectID,
+			SourceAgentRunID: request.AgentRunID,
+			Summary:          arguments.Summary,
+			CreatedByType:    createdByAgent,
+			CreatedByID:      request.AgentRunID,
+			ChangeReason:     arguments.ChangeReason,
+		})
+		if err != nil {
+			return nil, err
+		}
+		result := artifactResult("script_generation", "script_version", updated.ID,
+			updated.VersionNumber, string(updated.Status), "script")
+		// The DERIVED duration is reported, because it is the number a supervisor compares against the
+		// episode's target and the number a reviewer sees: reporting a count of scenes the model wrote
+		// would be a second statement of the same fact, and the model's count is not the one stored.
+		result["estimatedDurationSeconds"] = updated.EstimatedDurationSeconds
+		result["sceneCount"] = len(arguments.Scenes)
+		return result, nil
+	}
+}
+
+// scriptStructureSceneArg is one scene as a model states it: the shape, with no ids and no ordinals.
+type scriptStructureSceneArg struct {
+	SceneNumber              string                   `json:"sceneNumber"`
+	Slugline                 string                   `json:"slugline"`
+	InteriorExterior         string                   `json:"interiorExterior"`
+	LocationEntityID         string                   `json:"locationEntityId"`
+	TimeOfDay                string                   `json:"timeOfDay"`
+	Summary                  string                   `json:"summary"`
+	DramaticGoal             string                   `json:"dramaticGoal"`
+	EstimatedDurationSeconds int                      `json:"estimatedDurationSeconds"`
+	SourceStoryEventID       string                   `json:"sourceStoryEventId"`
+	IsOriginalAdaptation     bool                     `json:"isOriginalAdaptation"`
+	DialogueLines            []scriptStructureLineArg `json:"dialogueLines"`
+	Shots                    []scriptStructureShotArg `json:"shots"`
+}
+
+// scriptStructureLineArg is one dialogue line as a model states it.
+type scriptStructureLineArg struct {
+	Type               string `json:"type"`
+	CharacterEntityID  string `json:"characterEntityId"`
+	Text               string `json:"text"`
+	Emotion            string `json:"emotion"`
+	PerformanceNote    string `json:"performanceNote"`
+	SourceStoryEventID string `json:"sourceStoryEventId"`
+}
+
+// scriptStructureShotArg is one shot as a model states it.
+type scriptStructureShotArg struct {
+	ShotNumber               string `json:"shotNumber"`
+	ShotSize                 string `json:"shotSize"`
+	CameraAngle              string `json:"cameraAngle"`
+	CameraMovement           string `json:"cameraMovement"`
+	EstimatedDurationSeconds int    `json:"estimatedDurationSeconds"`
+	VisualDescription        string `json:"visualDescription"`
+	ActionDescription        string `json:"actionDescription"`
+	AudioIntent              string `json:"audioIntent"`
+	ContinuityNotes          string `json:"continuityNotes"`
+}
+
+// scriptDraftFromArguments converts the arguments into the domain's draft and validates the two
+// closed vocabularies the schema cannot express as an enum over an optional field.
+//
+// The conversion is not a formality: the interior marking and the line type are CHECK constraints in
+// SQL, so a value this function let through would reach the database and come back as a constraint
+// failure rather than as a refusal naming the field. Both are checked HERE so the model is told what
+// it got wrong.
+func scriptDraftFromArguments(scenes []scriptStructureSceneArg) (scriptdomain.ScriptStructureDraft, error) {
+	if len(scenes) == 0 {
+		return scriptdomain.ScriptStructureDraft{}, agent.InvalidError("The script version needs at least one scene.")
+	}
+	if len(scenes) > scriptdomain.MaxScenesPerVersion {
+		return scriptdomain.ScriptStructureDraft{}, agent.InvalidError("That script version has more scenes than one call may write.")
+	}
+	draft := scriptdomain.ScriptStructureDraft{
+		Scenes: make([]scriptdomain.SceneDraft, 0, len(scenes)),
+	}
+	for _, scene := range scenes {
+		interior := strings.TrimSpace(scene.InteriorExterior)
+		marking := scriptdomain.InteriorExterior(interior)
+		if interior == "" {
+			marking = scriptdomain.InteriorOTHER
+		} else if !scriptdomain.IsValidInteriorExterior(marking) {
+			return scriptdomain.ScriptStructureDraft{}, agent.InvalidError(
+				"That interior/exterior marking is not recognised: " + interior + ".")
+		}
+		if len(scene.DialogueLines) > scriptdomain.MaxLinesPerScene {
+			return scriptdomain.ScriptStructureDraft{}, agent.InvalidError("A scene has more dialogue lines than one call may write.")
+		}
+		if len(scene.Shots) > scriptdomain.MaxShotsPerScene {
+			return scriptdomain.ScriptStructureDraft{}, agent.InvalidError("A scene has more shots than one call may write.")
+		}
+		entry := scriptdomain.SceneDraft{
+			SceneNumber:              strings.TrimSpace(scene.SceneNumber),
+			Slugline:                 scene.Slugline,
+			InteriorExterior:         marking,
+			LocationEntityID:         strings.TrimSpace(scene.LocationEntityID),
+			TimeOfDay:                scene.TimeOfDay,
+			Summary:                  scene.Summary,
+			DramaticGoal:             scene.DramaticGoal,
+			EstimatedDurationSeconds: scene.EstimatedDurationSeconds,
+			SourceStoryEventID:       strings.TrimSpace(scene.SourceStoryEventID),
+			IsOriginalAdaptation:     scene.IsOriginalAdaptation,
+			DialogueLines:            make([]scriptdomain.DialogueLineDraft, 0, len(scene.DialogueLines)),
+			Shots:                    make([]scriptdomain.ShotDraft, 0, len(scene.Shots)),
+		}
+		if entry.EstimatedDurationSeconds < 0 {
+			return scriptdomain.ScriptStructureDraft{}, agent.InvalidError("A scene's duration cannot be negative.")
+		}
+		for _, line := range scene.DialogueLines {
+			stated := strings.TrimSpace(line.Type)
+			lineType := scriptdomain.LineType(stated)
+			if stated == "" {
+				lineType = scriptdomain.LineDialogue
+			} else if !scriptdomain.IsValidLineType(lineType) {
+				return scriptdomain.ScriptStructureDraft{}, agent.InvalidError("That dialogue line type is not recognised: " + stated + ".")
+			}
+			entry.DialogueLines = append(entry.DialogueLines, scriptdomain.DialogueLineDraft{
+				Type:               lineType,
+				CharacterEntityID:  strings.TrimSpace(line.CharacterEntityID),
+				Text:               line.Text,
+				Emotion:            line.Emotion,
+				PerformanceNote:    line.PerformanceNote,
+				SourceStoryEventID: strings.TrimSpace(line.SourceStoryEventID),
+			})
+		}
+		for _, shot := range scene.Shots {
+			if shot.EstimatedDurationSeconds < 0 {
+				return scriptdomain.ScriptStructureDraft{}, agent.InvalidError("A shot's duration cannot be negative.")
+			}
+			entry.Shots = append(entry.Shots, scriptdomain.ShotDraft{
+				ShotNumber:               strings.TrimSpace(shot.ShotNumber),
+				ShotSize:                 shot.ShotSize,
+				CameraAngle:              shot.CameraAngle,
+				CameraMovement:           shot.CameraMovement,
+				EstimatedDurationSeconds: shot.EstimatedDurationSeconds,
+				VisualDescription:        shot.VisualDescription,
+				ActionDescription:        shot.ActionDescription,
+				AudioIntent:              shot.AudioIntent,
+				ContinuityNotes:          shot.ContinuityNotes,
+			})
+		}
+		draft.Scenes = append(draft.Scenes, entry)
+	}
+	return draft, nil
 }
 
 // artifactResult is the shape every write tool returns.

@@ -1,0 +1,213 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://infinite-atelier.invalid/schemas/agent/tools/script.create_script_structure.json",
+  "title": "script.create_script_structure input",
+  "description": "Writes a whole script version's content: its scenes, in order, each with its dialogue lines and its shots. There are NO IDENTIFIER, ORDINAL OR DURATION FIELDS, and their absence is the contract rather than a shortcut: identifiers are minted, an ordinal IS an item's position in these arrays, and the version's duration is summed from its scenes — so a model cannot state any of the three and cannot state one wrongly. The whole payload is written in ONE transaction, so a call that fails leaves no scenes behind. The version must already exist, created by script.create_script_version.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "episodeId": {
+      "type": "string",
+      "description": "Optional. The episode the version belongs to, when the caller already knows it; it must match the version's own episode or the call is refused.",
+      "maxLength": 200
+    },
+    "versionId": {
+      "type": "string",
+      "description": "The script version whose content this is. It must be a draft: an approved or superseded version's content cannot be rewritten.",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "basedOnVersionId": {
+      "type": "string",
+      "description": "The version this content revises, or empty for the first. The LOCK ENFORCEMENT reads the base from the version ROW rather than from this field, so omitting it does not release a user's pins.",
+      "maxLength": 200
+    },
+    "summary": {
+      "type": "string",
+      "description": "What this version contains, in a sentence or two. Empty leaves the summary the base version carries.",
+      "maxLength": 4000
+    },
+    "changeReason": {
+      "type": "string",
+      "description": "Why this version exists, in one sentence.",
+      "maxLength": 500
+    },
+    "scenes": {
+      "type": "array",
+      "description": "The version's scenes in play order, at least one and at most 200. A scene's ordinal is its position in this array.",
+      "minItems": 1,
+      "maxItems": 200,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "sceneNumber": {
+            "type": "string",
+            "description": "The number a slugline shows, such as 12A. Empty is legal: a draft that has not been numbered yet.",
+            "maxLength": 200
+          },
+          "slugline": {
+            "type": "string",
+            "description": "The scene heading.",
+            "maxLength": 500
+          },
+          "interiorExterior": {
+            "type": "string",
+            "description": "The interior/exterior marking. Empty means OTHER.",
+            "enum": [
+              "",
+              "INT",
+              "EXT",
+              "INT_EXT",
+              "OTHER"
+            ]
+          },
+          "locationEntityId": {
+            "type": "string",
+            "description": "The story entity this scene is set in, by id. Empty for a scene whose location is not in the story graph; an id this project does not have fails the call.",
+            "maxLength": 200
+          },
+          "timeOfDay": {
+            "type": "string",
+            "description": "When the scene happens.",
+            "maxLength": 200
+          },
+          "summary": {
+            "type": "string",
+            "description": "What happens in this scene.",
+            "maxLength": 4000
+          },
+          "dramaticGoal": {
+            "type": "string",
+            "description": "What the scene has to accomplish.",
+            "maxLength": 2000
+          },
+          "estimatedDurationSeconds": {
+            "type": "integer",
+            "description": "This scene's own estimate. The version's total is the sum of these and is never stated by a caller.",
+            "minimum": 0,
+            "maximum": 3600
+          },
+          "sourceStoryEventId": {
+            "type": "string",
+            "description": "The story event this scene dramatizes, by id. Empty for an invention of the adaptation; an id this project does not have fails the call.",
+            "maxLength": 200
+          },
+          "isOriginalAdaptation": {
+            "type": "boolean",
+            "description": "True when the scene is not in the source material, so a reader can tell an invention from a faithful adaptation."
+          },
+          "dialogueLines": {
+            "type": "array",
+            "description": "The scene's lines in order, at most 500. A line's ordinal is its position in this array.",
+            "maxItems": 500,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "description": "The kind of line. Empty means dialogue.",
+                  "enum": [
+                    "",
+                    "dialogue",
+                    "narration",
+                    "action",
+                    "transition",
+                    "note"
+                  ]
+                },
+                "characterEntityId": {
+                  "type": "string",
+                  "description": "The story entity who speaks, by id. Empty for a line no character speaks; an id this project does not have fails the call.",
+                  "maxLength": 200
+                },
+                "text": {
+                  "type": "string",
+                  "description": "The line itself.",
+                  "maxLength": 4000
+                },
+                "emotion": {
+                  "type": "string",
+                  "description": "How the line is delivered.",
+                  "maxLength": 200
+                },
+                "performanceNote": {
+                  "type": "string",
+                  "description": "A note for the performance.",
+                  "maxLength": 1000
+                },
+                "sourceStoryEventId": {
+                  "type": "string",
+                  "description": "The story event this line belongs to, by id. Empty when it belongs to no single event.",
+                  "maxLength": 200
+                }
+              }
+            }
+          },
+          "shots": {
+            "type": "array",
+            "description": "The scene's camera setups in order, at most 200. A shot's ordinal is its position in this array. A shot written here is a DRAFT: its number and its refinement belong to the storyboard stage.",
+            "maxItems": 200,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "shotNumber": {
+                  "type": "string",
+                  "description": "The label a storyboard will show. Empty while the shot is unnumbered.",
+                  "maxLength": 200
+                },
+                "shotSize": {
+                  "type": "string",
+                  "description": "The framing, such as a wide or a close-up.",
+                  "maxLength": 200
+                },
+                "cameraAngle": {
+                  "type": "string",
+                  "description": "The camera angle.",
+                  "maxLength": 200
+                },
+                "cameraMovement": {
+                  "type": "string",
+                  "description": "How the camera moves.",
+                  "maxLength": 200
+                },
+                "estimatedDurationSeconds": {
+                  "type": "integer",
+                  "description": "This shot's own estimate. It refines the scene's estimate rather than adding to the version's total.",
+                  "minimum": 0,
+                  "maximum": 3600
+                },
+                "visualDescription": {
+                  "type": "string",
+                  "description": "What is in frame.",
+                  "maxLength": 4000
+                },
+                "actionDescription": {
+                  "type": "string",
+                  "description": "What happens in the shot.",
+                  "maxLength": 4000
+                },
+                "audioIntent": {
+                  "type": "string",
+                  "description": "What the shot should sound like.",
+                  "maxLength": 2000
+                },
+                "continuityNotes": {
+                  "type": "string",
+                  "description": "What must stay consistent with neighbouring shots.",
+                  "maxLength": 2000
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "required": [
+    "versionId",
+    "scenes"
+  ]
+}

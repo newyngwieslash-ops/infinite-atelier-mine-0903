@@ -131,13 +131,35 @@ const TOOLS = [
         properties: { versionId: id("The script version to read.") },
         required: ["versionId"],
     },
+    {
+        key: "script.read_script_structure",
+        title: "Read a script version's structure",
+        description:
+            "Returns one version's scenes with their dialogue lines and shots, paged by scene ordinal. Separate from reading the version row because the two answer different questions: the row says which version exists, the structure IS the artifact. The duration returned is summed over ALL the version's scenes, not over the page.",
+        properties: {
+            versionId: id("The script version whose content to read."),
+            sceneFrom: {
+                type: "integer",
+                description: "The first scene ordinal to return, counting from one. Omitted or zero starts at the first scene.",
+                minimum: 0,
+                maximum: 200,
+            },
+            sceneTo: {
+                type: "integer",
+                description: "The last scene ordinal to return, inclusive. Omitted, zero, or past the end runs to the version's last scene.",
+                minimum: 0,
+                maximum: 200,
+            },
+        },
+        required: ["versionId"],
+    },
 
     // --- Script writes ---
     {
         key: "script.create_story_skeleton_version",
         title: "Create a story skeleton version",
         description:
-            "Appends a skeleton version for an episode. The version is a draft: this tool cannot approve it, which is the user's gate.",
+            "Appends a skeleton version for an episode, with the story events it selects. The version is a draft: this tool cannot approve it, which is the user's gate.",
         properties: {
             episodeId: id("The episode this version belongs to."),
             basedOnVersionId: str("The version this one revises, or empty for the first."),
@@ -147,6 +169,10 @@ const TOOLS = [
             climax: str("The climax.", 2000),
             endingHook: str("The ending hook.", 2000),
             estimatedDurationSeconds: { type: "integer", minimum: 0, maximum: 36000 },
+            selectedEventIds: strings(
+                "The story events this skeleton selects, by id. They are written as a link table, so which events an episode contains is a query that can be asked. An id this project does not have fails the call.",
+                200,
+            ),
             changeReason: str("Why this version exists, in one sentence.", 500),
         },
         required: ["episodeId"],
@@ -155,20 +181,40 @@ const TOOLS = [
         key: "script.create_adaptation_strategy_version",
         title: "Create an adaptation strategy version",
         description:
-            "Appends an adaptation strategy version for an episode. It is a draft: the tool cannot approve it, which is the user's gate.",
+            "Appends an adaptation strategy version for an episode, with its per-event treatment. It is a draft: the tool cannot approve it, which is the user's gate.",
         properties: {
             episodeId: id("The episode this version belongs to."),
             basedOnVersionId: str("The version this one revises, or empty for the first."),
             strategySummary: str("The strategy in one paragraph.", 4000),
             adaptationMode: {
                 type: "string",
-                description: "How the source is being adapted.",
+                description: "How the source is being adapted. Empty means balanced.",
+                enum: ["", "faithful", "balanced", "aggressive"],
                 maxLength: 60,
             },
             mergedEventGroupsJson: str("Which story events were grouped into one beat, as JSON.", 16000),
             originalAdditions: str("Material the adaptation adds that the source does not contain.", 8000),
             rationale: str("Why this strategy, in the agent's own summary.", 4000),
             risks: str("What could go wrong with this strategy.", 4000),
+            eventLinks: {
+                type: "array",
+                description:
+                    "What this strategy does with each story event. The ARRAY ORDER is the order the events appear in the adaptation, which is what 'reordered' means; there is deliberately no ordinal field, because a payload that stated both could state two different ones. An event id this project does not have fails the call, and so does treating one event twice.",
+                maxItems: 500,
+                items: {
+                    type: "object",
+                    additionalProperties: false,
+                    properties: {
+                        storyEventId: id("The story event this treatment is about."),
+                        treatment: {
+                            type: "string",
+                            description: "What the strategy does with the event.",
+                            enum: ["retained", "removed", "reordered"],
+                        },
+                    },
+                    required: ["storyEventId", "treatment"],
+                },
+            },
             changeReason: str("Why this version exists, in one sentence.", 500),
         },
         required: ["episodeId"],
@@ -177,17 +223,110 @@ const TOOLS = [
         key: "script.create_script_version",
         title: "Create a script version",
         description:
-            "Appends a script version for an episode's script. It is a draft, and the artifacts it cites must exist: an invented id fails the stage.",
+            "Appends a script version for an episode's script. It is a DRAFT ROW with no content: write the scenes with script.create_script_structure. The artifacts it cites must exist, and an invented id fails the stage.",
         properties: {
             episodeId: id("The episode whose script this version belongs to."),
             basedOnVersionId: str("The version this one revises, or empty for the first."),
             storySkeletonVersionId: str("The skeleton version this script was written from."),
             adaptationStrategyVersionId: str("The strategy version this script followed."),
             summary: str("What this version contains, in a sentence or two.", 4000),
-            estimatedDurationSeconds: { type: "integer", minimum: 0, maximum: 36000 },
             changeReason: str("Why this version exists, in one sentence.", 500),
         },
         required: ["episodeId"],
+    },
+    {
+        key: "script.create_script_structure",
+        title: "Write a script version's structure",
+        description:
+            "Writes a whole script version's content: its scenes, in order, each with its dialogue lines and its shots. There are NO IDENTIFIER, ORDINAL OR DURATION FIELDS, and their absence is the contract rather than a shortcut: identifiers are minted, an ordinal IS an item's position in these arrays, and the version's duration is summed from its scenes — so a model cannot state any of the three and cannot state one wrongly. The whole payload is written in ONE transaction, so a call that fails leaves no scenes behind. The version must already exist, created by script.create_script_version.",
+        properties: {
+            episodeId: str("Optional. The episode the version belongs to, when the caller already knows it; it must match the version's own episode or the call is refused."),
+            versionId: id("The script version whose content this is. It must be a draft: an approved or superseded version's content cannot be rewritten."),
+            basedOnVersionId: str("The version this content revises, or empty for the first. The LOCK ENFORCEMENT reads the base from the version ROW rather than from this field, so omitting it does not release a user's pins."),
+            summary: str("What this version contains, in a sentence or two. Empty leaves the summary the base version carries.", 4000),
+            changeReason: str("Why this version exists, in one sentence.", 500),
+            scenes: {
+                type: "array",
+                description: "The version's scenes in play order, at least one and at most 200. A scene's ordinal is its position in this array.",
+                minItems: 1,
+                maxItems: 200,
+                items: {
+                    type: "object",
+                    additionalProperties: false,
+                    properties: {
+                        sceneNumber: str("The number a slugline shows, such as 12A. Empty is legal: a draft that has not been numbered yet."),
+                        slugline: str("The scene heading.", 500),
+                        interiorExterior: {
+                            type: "string",
+                            description: "The interior/exterior marking. Empty means OTHER.",
+                            enum: ["", "INT", "EXT", "INT_EXT", "OTHER"],
+                        },
+                        locationEntityId: str("The story entity this scene is set in, by id. Empty for a scene whose location is not in the story graph; an id this project does not have fails the call."),
+                        timeOfDay: str("When the scene happens.", 200),
+                        summary: str("What happens in this scene.", 4000),
+                        dramaticGoal: str("What the scene has to accomplish.", 2000),
+                        estimatedDurationSeconds: {
+                            type: "integer",
+                            description: "This scene's own estimate. The version's total is the sum of these and is never stated by a caller.",
+                            minimum: 0,
+                            maximum: 3600,
+                        },
+                        sourceStoryEventId: str("The story event this scene dramatizes, by id. Empty for an invention of the adaptation; an id this project does not have fails the call."),
+                        isOriginalAdaptation: {
+                            type: "boolean",
+                            description: "True when the scene is not in the source material, so a reader can tell an invention from a faithful adaptation.",
+                        },
+                        dialogueLines: {
+                            type: "array",
+                            description: "The scene's lines in order, at most 500. A line's ordinal is its position in this array.",
+                            maxItems: 500,
+                            items: {
+                                type: "object",
+                                additionalProperties: false,
+                                properties: {
+                                    type: {
+                                        type: "string",
+                                        description: "The kind of line. Empty means dialogue.",
+                                        enum: ["", "dialogue", "narration", "action", "transition", "note"],
+                                    },
+                                    characterEntityId: str("The story entity who speaks, by id. Empty for a line no character speaks; an id this project does not have fails the call."),
+                                    text: str("The line itself.", 4000),
+                                    emotion: str("How the line is delivered.", 200),
+                                    performanceNote: str("A note for the performance.", 1000),
+                                    sourceStoryEventId: str("The story event this line belongs to, by id. Empty when it belongs to no single event."),
+                                },
+                            },
+                        },
+                        shots: {
+                            type: "array",
+                            description: "The scene's camera setups in order, at most 200. A shot's ordinal is its position in this array. A shot written here is a DRAFT: its number and its refinement belong to the storyboard stage.",
+                            maxItems: 200,
+                            items: {
+                                type: "object",
+                                additionalProperties: false,
+                                properties: {
+                                    shotNumber: str("The label a storyboard will show. Empty while the shot is unnumbered."),
+                                    shotSize: str("The framing, such as a wide or a close-up.", 200),
+                                    cameraAngle: str("The camera angle.", 200),
+                                    cameraMovement: str("How the camera moves.", 200),
+                                    estimatedDurationSeconds: {
+                                        type: "integer",
+                                        description: "This shot's own estimate. It refines the scene's estimate rather than adding to the version's total.",
+                                        minimum: 0,
+                                        maximum: 3600,
+                                    },
+                                    visualDescription: str("What is in frame.", 4000),
+                                    actionDescription: str("What happens in the shot.", 4000),
+                                    audioIntent: str("What the shot should sound like.", 2000),
+                                    continuityNotes: str("What must stay consistent with neighbouring shots.", 2000),
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+        },
+        required: ["versionId", "scenes"],
     },
 
     // --- Storyboard reads ---

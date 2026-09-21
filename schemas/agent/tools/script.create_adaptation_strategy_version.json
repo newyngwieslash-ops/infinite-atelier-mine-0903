@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://infinite-atelier.invalid/schemas/agent/tools/script.create_adaptation_strategy_version.json",
   "title": "script.create_adaptation_strategy_version input",
-  "description": "Appends an adaptation strategy version for an episode. It is a draft: the tool cannot approve it, which is the user's gate.",
+  "description": "Appends an adaptation strategy version for an episode, with its per-event treatment. It is a draft: the tool cannot approve it, which is the user's gate.",
   "type": "object",
   "additionalProperties": false,
   "properties": {
@@ -24,7 +24,13 @@
     },
     "adaptationMode": {
       "type": "string",
-      "description": "How the source is being adapted.",
+      "description": "How the source is being adapted. Empty means balanced.",
+      "enum": [
+        "",
+        "faithful",
+        "balanced",
+        "aggressive"
+      ],
       "maxLength": 60
     },
     "mergedEventGroupsJson": {
@@ -46,6 +52,36 @@
       "type": "string",
       "description": "What could go wrong with this strategy.",
       "maxLength": 4000
+    },
+    "eventLinks": {
+      "type": "array",
+      "description": "What this strategy does with each story event. The ARRAY ORDER is the order the events appear in the adaptation, which is what 'reordered' means; there is deliberately no ordinal field, because a payload that stated both could state two different ones. An event id this project does not have fails the call, and so does treating one event twice.",
+      "maxItems": 500,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "storyEventId": {
+            "type": "string",
+            "description": "The story event this treatment is about.",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "treatment": {
+            "type": "string",
+            "description": "What the strategy does with the event.",
+            "enum": [
+              "retained",
+              "removed",
+              "reordered"
+            ]
+          }
+        },
+        "required": [
+          "storyEventId",
+          "treatment"
+        ]
+      }
     },
     "changeReason": {
       "type": "string",
