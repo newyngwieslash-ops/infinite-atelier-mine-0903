@@ -117,14 +117,19 @@ func TestTheStageMapAgreesWithTheRegistryWhereTheRegistryCanAnswer(t *testing.T)
 			t.Errorf("%s: the registry resolved no supervisor, and every other script stage's shares its name", stage)
 		}
 	}
-	// The gap is asserted rather than described: if a future manifest renamed the supervisor so the
-	// last-segment match found it, this is what tells a reader the map's third entry stopped being a
-	// repair — and the map would then be a statement that happens to agree rather than the reason the
-	// behaviour is right.
-	if _, ok := registry.SupervisionFor("script_generation"); ok {
-		t.Log("the registry now resolves script_generation's supervisor, so the map's third entry is a statement rather than a repair")
-	} else {
-		t.Log("confirmed: the last-segment heuristic cannot reach script_generation, which is why the map states it")
+	// The gap is asserted rather than described, which the first version of this test got wrong: it
+	// logged the outcome in both branches, so nothing failed if a future manifest made the registry
+	// resolve the supervisor — and the map's third entry would have silently stopped being the reason the
+	// behaviour is right. An independent review found the pair of `t.Log`s under a comment promising an
+	// assertion.
+	//
+	// This IS the assertion, and it is deliberately the opposite of the loop above: the registry must NOT
+	// resolve `script_generation`'s supervisor. If it ever does, this fails and the reader is sent to the
+	// map's comment to decide whether the entry is still load-bearing.
+	if supervision, ok := registry.SupervisionFor("script_generation"); ok {
+		t.Fatalf("the last-segment heuristic now resolves script_generation's supervisor to %q; "+
+			"the map's third entry was a repair for its failure to, so the comment stating that is now wrong",
+			supervision.Key)
 	}
 }
 

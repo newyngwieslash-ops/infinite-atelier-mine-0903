@@ -294,11 +294,16 @@ func (l FieldLock) Validate() error {
 
 // ContentIsFrozen reports whether a version's status forbids rewriting its content.
 //
-// It is `versioning.IsContentFrozen` under this package's name, and the indirection is
-// deliberate: the rule is §2.5's and lives in that package, while the CALLER that must obey it
-// is this aggregate's write path. WP-05 wrote the predicate and recorded that no command
-// called it yet ("WP-08 introduces the script-edit path that will call it"); this is where it
-// is called.
+// It is `versioning.IsContentFrozen` under this package's name, and the indirection is deliberate: the
+// rule is §2.5's and lives in that package, while the caller that must obey it is this aggregate's write
+// path.
+//
+// THE WRITE PATH REACHES THE RULE THROUGH `versioning` DIRECTLY, and an independent review found this
+// comment claiming otherwise: `application/script/enforcement.go`'s `assertWritable` calls
+// `versioning.IsContentFrozen`, not this wrapper. So this function has no production caller either. It is
+// kept because it is the name a caller INSIDE this package would reach for — the domain is where a rule
+// about a version's status belongs — and because removing it would make `versioning` the only spelling of
+// §2.5 in the script domain, which is a different design than the one this package documents.
 func ContentIsFrozen(status versioning.Status) bool {
 	return versioning.IsContentFrozen(status)
 }

@@ -589,20 +589,53 @@ func (s *Service) ListScriptFieldLocks(ctx context.Context, versionID string) ([
 
 // familyOfVersion finds which family a version id belongs to, by asking each family in turn.
 //
-// Three lookups is the honest way to answer a question the schema cannot: there is no table of
-// versions, so nothing states it. The order is the pipeline's, so the common case — a skeleton or
-// a strategy while the user is reviewing the early stages — resolves first. A not-found from all
-// three is the refusal, and it names what was searched for rather than which lookup failed.
+// Three lookups is the honest way to answer a question the schema cannot: there is no table of versions,
+// so nothing states it. The order is the pipeline's, so the common case — a skeleton or a strategy while
+// the user is reviewing the early stages — resolves first.
+//
+// A NOT-FOUND AND A STORAGE FAILURE ARE TOLD APART, which the first version of this function did not do:
+// it treated every error as "not this family" and fell through to a not-found, so a database that could
+// not be read produced "that version does not exist". The distinction matters because the two send a
+// caller to different places — a stale identifier versus a broken store — and the second must not be
+// reported as the first.
 func (s *Service) familyOfVersion(ctx context.Context, versionID string) (scriptdomain.VersionFamily, error) {
-	if _, err := s.repository.GetStorySkeletonVersion(ctx, versionID); err == nil {
-		return scriptdomain.FamilyStorySkeleton, nil
+	target := strings.TrimSpace(versionID)
+	if target == "" {
+		return "", scriptdomain.InvalidError("A version is required.")
 	}
-	if _, err := s.repository.GetAdaptationStrategyVersion(ctx, versionID); err == nil {
-		return scriptdomain.FamilyAdaptationStrategy, nil
+	for _, candidate := range []struct {
+		family scriptdomain.VersionFamily
+		lookup func(context.Context, string) error
+	}{
+		{scriptdomain.FamilyStorySkeleton, func(ctx context.Context, id string) error {
+			_, err := s.repository.GetStorySkeletonVersion(ctx, id)
+			return err
+		}},
+		{scriptdomain.FamilyAdaptationStrategy, func(ctx context.Context, id string) error {
+			_, err := s.repository.GetAdaptationStrategyVersion(ctx, id)
+			return err
+		}},
+		{scriptdomain.FamilyScript, func(ctx context.Context, id string) error {
+			_, err := s.repository.GetScriptVersion(ctx, id)
+			return err
+		}},
+	} {
+		err := candidate.lookup(ctx, target)
+		if err == nil {
+			return candidate.family, nil
+		}
+		// A NOT-FOUND is expected while searching, so the walk continues. Anything else is the store
+		// failing, and continuing would turn it into "no version has that id" after two more lookups.
+		if domainErr, ok := scriptdomain.AsError(err); ok && domainErr.Category == scriptdomain.CategoryNotFound {
+			continue
+		}
+		return "", err
 	}
-	if _, err := s.repository.GetScriptVersion(ctx, versionID); err == nil {
-		return scriptdomain.FamilyScript, nil
-	}
+	// The refusal does NOT echo the identifier, and that is the domain's own rule rather than an
+	// oversight: `NotFoundError` reports the category with a fixed message because the id may be
+	// attacker-controlled text and the caller already knows what it asked for. What this function owes a
+	// caller is the DISTINCTION between "no version has that id" and "the store failed", and that is
+	// what the loop above provides.
 	return "", scriptdomain.NotFoundError()
 }
 
@@ -649,8 +682,33 @@ func (s *Service) DiffVersions(ctx context.Context, family scriptdomain.VersionF
 		if err != nil {
 			return scriptdomain.VersionDiff{}, err
 		}
-		return scriptdomain.DiffScriptStructure(from, to), nil
+		// The structure lock is read HERE and passed in, because the domain's diff is a pure function
+		// and this is the layer that owns the repository. Without it every item's `Locked` would be
+		// false, and a reader looking at a revision of a pinned version would see "nothing was pinned".
+		structureLocked, err := s.hasStructureLock(ctx, fromID)
+		if err != nil {
+			return scriptdomain.VersionDiff{}, err
+		}
+		return scriptdomain.DiffScriptStructureLocked(from, to, structureLocked), nil
 	}
+}
+
+// hasStructureLock reports whether a version's structure is pinned.
+//
+// A lock row is read from the version being COMPARED FROM, which is the one a revision was written
+// against: the question a diff answers is "did the revision respect what was pinned", and what was
+// pinned is a fact about the older side.
+func (s *Service) hasStructureLock(ctx context.Context, versionID string) (bool, error) {
+	locks, err := s.repository.ListScriptFieldLocks(ctx, versionID)
+	if err != nil {
+		return false, err
+	}
+	for _, lock := range locks {
+		if lock.Field == scriptdomain.LockScriptStructure {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // ListVersions returns one episode's or script's whole version history.

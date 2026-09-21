@@ -11,6 +11,7 @@ import {
     createAdaptationStrategyVersion,
     createEpisode,
     createStorySkeletonVersion,
+    createWorkflowRun,
     diffVersions,
     ensureScript,
     getScriptStructure,
@@ -91,6 +92,35 @@ export function ScriptSection({ projectId, episodes, activeEpisodeId, onSelectEp
     const [duration, setDuration] = useState<number | null>(null);
     const [busy, setBusy] = useState(false);
     const [script, setScript] = useState<desktop.ScriptDTO | null>(null);
+    // The episode's workflow run. A stage belongs to a RUN, and none of the rows this section reads is
+    // one: the script's id names a script, and the version ids name versions. The run is created on
+    // demand by `ensureRun` and cached here, because a second one would be a second production of the
+    // same episode.
+    const [workflowRunId, setWorkflowRunId] = useState<string>("");
+
+    /** ensureRun returns the episode's workflow run, creating it when there is none. */
+    const ensureRun = useCallback(async (episodeId: string): Promise<string> => {
+        if (!episodeId) return "";
+        const existing = await listWorkflowRuns(projectId);
+        const forEpisode = existing.find(
+            (run) => run.episodeId === episodeId && run.workflowType === "episode_production",
+        );
+        if (forEpisode) {
+            setWorkflowRunId(forEpisode.id);
+            return forEpisode.id;
+        }
+        const created = await createWorkflowRun(
+            desktopModels.CreateWorkflowRunRequest.createFrom({
+                projectId,
+                episodeId,
+                workflowType: "episode_production",
+                actorType: "user",
+                actorId: lockedByRef(),
+            }),
+        );
+        setWorkflowRunId(created.id);
+        return created.id;
+    }, [projectId]);
     // The three families' histories, newest first, as the core returns them.
     const [skeletons, setSkeletons] = useState<desktop.StorySkeletonVersionDTO[]>([]);
     const [strategies, setStrategies] = useState<desktop.AdaptationStrategyVersionDTO[]>([]);
@@ -138,10 +168,13 @@ export function ScriptSection({ projectId, episodes, activeEpisodeId, onSelectEp
             setScript(record);
             setSkeletons(await listStorySkeletonVersions(episodeId));
             setStrategies(await listAdaptationStrategyVersions(episodeId));
+            // The run is resolved here rather than in the stage handler, so a caller cannot start a
+            // stage before one exists.
+            await ensureRun(episodeId);
         } catch (error) {
             message.error(error instanceof Error ? error.message : t("studio.script.loadFailed"));
         }
-    }, [activeEpisodeId, message, t]);
+    }, [activeEpisodeId, ensureRun, message, t]);
 
     useEffect(() => {
         void refresh();
@@ -170,16 +203,28 @@ export function ScriptSection({ projectId, episodes, activeEpisodeId, onSelectEp
         if (!script) return;
         setBusy(true);
         try {
-            const result = await runScriptStage({
-                workflowRunId: script.id,
-                stage,
-                projectId,
-                episodeId: activeEpisodeId,
-                scriptVersionId: latestScriptVersionId(scriptVersions),
-                task: t("studio.script.taskFor", { stage: t(`studio.script.stage.${stage}`) }),
-                providerId: "",
-                modelId: "",
-            });
+            const result = await runScriptStage(
+                desktopModels.RunScriptStageRequest.createFrom({
+                    workflowRunId,
+                    stage,
+                    projectId,
+                    episodeId: activeEpisodeId,
+                    // The upstream versions travel in the PROMPT's state layer, which is what the stage's
+                    // tools name: a strategy reads the skeleton it adapts, and a generation stage reads
+                    // both. Omitting them is not a harmless default — the state renderer omits an empty
+                    // field, so the model would be told nothing about what it is writing from.
+                    skeletonVersionId: approvedSkeletonId,
+                    strategyVersionId: approvedStrategyId,
+                    scriptVersionId: stage === "script_generation" ? latestScriptVersionId(scriptVersions) : "",
+                    // The events an episode covers come from the approved skeleton's selection, which is
+                    // §7.4's link set. A strategy gives each of them a treatment, so an empty list is a
+                    // strategy that decided nothing — which the service would accept.
+                    selectedEventIds: approvedSkeletonEvents,
+                    task: t("studio.script.taskFor", { stage: t(`studio.script.stage.${stage}`) }),
+                    providerId: "",
+                    modelId: "",
+                }),
+            );
             message.success(
                 t("studio.script.stageRan", {
                     stage: t(`studio.script.stage.${stage}`),
@@ -302,6 +347,12 @@ export function ScriptSection({ projectId, episodes, activeEpisodeId, onSelectEp
     ];
 
     const approvedSkeletonId = useMemo(() => approvedIdOf(skeletons), [skeletons]);
+    // §7.4's selection, read from the approved skeleton: this is what a strategy gives treatments to, and
+    // passing it is what keeps "every event has a decision" true of a stage the interface started.
+    const approvedSkeletonEvents = useMemo(
+        () => skeletons.find((version) => version.versionId === approvedSkeletonId)?.selectedEventIds ?? [],
+        [approvedSkeletonId, skeletons],
+    );
     const approvedStrategyId = useMemo(() => approvedIdOf(strategies), [strategies]);
     // A script version's DTO names its identifier `id` while the two upstream families call it
     // `versionId`, which is the schema's own history rather than a choice made here. The adapter keeps

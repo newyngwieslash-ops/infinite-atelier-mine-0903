@@ -62,6 +62,16 @@ type ItemChange struct {
 	// Locked reports whether the item is protected from regeneration. A reader looking at a
 	// diff after a FIX wants to see which parts the model was not allowed to touch, and which
 	// of those it left alone anyway.
+	//
+	// IT WAS ALWAYS FALSE UNTIL A REVIEW FOUND IT. The field was declared with this comment and set
+	// nowhere — three construction sites and not one assigned it — so a UI that rendered a lock icon
+	// from it showed "nothing is pinned" whatever the database held. An independent review caught it
+	// by grepping for the assignment, which is the check that a field like this needs: a boolean with
+	// no writer is indistinguishable from a boolean whose writer agrees with the default.
+	//
+	// A LINE's lock is the one this reports, because §7.7 puts the flag on the line. A SCENE has no
+	// such flag in this build, so a scene's item is locked when the VERSION's structure is — which the
+	// caller states through the `structureLocked` argument rather than this function guessing.
 	Locked bool `json:"locked,omitempty"`
 }
 
@@ -129,6 +139,16 @@ func DiffStrategy(from, to AdaptationStrategyVersion) VersionDiff {
 // Each scene's own diff carries its lines and its shots as nested items, so a reader sees the
 // whole change in one place rather than three lists that must be joined by scene id.
 func DiffScriptStructure(from, to ScriptStructure) VersionDiff {
+	return DiffScriptStructureLocked(from, to, false)
+}
+
+// DiffScriptStructureLocked is DiffScriptStructure with the version's structure lock stated.
+//
+// The lock is an argument rather than a lookup because the lock table lives behind a repository and
+// this function is pure by design: a diff that read the database would need a context, a repository and
+// a test fixture, and the property it computes would stop being a table of inputs and outputs. The
+// caller that HAS the lock rows states them.
+func DiffScriptStructureLocked(from, to ScriptStructure, structureLocked bool) VersionDiff {
 	diff := VersionDiff{Family: FamilyScript, FromID: from.ScriptVersionID, ToID: to.ScriptVersionID}
 	byOrdinal := make(map[int]SceneStructure, len(from.Scenes))
 	for _, scene := range from.Scenes {
@@ -141,11 +161,12 @@ func DiffScriptStructure(from, to ScriptStructure) VersionDiff {
 		if !existed {
 			diff.Items = append(diff.Items, ItemChange{
 				Kind: ChangeAdded, Ordinal: after.Ordinal, ID: after.ID,
+				Locked: structureLocked,
 			})
 			diff.Added++
 			continue
 		}
-		change := ItemChange{Ordinal: after.Ordinal, ID: after.ID}
+		change := ItemChange{Ordinal: after.Ordinal, ID: after.ID, Locked: structureLocked}
 		change.Fields = sceneFieldChanges(before.Scene, after.Scene)
 		change.Fields = append(change.Fields, nestedLineChanges(before, after)...)
 		change.Fields = append(change.Fields, nestedShotChanges(before, after)...)
@@ -167,6 +188,7 @@ func DiffScriptStructure(from, to ScriptStructure) VersionDiff {
 		}
 		diff.Items = append(diff.Items, ItemChange{
 			Kind: ChangeRemoved, Ordinal: before.Ordinal, ID: before.ID,
+			Locked: structureLocked,
 		})
 		diff.Removed++
 	}
@@ -327,8 +349,12 @@ func trimmedEqual(left, right string) bool {
 
 // LockedFieldsOf returns the fields of one version that are locked, given a lock set.
 //
-// The write path and the API both need this reading, and it is here rather than in either so
-// they cannot disagree about what "locked" means.
+// IT HAS NO PRODUCTION CALLER, and an independent review found the comment that claimed otherwise. The
+// write path reads its locks as a LIST — it compares each lock's field in turn through
+// `compareFieldSets`, which needs the lock ROW and not just its name — so a set built here would lose the
+// family and the field-order the comparison reports. The function is kept with its test because it is the
+// reading a caller with only field names WOULD need (a UI asking "is this field pinned"), and the honest
+// state is recorded here rather than a caller invented to justify it.
 func LockedFieldsOf(locks []FieldLock) map[LockableField]bool {
 	locked := make(map[LockableField]bool, len(locks))
 	for _, lock := range locks {

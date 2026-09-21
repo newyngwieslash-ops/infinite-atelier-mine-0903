@@ -4,7 +4,7 @@ import type { ColumnsType } from "antd/es/table";
 import { FilePlus2, Plus, ShieldAlert, UserPlus } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
-import { clearStaleMark, createAsset, createEpisode, createSourceDocument, ensureScript, listScenes, waiveStaleMark } from "@/services/desktop/drama";
+import { clearStaleMark, createAsset, createSourceDocument, waiveStaleMark } from "@/services/desktop/drama";
 import { ChapterPanel, ImportFlow } from "@/components/studio/import-flow";
 import type { desktop } from "@/wailsjs/go/models";
 
@@ -284,150 +284,8 @@ export type { StoryGraphSectionProps } from "@/components/studio/story-graph-vie
 // Script
 // ---------------------------------------------------------------------------
 
-export type ScriptSectionProps = {
-    projectId: string;
-    episodes: desktop.EpisodeDTO[];
-    activeEpisodeId: string;
-    onSelectEpisode: (episodeId: string) => void;
-    onChanged: () => void;
-};
-
-export function ScriptSection({ projectId, episodes, activeEpisodeId, onSelectEpisode, onChanged }: ScriptSectionProps) {
-    const { t } = useTranslation();
-    const { message } = App.useApp();
-    const [season, setSeason] = useState(1);
-    const [number, setNumber] = useState(1);
-    const [title, setTitle] = useState("");
-    const [duration, setDuration] = useState<number | null>(null);
-    const [busy, setBusy] = useState(false);
-    const [script, setScript] = useState<desktop.ScriptDTO | null>(null);
-    const [scenes, setScenes] = useState<desktop.SceneDTO[]>([]);
-
-    const create = async () => {
-        setBusy(true);
-        try {
-            await createEpisode({ projectId, seasonNumber: season, episodeNumber: number, title: title.trim(), targetDurationSeconds: duration ?? 0 });
-            setTitle("");
-            onChanged();
-        } catch (error) {
-            message.error(error instanceof Error ? error.message : t("studio.script.createFailed"));
-        } finally {
-            setBusy(false);
-        }
-    };
-
-    // Selecting an episode asks the core for its script: EnsureScript creates the
-    // script row when the episode has none, so the id below is always the core's.
-    const select = async (episode: desktop.EpisodeDTO) => {
-        onSelectEpisode(episode.id);
-        setScript(null);
-        setScenes([]);
-        try {
-            const record = await ensureScript(episode.id);
-            setScript(record);
-            if (record.currentVersionId) {
-                setScenes(await listScenes(record.currentVersionId));
-            }
-        } catch (error) {
-            message.error(error instanceof Error ? error.message : t("studio.script.loadFailed"));
-        }
-    };
-
-    const columns: ColumnsType<desktop.EpisodeDTO> = [
-        {
-            title: t("studio.script.season"),
-            key: "ordinal",
-            width: 120,
-            render: (_, record) => <span className="text-sm">{`S${record.seasonNumber}E${record.episodeNumber}`}</span>,
-        },
-        { title: t("studio.script.title"), dataIndex: "title", key: "title", render: (value: string) => value || "—" },
-        {
-            title: t("studio.script.statusLabel"),
-            dataIndex: "status",
-            key: "status",
-            width: 140,
-            render: (value: string) => <Tag>{t(`studio.status.${value}`, { defaultValue: value })}</Tag>,
-        },
-        { title: t("studio.script.targetLabel"), dataIndex: "targetDurationSeconds", key: "duration", width: 140 },
-        {
-            title: "",
-            key: "select",
-            width: 110,
-            render: (_, record) => (
-                <Button size="small" data-testid={`studio-episode-select-${record.id}`} onClick={() => void select(record)}>
-                    {t("studio.script.select")}
-                </Button>
-            ),
-        },
-    ];
-
-    return (
-        <div className="space-y-6">
-            <div className="flex flex-wrap items-end gap-3 rounded-xl border border-stone-200 p-4 dark:border-stone-800">
-                <label className="w-20">
-                    <span className="mb-1 block text-sm">{t("studio.script.season")}</span>
-                    <InputNumber className="w-full" min={0} precision={0} value={season} onChange={(value) => setSeason(typeof value === "number" ? value : 1)} />
-                </label>
-                <label className="w-20">
-                    <span className="mb-1 block text-sm">{t("studio.script.episodeNumber")}</span>
-                    <InputNumber className="w-full" min={0} precision={0} value={number} onChange={(value) => setNumber(typeof value === "number" ? value : 1)} />
-                </label>
-                <label className="min-w-48 flex-1">
-                    <span className="mb-1 block text-sm">{t("studio.script.title")}</span>
-                    <Input value={title} maxLength={200} data-testid="studio-episode-title" onChange={(event) => setTitle(event.target.value)} />
-                </label>
-                <label className="w-40">
-                    <span className="mb-1 block text-sm">{t("studio.script.targetDuration")}</span>
-                    <InputNumber className="w-full" min={0} precision={0} value={duration} onChange={(value) => setDuration(typeof value === "number" ? value : null)} />
-                </label>
-                <Button type="primary" icon={<Plus className="size-4" />} loading={busy} data-testid="studio-episode-create" onClick={() => void create()}>
-                    {t("studio.script.create")}
-                </Button>
-            </div>
-
-            {episodes.length === 0 ? (
-                <Empty description={t("studio.script.empty")} />
-            ) : (
-                <Table<desktop.EpisodeDTO>
-                    rowKey="id"
-                    size="small"
-                    pagination={false}
-                    columns={columns}
-                    dataSource={episodes}
-                    rowClassName={(record) => (record.id === activeEpisodeId ? "bg-stone-50 dark:bg-stone-900" : "")}
-                    data-testid="studio-episode-table"
-                />
-            )}
-
-            {script ? (
-                <section className="rounded-xl border border-stone-200 p-4 dark:border-stone-800" data-testid="studio-script-detail">
-                    <p className="text-sm">
-                        {t("studio.script.scriptId")}: <code>{script.id}</code>
-                    </p>
-                    {script.currentVersionId ? (
-                        <>
-                            <h3 className="mt-4 text-sm font-medium">{t("studio.script.scenes")}</h3>
-                            {scenes.length === 0 ? (
-                                <p className="mt-1 text-sm text-stone-500">{t("studio.script.scenesEmpty")}</p>
-                            ) : (
-                                <ul className="mt-2 space-y-1 text-sm">
-                                    {scenes.map((scene) => (
-                                        <li key={scene.id} className="flex items-center gap-2">
-                                            <span className="text-stone-500">{scene.ordinal}</span>
-                                            <span className="truncate">{scene.slugline ?? scene.summary ?? "—"}</span>
-                                        </li>
-                                    ))}
-                                </ul>
-                            )}
-                        </>
-                    ) : (
-                        <p className="mt-2 text-sm text-stone-500">{t("studio.script.noVersion")}</p>
-                    )}
-                </section>
-            ) : null}
-        </div>
-    );
-}
+export { ScriptSection } from "@/components/studio/script-view";
+export type { ScriptSectionProps } from "@/components/studio/script-view";
 
 // ---------------------------------------------------------------------------
 // Assets

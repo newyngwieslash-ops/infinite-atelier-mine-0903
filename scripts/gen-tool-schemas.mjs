@@ -18,7 +18,7 @@
 // Usage: node scripts/gen-tool-schemas.mjs
 //        node scripts/gen-tool-schemas.mjs --check
 
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -488,7 +488,22 @@ function main() {
             console.error("drift: KEYS.txt is not what the generator produces");
             drifted++;
         }
-        // A schema file whose key is not in the table is a leftover.
+        // A schema file whose key is not in the table is a leftover, and this is the check that finds
+        // it. The comment above this line claimed the check existed while the code returned first — so a
+        // tool renamed in the table left its old schema embedded and reported, which is exactly the
+        // "an interface with no real path" shape the repository refuses. An independent review found the
+        // discrepancy between the comment and the code.
+        const declared = new Set(TOOLS.map((t) => t.key));
+        for (const file of readdirSync(toolsRoot)) {
+            if (!file.endsWith(".json")) {
+                continue;
+            }
+            const key = file.slice(0, -".json".length);
+            if (!declared.has(key)) {
+                console.error(`drift: ${file} is a leftover for a tool the table no longer declares`);
+                drifted++;
+            }
+        }
         return drifted;
     }
     writeFileSync(keysPath, keys);
