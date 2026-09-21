@@ -57,17 +57,23 @@ type dramaStore struct {
 	fieldLocks     map[string]scriptdomain.FieldLock
 	skeletonEvents map[string][]string
 	strategyEvents map[string][]scriptdomain.StrategyEventLink
-	plans          map[string]storyboard.DirectorPlanVersion
-	boards         map[string]storyboard.Storyboard
-	boardVers      map[string]storyboard.StoryboardVersion
-	items          map[string]storyboard.StoryboardItem
-	panels         map[string]storyboard.StoryboardPanelVersion
-	runs           map[string]workflow.WorkflowRun
-	stages         map[string]workflow.StageRun
-	reports        map[string]workflow.ReviewReport
-	issues         map[string][]workflow.ReviewIssue
-	decisions      map[string]workflow.UserGateDecision
-	audit          map[string][]workflow.WorkflowEvent
+	// knownEvents and knownEntities are the project's story-graph rows, so the reference check a
+	// structure write makes has something to check against. A nil map means "nothing exists", which
+	// is the state every test that states no reference runs in: the check is skipped entirely when
+	// the payload cites nothing.
+	knownEvents   map[string]bool
+	knownEntities map[string]bool
+	plans         map[string]storyboard.DirectorPlanVersion
+	boards        map[string]storyboard.Storyboard
+	boardVers     map[string]storyboard.StoryboardVersion
+	items         map[string]storyboard.StoryboardItem
+	panels        map[string]storyboard.StoryboardPanelVersion
+	runs          map[string]workflow.WorkflowRun
+	stages        map[string]workflow.StageRun
+	reports       map[string]workflow.ReviewReport
+	issues        map[string][]workflow.ReviewIssue
+	decisions     map[string]workflow.UserGateDecision
+	audit         map[string][]workflow.WorkflowEvent
 
 	// failNext makes the next write fail, so a storage failure is testable.
 	failNext error
@@ -439,6 +445,25 @@ func (s *dramaStore) CreateStorySkeletonVersion(_ context.Context, record script
 	return nil
 }
 
+// CreateStorySkeletonVersionWithLinks records the version AND its selection.
+//
+// Unlike its bare twin above — which stores nothing because the binding tests are about the
+// binding's argument mapping rather than about a read-back — this one records the selection, so a
+// test can assert the binding passes the link set through instead of dropping it.
+func (s *dramaStore) CreateStorySkeletonVersionWithLinks(ctx context.Context, record scriptdomain.StorySkeletonVersion, eventIDs []string) error {
+	if err := s.CreateStorySkeletonVersion(ctx, record); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(eventIDs) == 0 {
+		delete(s.skeletonEvents, record.ID)
+		return nil
+	}
+	s.skeletonEvents[record.ID] = append([]string(nil), eventIDs...)
+	return nil
+}
+
 func (s *dramaStore) GetStorySkeletonVersion(_ context.Context, id string) (scriptdomain.StorySkeletonVersion, error) {
 	return scriptdomain.StorySkeletonVersion{ID: id, EpisodeID: "e", VersionNumber: 1}, nil
 }
@@ -449,6 +474,55 @@ func (s *dramaStore) MaxStorySkeletonVersionNumber(_ context.Context, _ string) 
 
 func (s *dramaStore) CreateAdaptationStrategyVersion(_ context.Context, record scriptdomain.AdaptationStrategyVersion) error {
 	return nil
+}
+
+// CreateAdaptationStrategyVersionWithLinks records the version AND its treatments, for the reason
+// the skeleton's twin states.
+func (s *dramaStore) CreateAdaptationStrategyVersionWithLinks(ctx context.Context, record scriptdomain.AdaptationStrategyVersion, links []scriptdomain.StrategyEventLink) error {
+	if err := s.CreateAdaptationStrategyVersion(ctx, record); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(links) == 0 {
+		delete(s.strategyEvents, record.ID)
+		return nil
+	}
+	stored := make([]scriptdomain.StrategyEventLink, 0, len(links))
+	for index, link := range links {
+		link.StrategyVersionID = record.ID
+		link.Ordinal = index + 1
+		stored = append(stored, link)
+	}
+	s.strategyEvents[record.ID] = stored
+	return nil
+}
+
+// MissingStoryEventIDs and MissingStoryEntityIDs answer the reference check.
+//
+// The seeding is by `knownEvents`/`knownEntities` rather than by a fixed answer, so one test can
+// assert the refusal for an unknown id and another the pass for a known one, from one double.
+func (s *dramaStore) MissingStoryEventIDs(_ context.Context, _ string, eventIDs []string) ([]string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return missingFromSet(s.knownEvents, eventIDs), nil
+}
+
+func (s *dramaStore) MissingStoryEntityIDs(_ context.Context, _ string, entityIDs []string) ([]string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return missingFromSet(s.knownEntities, entityIDs), nil
+}
+
+// missingFromSet is the double's reading of "which of these are absent".
+func missingFromSet(known map[string]bool, ids []string) []string {
+	missing := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if !known[id] {
+			missing = append(missing, id)
+		}
+	}
+	return missing
 }
 
 func (s *dramaStore) GetAdaptationStrategyVersion(_ context.Context, id string) (scriptdomain.AdaptationStrategyVersion, error) {
@@ -2935,24 +3009,10 @@ func (s *dramaStore) ListScriptFieldLocks(_ context.Context, versionID string) (
 	return locks, nil
 }
 
-func (s *dramaStore) LinkSkeletonEvents(_ context.Context, versionID string, eventIDs []string, _ time.Time) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.skeletonEvents[versionID] = append([]string(nil), eventIDs...)
-	return nil
-}
-
 func (s *dramaStore) ListSkeletonEventIDs(_ context.Context, versionID string) ([]string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]string(nil), s.skeletonEvents[versionID]...), nil
-}
-
-func (s *dramaStore) LinkStrategyEvents(_ context.Context, versionID string, links []scriptdomain.StrategyEventLink, _ time.Time) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.strategyEvents[versionID] = append([]scriptdomain.StrategyEventLink(nil), links...)
-	return nil
 }
 
 func (s *dramaStore) ListStrategyEventLinks(_ context.Context, versionID string) ([]scriptdomain.StrategyEventLink, error) {

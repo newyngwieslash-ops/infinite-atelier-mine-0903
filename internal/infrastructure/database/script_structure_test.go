@@ -309,6 +309,11 @@ func TestFieldLockRoundTripsAndUnlocks(t *testing.T) {
 }
 
 // TestEventLinkTablesRoundTrip covers the two link tables migration 000008 created with no writer.
+//
+// It drives the WRITE through the versions' own write paths, because that is the only way the link
+// rows are reachable: a link set belongs to a version, so `CreateStorySkeletonVersionWithLinks` and
+// its strategy twin are the pair the service calls, and the bare inserts they replaced no longer
+// exist to be tested directly.
 func TestEventLinkTablesRoundTrip(t *testing.T) {
 	db := dramaRepoHandle(t)
 	dramaSeedParents(t, db)
@@ -316,53 +321,175 @@ func TestEventLinkTablesRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	seedEventLinkParents(t, db)
 
-	// The skeleton links: written as a set and read back in order.
-	if err := repo.LinkSkeletonEvents(ctx, "skeleton-1",
-		[]string{"event-1", "event-2", "event-3"}, structureTime); err != nil {
-		t.Fatalf("LinkSkeletonEvents: %v", err)
+	// The skeleton links: written with the version and read back in order.
+	if err := repo.CreateStorySkeletonVersionWithLinks(ctx, script.StorySkeletonVersion{
+		ID: "skeleton-2", EpisodeID: "ep-links", VersionNumber: 2, Status: versioning.StatusDraft,
+		CreatedByType: versioning.CreatedByAgent, CreatedAt: structureTime,
+	}, []string{"event-1", "event-2", "event-3"}); err != nil {
+		t.Fatalf("CreateStorySkeletonVersionWithLinks: %v", err)
 	}
-	ids, err := repo.ListSkeletonEventIDs(ctx, "skeleton-1")
+	ids, err := repo.ListSkeletonEventIDs(ctx, "skeleton-2")
 	if err != nil {
 		t.Fatalf("ListSkeletonEventIDs: %v", err)
 	}
 	if len(ids) != 3 || ids[0] != "event-1" || ids[2] != "event-3" {
 		t.Fatalf("the selected events are %v", ids)
 	}
-	// Replacing the set removes what is no longer selected, which is what makes the write a
-	// statement of the complete answer rather than an amendment.
-	if err := repo.LinkSkeletonEvents(ctx, "skeleton-1", []string{"event-2"}, structureTime); err != nil {
-		t.Fatalf("LinkSkeletonEvents: %v", err)
+
+	// A version written with NO selection writes no rows, which is what makes a first draft legal.
+	if err := repo.CreateStorySkeletonVersionWithLinks(ctx, script.StorySkeletonVersion{
+		ID: "skeleton-3", EpisodeID: "ep-links", VersionNumber: 3, Status: versioning.StatusDraft,
+		CreatedByType: versioning.CreatedByAgent, CreatedAt: structureTime,
+	}, nil); err != nil {
+		t.Fatalf("CreateStorySkeletonVersionWithLinks: %v", err)
 	}
-	ids, err = repo.ListSkeletonEventIDs(ctx, "skeleton-1")
+	empty, err := repo.ListSkeletonEventIDs(ctx, "skeleton-3")
 	if err != nil {
 		t.Fatalf("ListSkeletonEventIDs: %v", err)
 	}
-	if len(ids) != 1 || ids[0] != "event-2" {
-		t.Fatalf("after replacing the set the events are %v", ids)
+	if len(empty) != 0 {
+		t.Fatalf("a version with no selection has %v", empty)
+	}
+
+	// A failure INSIDE the link write takes the version with it: the two are one transaction, which
+	// is the whole reason the pair is one method.
+	//
+	// The failure is forced with a duplicate event id rather than with an unknown one, and the
+	// difference is worth stating because it is a property of the SCHEMA rather than of this test:
+	// `story_skeleton_event_links.story_event_id` has NO foreign key — like
+	// `scenes.source_story_event_id`, because a citation is provenance that outlives the row — so an
+	// unknown event id is refused by the SERVICE's reference check
+	// (TestMissingStoryReferences covers that query), not by a constraint. The primary key on
+	// (version, event) is the constraint this layer does enforce, and a caller that repeated an
+	// event reaches it.
+	err = repo.CreateStorySkeletonVersionWithLinks(ctx, script.StorySkeletonVersion{
+		ID: "skeleton-4", EpisodeID: "ep-links", VersionNumber: 4, Status: versioning.StatusDraft,
+		CreatedByType: versioning.CreatedByAgent, CreatedAt: structureTime,
+	}, []string{"event-1", "event-1"})
+	if err == nil {
+		t.Fatal("a selection naming one event twice was accepted")
+	}
+	if _, readErr := repo.GetStorySkeletonVersion(ctx, "skeleton-4"); readErr == nil {
+		t.Fatal("the refused write left its version behind, so the pair is not one transaction")
 	}
 
 	// The strategy links: the same shape with a treatment.
 	links := []script.StrategyEventLink{
-		{StrategyVersionID: "strategy-1", StoryEventID: "event-1", Treatment: script.TreatmentRetained},
-		{StrategyVersionID: "strategy-1", StoryEventID: "event-2", Treatment: script.TreatmentRemoved},
-		{StrategyVersionID: "strategy-1", StoryEventID: "event-3", Treatment: script.TreatmentReordered},
+		{StoryEventID: "event-1", Treatment: script.TreatmentRetained},
+		{StoryEventID: "event-2", Treatment: script.TreatmentRemoved},
+		{StoryEventID: "event-3", Treatment: script.TreatmentReordered},
 	}
-	if err := repo.LinkStrategyEvents(ctx, "strategy-1", links, structureTime); err != nil {
-		t.Fatalf("LinkStrategyEvents: %v", err)
+	// AdaptationMode is set for the same reason CreatedByType is in the fixture above: the column
+	// has a CHECK, the domain validator refuses the zero value, and the SERVICE is what defaults it
+	// to balanced. A repository test writes the record rather than driving the service, so the
+	// fixture states it.
+	if err := repo.CreateAdaptationStrategyVersionWithLinks(ctx, script.AdaptationStrategyVersion{
+		ID: "strategy-2", EpisodeID: "ep-links", VersionNumber: 2, Status: versioning.StatusDraft,
+		AdaptationMode: script.AdaptationBalanced,
+		CreatedByType:  versioning.CreatedByAgent, CreatedAt: structureTime,
+	}, links); err != nil {
+		t.Fatalf("CreateAdaptationStrategyVersionWithLinks: %v", err)
 	}
-	stored, err := repo.ListStrategyEventLinks(ctx, "strategy-1")
+	stored, err := repo.ListStrategyEventLinks(ctx, "strategy-2")
 	if err != nil {
 		t.Fatalf("ListStrategyEventLinks: %v", err)
 	}
 	if len(stored) != 3 {
 		t.Fatalf("the treatments are %+v", stored)
 	}
-	// The ordinals are the ARRAY's positions, so the order the caller wrote is the order stored.
+	// The ordinals are the SLICE's positions, so the order the caller wrote is the order stored —
+	// even though none of the links above stated an ordinal.
 	if stored[0].Ordinal != 1 || stored[2].Ordinal != 3 {
 		t.Fatalf("the ordinals are %d, %d, %d", stored[0].Ordinal, stored[1].Ordinal, stored[2].Ordinal)
 	}
 	if stored[1].Treatment != script.TreatmentRemoved {
 		t.Fatalf("the second treatment is %q", stored[1].Treatment)
+	}
+	// And the strategy's version id is the one the write minted, not whatever the caller said.
+	for _, link := range stored {
+		if link.StrategyVersionID != "strategy-2" {
+			t.Fatalf("a treatment names version %q", link.StrategyVersionID)
+		}
+	}
+}
+
+// TestMissingStoryReferences covers the reference check the schema cannot make.
+//
+// `scenes.source_story_event_id` is TEXT with no foreign key, because a story event is per-project
+// and a scene is per-version — so AC-SCRIPT-003's "source event 引用" and AGENT_CONTRACTS §17's
+// "引用存在性" are answered by this query rather than by a constraint. The three cases that matter:
+// a row that exists, one that does not, and one that was soft-deleted.
+func TestMissingStoryReferences(t *testing.T) {
+	db := dramaRepoHandle(t)
+	dramaSeedParents(t, db)
+	repo := NewScriptRepository(db)
+	ctx := context.Background()
+	seedEventLinkParents(t, db)
+	// A soft-deleted event, which this schema treats as gone.
+	if _, err := db.ExecContext(ctx, `INSERT INTO story_events
+		(id, project_id, ordinal, name, status, deleted_at, created_at, updated_at)
+		VALUES ('event-gone', 'drama-project', 9, 'Gone', 'candidate', '`+structureStamp+`', '`+structureStamp+`', '`+structureStamp+`')`); err != nil {
+		t.Fatalf("seeding a deleted event: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO story_entities
+		(id, project_id, entity_type, canonical_name, status, created_at, updated_at)
+		VALUES ('entity-1', 'drama-project', 'character', '白掌柜', 'accepted', '`+structureStamp+`', '`+structureStamp+`')`); err != nil {
+		t.Fatalf("seeding an entity: %v", err)
+	}
+
+	// Nothing missing: the ids that exist stay out of the answer.
+	missing, err := repo.MissingStoryEventIDs(ctx, "drama-project", []string{"event-1", "event-2"})
+	if err != nil {
+		t.Fatalf("MissingStoryEventIDs: %v", err)
+	}
+	if len(missing) != 0 {
+		t.Fatalf("existing events came back missing: %v", missing)
+	}
+	// An id from ANOTHER PROJECT is missing, which is the boundary this check exists for: a script
+	// must not cite a story event a user cannot see. The second project has to exist for the row to
+	// be insertable at all, which is itself a fact about the schema: `story_events.project_id` DOES
+	// have a foreign key, so the project boundary is enforced there.
+	if _, err := db.ExecContext(ctx, `INSERT INTO projects
+		(id, workspace_id, project_type, name, language, status, created_at, updated_at, revision)
+		VALUES ('other-drama', 'drama-ws', 'drama', 'Elsewhere', 'zh-CN', 'active', '`+structureStamp+`', '`+structureStamp+`', 1)`); err != nil {
+		t.Fatalf("seeding another project: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO story_events
+		(id, project_id, ordinal, name, status, created_at, updated_at)
+		VALUES ('event-other', 'other-drama', 1, 'Elsewhere', 'candidate', '`+structureStamp+`', '`+structureStamp+`')`); err != nil {
+		t.Fatalf("seeding another project's event: %v", err)
+	}
+	missing, err = repo.MissingStoryEventIDs(ctx, "drama-project", []string{"event-1", "event-other", "event-gone", "ghost"})
+	if err != nil {
+		t.Fatalf("MissingStoryEventIDs: %v", err)
+	}
+	// In the caller's order, so a refusal message names them the way the payload did.
+	if len(missing) != 3 || missing[0] != "event-other" || missing[1] != "event-gone" || missing[2] != "ghost" {
+		t.Fatalf("the missing events are %v", missing)
+	}
+	// Duplicates are collapsed rather than reported twice.
+	missing, err = repo.MissingStoryEventIDs(ctx, "drama-project", []string{"ghost", "ghost"})
+	if err != nil {
+		t.Fatalf("MissingStoryEventIDs: %v", err)
+	}
+	if len(missing) != 1 {
+		t.Fatalf("a repeated id came back as %v", missing)
+	}
+	// Entities answer the same way.
+	missing, err = repo.MissingStoryEntityIDs(ctx, "drama-project", []string{"entity-1", "nobody"})
+	if err != nil {
+		t.Fatalf("MissingStoryEntityIDs: %v", err)
+	}
+	if len(missing) != 1 || missing[0] != "nobody" {
+		t.Fatalf("the missing entities are %v", missing)
+	}
+	// An empty list asks nothing and gets nothing.
+	missing, err = repo.MissingStoryEventIDs(ctx, "drama-project", nil)
+	if err != nil {
+		t.Fatalf("MissingStoryEventIDs: %v", err)
+	}
+	if len(missing) != 0 {
+		t.Fatalf("an empty query returned %v", missing)
 	}
 }
 

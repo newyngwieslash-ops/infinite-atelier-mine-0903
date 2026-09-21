@@ -185,11 +185,18 @@ type CreateStorySkeletonVersionRequest struct {
 	Climax                   string
 	EndingHook               string
 	EstimatedDurationSeconds int
-	SourceAgentRunID         string
-	CreatedByType            versioning.CreatedByType
-	CreatedByID              string
-	ChangeReason             string
-	LegacyMetadata           string
+	// SelectedEventIDs are the story events this version selects (§7.4's link table).
+	//
+	// They are a SET rather than an ordered list because a skeleton selects which events are in the
+	// episode and does not state their order: the order a viewer sees is the ADAPTATION's, and §7.5
+	// gives the strategy a link table with ordinals for exactly that. Two callers that selected the
+	// same events in different orders have selected the same events.
+	SelectedEventIDs []string
+	SourceAgentRunID string
+	CreatedByType    versioning.CreatedByType
+	CreatedByID      string
+	ChangeReason     string
+	LegacyMetadata   string
 }
 
 // CreateStorySkeletonVersion appends a skeleton version, numbering it after
@@ -198,6 +205,11 @@ type CreateStorySkeletonVersionRequest struct {
 // The number comes from the stored maximum rather than a count: the schema has
 // a unique constraint on (episode_id, version_number), and a count would let a
 // number already stored be handed out again.
+//
+// The version and its selected events are written together, and the locks pinned on the base
+// version are enforced before either is written. Both are AC-SCRIPT-002's requirements and the
+// first version of this method had neither: the schema's link tables had no writer, so a skeleton's
+// selection existed only inside its own JSON, and a FIX could rewrite a field a user had pinned.
 func (s *Service) CreateStorySkeletonVersion(ctx context.Context, request CreateStorySkeletonVersionRequest) (scriptdomain.StorySkeletonVersion, error) {
 	if !s.Available() {
 		return scriptdomain.StorySkeletonVersion{}, storageFailure()
@@ -210,10 +222,117 @@ func (s *Service) CreateStorySkeletonVersion(ctx context.Context, request Create
 	if err != nil {
 		return scriptdomain.StorySkeletonVersion{}, err
 	}
-	if err := s.repository.CreateStorySkeletonVersion(ctx, skeleton); err != nil {
+	selected, err := normaliseEventIDs(request.SelectedEventIDs)
+	if err != nil {
+		return scriptdomain.StorySkeletonVersion{}, err
+	}
+	// The selection is checked against the project's story graph BEFORE the write, and this is the
+	// ONLY place it can be: `story_skeleton_event_links.story_event_id` has no foreign key, for the
+	// reason `linked_versions.go` records — a citation is provenance and outlives the row — so a
+	// selection naming an event that does not exist would otherwise be stored and read back as a
+	// reference to nothing.
+	if err := s.assertStoryEventsExist(ctx, episode.ProjectID, selected); err != nil {
+		return scriptdomain.StorySkeletonVersion{}, err
+	}
+	if err := s.assertSkeletonLocks(ctx, skeleton, selected); err != nil {
+		return scriptdomain.StorySkeletonVersion{}, err
+	}
+	if err := s.repository.CreateStorySkeletonVersionWithLinks(ctx, skeleton, selected); err != nil {
 		return scriptdomain.StorySkeletonVersion{}, err
 	}
 	return skeleton, nil
+}
+
+// assertStoryEventsExist refuses a set of events that a project does not have.
+//
+// It is shared by the skeleton's selection, the strategy's treatments and a script structure's
+// citations, because all three ask the same question and all three need the same answer: this
+// project has these events, or the write is refused with the identifiers named.
+func (s *Service) assertStoryEventsExist(ctx context.Context, projectID string, eventIDs []string) error {
+	project := strings.TrimSpace(projectID)
+	if project == "" || len(eventIDs) == 0 {
+		// No project means no project-scoped graph to check against — see assertStructureReferences,
+		// which explains why the tool path always has one.
+		return nil
+	}
+	missing, err := s.repository.MissingStoryEventIDs(ctx, project, eventIDs)
+	if err != nil {
+		return err
+	}
+	if len(missing) > 0 {
+		return scriptdomain.InvalidError(
+			"These story events do not exist in this project: " + strings.Join(missing, ", ") + ".")
+	}
+	return nil
+}
+
+// normaliseEventIDs trims a selection and refuses one that repeats an event.
+//
+// A repetition is refused rather than deduplicated because the schema's primary key is
+// (version, event) and a payload naming one event twice would either lose the second silently or
+// fail as a raw constraint violation. Refusing it here says which identifier was repeated.
+func normaliseEventIDs(ids []string) ([]string, error) {
+	seen := make(map[string]bool, len(ids))
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		trimmed := strings.TrimSpace(id)
+		if trimmed == "" {
+			continue
+		}
+		if seen[trimmed] {
+			return nil, scriptdomain.InvalidError("That story event is selected twice: " + trimmed + ".")
+		}
+		seen[trimmed] = true
+		out = append(out, trimmed)
+	}
+	return out, nil
+}
+
+// assertSkeletonLocks refuses a skeleton revision that changed a field the user pinned.
+//
+// This is AC-SCRIPT-002's own scenario. The criterion is a FIX on a skeleton whose ending hook is
+// missing, and the fields the user pins there are the ones the model got right — so the check has to
+// cover the skeleton's own fields, not only a script version's.
+//
+// `selectedEventIds` is compared as a SET, through `joinedEvents`, because selecting the same events
+// in a different order is the same selection.
+func (s *Service) assertSkeletonLocks(ctx context.Context, incoming scriptdomain.StorySkeletonVersion, selectedEventIDs []string) error {
+	locks, err := s.readLocks(ctx, incoming.BasedOnVersionID)
+	if err != nil {
+		return err
+	}
+	if len(locks) == 0 {
+		return nil
+	}
+	if err := assertLocksCovered(locks, scriptdomain.FamilyStorySkeleton, scriptdomain.LockableFields(scriptdomain.FamilyStorySkeleton)); err != nil {
+		return err
+	}
+	base, err := s.repository.GetStorySkeletonVersion(ctx, incoming.BasedOnVersionID)
+	if err != nil {
+		return err
+	}
+	baseSelection, err := s.repository.ListSkeletonEventIDs(ctx, base.ID)
+	if err != nil {
+		return err
+	}
+	return compareFieldSets(locks, scriptdomain.FamilyStorySkeleton,
+		fieldValues{
+			scriptdomain.LockSkeletonOpeningHook:    base.OpeningHook,
+			scriptdomain.LockSkeletonCoreConflict:   base.CoreConflict,
+			scriptdomain.LockSkeletonTurningPoints:  base.TurningPointsJSON,
+			scriptdomain.LockSkeletonClimax:         base.Climax,
+			scriptdomain.LockSkeletonEndingHook:     base.EndingHook,
+			scriptdomain.LockSkeletonSelectedEvents: joinedEvents(baseSelection),
+		},
+		fieldValues{
+			scriptdomain.LockSkeletonOpeningHook:    incoming.OpeningHook,
+			scriptdomain.LockSkeletonCoreConflict:   incoming.CoreConflict,
+			scriptdomain.LockSkeletonTurningPoints:  incoming.TurningPointsJSON,
+			scriptdomain.LockSkeletonClimax:         incoming.Climax,
+			scriptdomain.LockSkeletonEndingHook:     incoming.EndingHook,
+			scriptdomain.LockSkeletonSelectedEvents: joinedEvents(selectedEventIDs),
+		},
+	)
 }
 
 func (s *Service) newSkeletonVersion(ctx context.Context, episode scriptdomain.Episode, request CreateStorySkeletonVersionRequest) (scriptdomain.StorySkeletonVersion, error) {
@@ -234,7 +353,7 @@ func (s *Service) newSkeletonVersion(ctx context.Context, episode scriptdomain.E
 		EpisodeID:                episode.ID,
 		VersionNumber:            highest + 1,
 		Status:                   versioning.StatusDraft,
-		BasedOnVersionID:         request.BasedOnVersionID,
+		BasedOnVersionID:         strings.TrimSpace(request.BasedOnVersionID),
 		OpeningHook:              request.OpeningHook,
 		CoreConflict:             request.CoreConflict,
 		TurningPointsJSON:        request.TurningPointsJSON,
@@ -265,15 +384,24 @@ type CreateAdaptationStrategyVersionRequest struct {
 	OriginalAdditions     string
 	Rationale             string
 	Risks                 string
-	SourceAgentRunID      string
-	CreatedByType         versioning.CreatedByType
-	CreatedByID           string
-	ChangeReason          string
-	LegacyMetadata        string
+	// EventLinks are this version's per-event decisions (§7.5's link table): which events it kept,
+	// which it dropped, and which it moved. The ORDER is the treatment's own state — "reordered"
+	// means nothing without a position — so the slice's positions become the stored ordinals.
+	EventLinks       []scriptdomain.StrategyEventLink
+	SourceAgentRunID string
+	CreatedByType    versioning.CreatedByType
+	CreatedByID      string
+	ChangeReason     string
+	LegacyMetadata   string
 }
 
 // CreateAdaptationStrategyVersion appends a strategy version, numbering it
 // after the highest existing one for the same reason the skeleton version does.
+//
+// The version and its event treatments are written together, and the locks pinned on the base
+// version are enforced first. §7.5 makes the treatments part of what a strategy IS, so a version
+// whose links were never written would be a strategy that decided nothing — the same gap the
+// skeleton's own write path had.
 func (s *Service) CreateAdaptationStrategyVersion(ctx context.Context, request CreateAdaptationStrategyVersionRequest) (scriptdomain.AdaptationStrategyVersion, error) {
 	if !s.Available() {
 		return scriptdomain.AdaptationStrategyVersion{}, storageFailure()
@@ -306,7 +434,7 @@ func (s *Service) CreateAdaptationStrategyVersion(ctx context.Context, request C
 		EpisodeID:             episode.ID,
 		VersionNumber:         highest + 1,
 		Status:                versioning.StatusDraft,
-		BasedOnVersionID:      request.BasedOnVersionID,
+		BasedOnVersionID:      strings.TrimSpace(request.BasedOnVersionID),
 		StrategySummary:       request.StrategySummary,
 		AdaptationMode:        mode,
 		MergedEventGroupsJSON: request.MergedEventGroupsJSON,
@@ -323,10 +451,111 @@ func (s *Service) CreateAdaptationStrategyVersion(ctx context.Context, request C
 	if err := record.Validate(); err != nil {
 		return scriptdomain.AdaptationStrategyVersion{}, err
 	}
-	if err := s.repository.CreateAdaptationStrategyVersion(ctx, record); err != nil {
+	links, err := normaliseEventLinks(record.ID, request.EventLinks)
+	if err != nil {
+		return scriptdomain.AdaptationStrategyVersion{}, err
+	}
+	// The treatments name events, and the link table has no foreign key to check them — so this is
+	// the check, and it runs before the write for the same reason the skeleton's does.
+	treatedEvents := make([]string, 0, len(links))
+	for _, link := range links {
+		treatedEvents = append(treatedEvents, link.StoryEventID)
+	}
+	if err := s.assertStoryEventsExist(ctx, episode.ProjectID, treatedEvents); err != nil {
+		return scriptdomain.AdaptationStrategyVersion{}, err
+	}
+	if err := s.assertStrategyLocks(ctx, record, links); err != nil {
+		return scriptdomain.AdaptationStrategyVersion{}, err
+	}
+	if err := s.repository.CreateAdaptationStrategyVersionWithLinks(ctx, record, links); err != nil {
 		return scriptdomain.AdaptationStrategyVersion{}, err
 	}
 	return record, nil
+}
+
+// normaliseEventLinks trims a treatment list and refuses one that names an event twice.
+//
+// The version id is stamped here rather than trusted from the caller, for the reason identifiers
+// are never taken from a model: the id is the transaction's business, and a link naming another
+// version would write a row into a version its own transaction is not creating.
+func normaliseEventLinks(versionID string, links []scriptdomain.StrategyEventLink) ([]scriptdomain.StrategyEventLink, error) {
+	seen := make(map[string]bool, len(links))
+	out := make([]scriptdomain.StrategyEventLink, 0, len(links))
+	for index, link := range links {
+		eventID := strings.TrimSpace(link.StoryEventID)
+		if eventID == "" {
+			continue
+		}
+		if seen[eventID] {
+			return nil, scriptdomain.InvalidError("That story event is listed twice: " + eventID + ".")
+		}
+		seen[eventID] = true
+		treatment := link.Treatment
+		if treatment == "" {
+			// A treatment has no sensible default the way a line type or an interior marking does,
+			// so an omitted one is refused rather than guessed: "retained" and "removed" are
+			// opposite decisions and neither follows from an absence.
+			return nil, scriptdomain.InvalidError("A story event needs a treatment: " + eventID + ".")
+		}
+		record := scriptdomain.StrategyEventLink{
+			StrategyVersionID: versionID,
+			StoryEventID:      eventID,
+			Treatment:         treatment,
+			// The ordinal is the POSITION, so a caller cannot state one that disagrees with the
+			// order it wrote — which is the only thing "reordered" can mean.
+			Ordinal: index + 1,
+		}
+		if err := record.Validate(); err != nil {
+			return nil, err
+		}
+		out = append(out, record)
+	}
+	return out, nil
+}
+
+// assertStrategyLocks refuses a strategy revision that changed a field the user pinned.
+//
+// `mergedEventGroups` is compared as the TREATMENTS it names rather than as the JSON text: the
+// field is a controlled structure (§2.6), and two payloads that differ only in key order or
+// whitespace state the same strategy. Comparing the raw text would refuse a revision that changed
+// nothing a reader could see.
+func (s *Service) assertStrategyLocks(ctx context.Context, incoming scriptdomain.AdaptationStrategyVersion, links []scriptdomain.StrategyEventLink) error {
+	locks, err := s.readLocks(ctx, incoming.BasedOnVersionID)
+	if err != nil {
+		return err
+	}
+	if len(locks) == 0 {
+		return nil
+	}
+	if err := assertLocksCovered(locks, scriptdomain.FamilyAdaptationStrategy, scriptdomain.LockableFields(scriptdomain.FamilyAdaptationStrategy)); err != nil {
+		return err
+	}
+	base, err := s.repository.GetAdaptationStrategyVersion(ctx, incoming.BasedOnVersionID)
+	if err != nil {
+		return err
+	}
+	baseLinks, err := s.repository.ListStrategyEventLinks(ctx, base.ID)
+	if err != nil {
+		return err
+	}
+	return compareFieldSets(locks, scriptdomain.FamilyAdaptationStrategy,
+		fieldValues{
+			scriptdomain.LockStrategySummary:      base.StrategySummary,
+			scriptdomain.LockStrategyMode:         string(base.AdaptationMode),
+			scriptdomain.LockStrategyMergedEvents: renderTreatments(baseLinks),
+			scriptdomain.LockStrategyOriginalAdds: base.OriginalAdditions,
+			scriptdomain.LockStrategyRationale:    base.Rationale,
+			scriptdomain.LockStrategyRisks:        base.Risks,
+		},
+		fieldValues{
+			scriptdomain.LockStrategySummary:      incoming.StrategySummary,
+			scriptdomain.LockStrategyMode:         string(incoming.AdaptationMode),
+			scriptdomain.LockStrategyMergedEvents: renderTreatments(links),
+			scriptdomain.LockStrategyOriginalAdds: incoming.OriginalAdditions,
+			scriptdomain.LockStrategyRationale:    incoming.Rationale,
+			scriptdomain.LockStrategyRisks:        incoming.Risks,
+		},
+	)
 }
 
 // EnsureScript returns an episode's script, creating it when the episode has
@@ -432,7 +661,7 @@ func (s *Service) CreateScriptVersion(ctx context.Context, request CreateScriptV
 		ScriptID:                    script.ID,
 		VersionNumber:               highest + 1,
 		Status:                      versioning.StatusDraft,
-		BasedOnVersionID:            request.BasedOnVersionID,
+		BasedOnVersionID:            strings.TrimSpace(request.BasedOnVersionID),
 		StorySkeletonVersionID:      strings.TrimSpace(request.StorySkeletonVersionID),
 		AdaptationStrategyVersionID: strings.TrimSpace(request.AdaptationStrategyVersionID),
 		EstimatedDurationSeconds:    request.EstimatedDurationSeconds,

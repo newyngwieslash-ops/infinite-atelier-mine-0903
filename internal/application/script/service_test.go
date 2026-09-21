@@ -56,7 +56,13 @@ type memoryStore struct {
 	// path replaces a version's links as a whole rather than amending them.
 	skeletonEvents map[string][]string
 	strategyEvents map[string][]scriptdomain.StrategyEventLink
+	// storyEvents and storyEntities are the story-graph rows, keyed by PROJECT and then by id, so the
+	// reference check's project boundary is representable rather than assumed. A nil outer map means
+	// no project has a story graph, which is the state every test that states no reference runs in.
+	storyEvents    map[string]map[string]string
+	storyEntities  map[string]map[string]string
 	failCreate     error
+	failReferences error
 	approveCalls   int
 	// events records what the approval commands wrote, so a test can assert the
 	// governance record exists rather than only that the status moved.
@@ -159,6 +165,25 @@ func (s *memoryStore) CreateStorySkeletonVersion(_ context.Context, record scrip
 	return nil
 }
 
+// CreateStorySkeletonVersionWithLinks stores the version and replaces its selection.
+//
+// The double writes the links as a SET, mirroring the real repository's DELETE-then-INSERT: a test
+// that re-linked a version must see the new set rather than the union, which is the behaviour the
+// write path depends on when it states a complete selection.
+func (s *memoryStore) CreateStorySkeletonVersionWithLinks(ctx context.Context, record scriptdomain.StorySkeletonVersion, eventIDs []string) error {
+	if err := s.CreateStorySkeletonVersion(ctx, record); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(eventIDs) == 0 {
+		delete(s.skeletonEvents, record.ID)
+		return nil
+	}
+	s.skeletonEvents[record.ID] = append([]string(nil), eventIDs...)
+	return nil
+}
+
 func (s *memoryStore) GetStorySkeletonVersion(_ context.Context, id string) (scriptdomain.StorySkeletonVersion, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -193,6 +218,29 @@ func (s *memoryStore) CreateAdaptationStrategyVersion(_ context.Context, record 
 		}
 	}
 	s.strategies[record.ID] = record
+	return nil
+}
+
+// CreateAdaptationStrategyVersionWithLinks stores the version and replaces its treatments, with the
+// ordinals re-derived from the slice's positions so the double and the real repository agree about
+// which of the two decides the order.
+func (s *memoryStore) CreateAdaptationStrategyVersionWithLinks(ctx context.Context, record scriptdomain.AdaptationStrategyVersion, links []scriptdomain.StrategyEventLink) error {
+	if err := s.CreateAdaptationStrategyVersion(ctx, record); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(links) == 0 {
+		delete(s.strategyEvents, record.ID)
+		return nil
+	}
+	stored := make([]scriptdomain.StrategyEventLink, 0, len(links))
+	for index, link := range links {
+		link.StrategyVersionID = record.ID
+		link.Ordinal = index + 1
+		stored = append(stored, link)
+	}
+	s.strategyEvents[record.ID] = stored
 	return nil
 }
 
@@ -1247,6 +1295,43 @@ func (s *memoryStore) ListStrategyEventLinks(_ context.Context, versionID string
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]scriptdomain.StrategyEventLink(nil), s.strategyEvents[versionID]...), nil
+}
+
+// MissingStoryEventIDs reports which of the given events this project does not have.
+//
+// THE PROJECT IS PART OF THE ANSWER, which the first version of this double got wrong: it ignored
+// the argument and read one flat map, so a mutation that replaced the project id with a constant
+// left every test green. That is the leak the check exists to prevent — a script citing an event
+// that belongs to another project — and a double that cannot represent it cannot catch it. The map
+// is now keyed by project, so a row seeded for one project is genuinely absent for another.
+func (s *memoryStore) MissingStoryEventIDs(_ context.Context, projectID string, eventIDs []string) ([]string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.failReferences != nil {
+		return nil, s.failReferences
+	}
+	return missingFrom(s.storyEvents[projectID], eventIDs), nil
+}
+
+// MissingStoryEntityIDs reports which of the given entities this project does not have.
+func (s *memoryStore) MissingStoryEntityIDs(_ context.Context, projectID string, entityIDs []string) ([]string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.failReferences != nil {
+		return nil, s.failReferences
+	}
+	return missingFrom(s.storyEntities[projectID], entityIDs), nil
+}
+
+// missingFrom is the double's reading of "which of these are absent".
+func missingFrom(known map[string]string, ids []string) []string {
+	missing := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if _, ok := known[id]; !ok {
+			missing = append(missing, id)
+		}
+	}
+	return missing
 }
 
 func (s *memoryStore) ListStorySkeletonVersions(_ context.Context, episodeID string) ([]scriptdomain.StorySkeletonVersion, error) {

@@ -10,13 +10,17 @@ import (
 
 // script_structure.go is the repository's WP-08 surface: a whole version's content in one
 // transaction, the dialogue lines migration 000008 created with no writer, the two event-link
-// tables, the field locks and the version histories.
+// tables' READ half, the field locks and the version histories.
 //
 // It is a separate file because it is a separate unit of work. `script.go` writes one row at a
 // time — a scene, a shot — which is right for a user editing one thing and wrong for a stage
 // producing a whole version, and the two have different failure semantics: a single-row write
 // that fails leaves nothing behind, while a structure write that fails must leave NOTHING of a
 // hundred rows.
+//
+// The link tables' WRITE half is in `linked_versions.go`, beside the version inserts it shares a
+// transaction with: a link set belongs to a version, so the two are one unit of work and the file
+// holding the pairing is where a reader should look for it.
 
 // withinTx runs fn inside a transaction of this repository's own database.
 //
@@ -299,41 +303,6 @@ func (r *ScriptRepository) ListScriptFieldLocks(ctx context.Context, versionID s
 	return locks, nil
 }
 
-// LinkSkeletonEvents records which story events one skeleton version selected.
-//
-// It runs in one transaction with its deletes because the link set is replaced as a whole: a
-// caller stating the events it selected is stating the complete answer, and a partial update
-// would leave rows from a previous statement behind. §7.4 makes this a LINK TABLE rather than a
-// JSON column ("Lists must be link tables or controlled structures"), which is why the write is
-// rows and not a field.
-func (r *ScriptRepository) LinkSkeletonEvents(ctx context.Context, versionID string, eventIDs []string, createdAt time.Time) error {
-	if r == nil || r.db == nil {
-		return storageError("SCRIPT_STORE_UNAVAILABLE", "The episode and script store is unavailable.", nil)
-	}
-	return r.withinTx(ctx, func(repo *ScriptRepository) error {
-		conn := repo.conn()
-		if conn == nil {
-			return storageError("SCRIPT_STORE_UNAVAILABLE", "The episode and script store is unavailable.", nil)
-		}
-		if _, err := conn.ExecContext(ctx,
-			`DELETE FROM story_skeleton_event_links WHERE skeleton_version_id = ?`, versionID); err != nil {
-			return storageError("SCRIPT_WRITE_FAILED", "The selected events could not be replaced.", err)
-		}
-		for index, eventID := range eventIDs {
-			if _, err := conn.ExecContext(ctx, `INSERT INTO story_skeleton_event_links
-				(skeleton_version_id, story_event_id, ordinal, created_at)
-				VALUES (?, ?, ?, ?)`,
-				versionID, eventID, index+1, formatTime(createdAt)); err != nil {
-				if isForeignKeyViolation(err) {
-					return script.InvalidError("That story event does not exist.")
-				}
-				return storageError("SCRIPT_WRITE_FAILED", "The selected events could not be saved.", err)
-			}
-		}
-		return nil
-	})
-}
-
 // ListSkeletonEventIDs returns the events one skeleton version selected.
 func (r *ScriptRepository) ListSkeletonEventIDs(ctx context.Context, versionID string) ([]string, error) {
 	conn := r.conn()
@@ -358,39 +327,6 @@ func (r *ScriptRepository) ListSkeletonEventIDs(ctx context.Context, versionID s
 		return nil, storageError("SCRIPT_READ_FAILED", "The selected events could not be read.", err)
 	}
 	return ids, nil
-}
-
-// LinkStrategyEvents records one strategy version's per-event treatments.
-func (r *ScriptRepository) LinkStrategyEvents(ctx context.Context, versionID string, links []script.StrategyEventLink, createdAt time.Time) error {
-	if r == nil || r.db == nil {
-		return storageError("SCRIPT_STORE_UNAVAILABLE", "The episode and script store is unavailable.", nil)
-	}
-	return r.withinTx(ctx, func(repo *ScriptRepository) error {
-		conn := repo.conn()
-		if conn == nil {
-			return storageError("SCRIPT_STORE_UNAVAILABLE", "The episode and script store is unavailable.", nil)
-		}
-		if _, err := conn.ExecContext(ctx,
-			`DELETE FROM adaptation_strategy_event_links WHERE strategy_version_id = ?`, versionID); err != nil {
-			return storageError("SCRIPT_WRITE_FAILED", "The event treatments could not be replaced.", err)
-		}
-		for index, link := range links {
-			// The ordinal is the array's position rather than the caller's value, because the
-			// array IS the order: a payload that stated both could state two different ones, and
-			// the order the caller wrote is the one a reader would see.
-			if _, err := conn.ExecContext(ctx, `INSERT INTO adaptation_strategy_event_links
-				(strategy_version_id, story_event_id, treatment, ordinal, created_at)
-				VALUES (?, ?, ?, ?, ?)`,
-				link.StrategyVersionID, link.StoryEventID, string(link.Treatment), index+1,
-				formatTime(createdAt)); err != nil {
-				if isForeignKeyViolation(err) {
-					return script.InvalidError("That story event does not exist.")
-				}
-				return storageError("SCRIPT_WRITE_FAILED", "The event treatments could not be saved.", err)
-			}
-		}
-		return nil
-	})
 }
 
 // ListStrategyEventLinks returns one strategy version's treatments.

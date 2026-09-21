@@ -26,15 +26,28 @@ import (
 // checks — a version with no predecessor has no field a user could have pinned.
 
 // CreateScriptStructureRequest asks for a whole script version's content.
+//
+// It carries EITHER a materialised `Structure` (identifiers and ordinals already assigned, which a
+// user's edit and the existing tests supply) OR a `Draft` (no identifiers and no ordinals, which a
+// model supplies). Exactly one must be present, and stating both is refused rather than merged:
+// two payloads for one version would leave the question of which one won to a rule nobody wrote
+// down. `draft.go` records why a model is never asked for an id or an ordinal.
 type CreateScriptStructureRequest struct {
 	ScriptID        string
 	ScriptVersionID string
-	// BasedOnVersionID is the version this one revises, empty for the first. It is what the lock
-	// enforcement compares against, so a FIX that omits it silently loses its locks — which is why
-	// the structure write refuses a locked field's absence rather than assuming a first version.
+	// BasedOnVersionID is the version this one revises, empty for the first. The lock enforcement
+	// reads the BASE from the version ROW rather than from this field, so a revision cannot lose its
+	// locks by omitting it here; this field exists for callers that want to name their intent, and
+	// for the draft path's relation check.
 	BasedOnVersionID string
-	// Structure is the version's scenes, lines and shots.
+	// Structure is the version's scenes, lines and shots, already materialised.
 	Structure scriptdomain.ScriptStructure
+	// Draft is the version's content as a caller states it, with identifiers and ordinals left to
+	// the code that writes it (AGENT_CONTRACTS §17).
+	Draft scriptdomain.ScriptStructureDraft
+	// ProjectID scopes the reference checks: a scene naming a story event or entity can only be
+	// checked against a project, and this is the only place the project reaches this method.
+	ProjectID string
 	// SourceAgentRunID names the run that produced this content, empty for a user's edit.
 	SourceAgentRunID string
 	Summary          string
@@ -45,10 +58,11 @@ type CreateScriptStructureRequest struct {
 
 // CreateScriptStructure writes one script version's whole content.
 //
-// The order is: read the version, check it is writable, enforce the locks, derive the lengths, then
-// write everything in one transaction. Nothing is written until every check has passed, so a
-// refused structure leaves no scenes behind — which matters more here than for a single-row write,
-// because a partial version would be an artifact a reader could mistake for a complete one.
+// The order is: read the version, check it is writable, build the payload, validate it, check every
+// reference it names, enforce the locks, write, then derive the duration. Nothing is written until
+// every check has passed, so a refused structure leaves no scenes behind — which matters more here
+// than for a single-row write, because a partial version would be an artifact a reader could
+// mistake for a complete one.
 func (s *Service) CreateScriptStructure(ctx context.Context, request CreateScriptStructureRequest) (scriptdomain.ScriptVersion, error) {
 	if !s.Available() {
 		return scriptdomain.ScriptVersion{}, storageFailure()
@@ -59,16 +73,45 @@ func (s *Service) CreateScriptStructure(ctx context.Context, request CreateScrip
 	}
 	// A version whose content is frozen may not be given content. §2.5 freezes an approved or
 	// superseded version's content, and WP-05 wrote the predicate for this package to call.
-	if scriptdomain.ContentIsFrozen(version.Status) {
-		return scriptdomain.ScriptVersion{}, scriptdomain.ConflictError(
-			"That script version is approved, so its content cannot be rewritten. Author a new version instead.")
+	if err := assertWritable(version.Status); err != nil {
+		return scriptdomain.ScriptVersion{}, err
 	}
-	structure := request.Structure
-	structure.ScriptVersionID = version.ID
+	structure, err := s.materialiseStructure(ctx, request, version)
+	if err != nil {
+		return scriptdomain.ScriptVersion{}, err
+	}
 	if err := structure.Validate(); err != nil {
 		return scriptdomain.ScriptVersion{}, err
 	}
-	if err := s.enforceScriptLocks(ctx, version, structure); err != nil {
+	// The pinned lines are carried forward HERE rather than inside one of the two payload paths, so
+	// the guarantee holds whichever way the content arrived. It was inside the draft builder at
+	// first, which made it path-dependent: a revision written through the materialised path — a
+	// user's edit today, and any future caller that builds its own structure — would have dropped
+	// every pin while the draft path kept them. The test that caught it was the one asserting the
+	// pin survives a revision, run through the materialised path.
+	if err := s.carryDialogueLocks(ctx, version.BasedOnVersionID, &structure); err != nil {
+		return scriptdomain.ScriptVersion{}, err
+	}
+	// The summary this write will LEAVE on the row, resolved before anything is checked.
+	//
+	// A revision that states none INHERITS its base's, and the alternative was a real defect: an
+	// empty request summary fell back to the revision's OWN row — which a version created a moment ago
+	// leaves empty — so a locked summary was compared against "" and refused. That made the lock
+	// unsatisfiable for exactly the revision AC-SCRIPT-002 describes, where the model rewrites a
+	// structure and has no reason to restate a summary it is not allowed to change.
+	//
+	// Inheriting is the reading a user's pin implies: "this stays" means the revision carries it,
+	// whether or not the payload mentions it. It is also what makes the empty case safe — the value
+	// compared is the value that will be stored, so the check cannot pass on one reading and refuse on
+	// another.
+	summary, err := s.resolveSummary(ctx, version, request.Summary)
+	if err != nil {
+		return scriptdomain.ScriptVersion{}, err
+	}
+	if err := s.assertStructureReferences(ctx, request.ProjectID, structure); err != nil {
+		return scriptdomain.ScriptVersion{}, err
+	}
+	if err := s.enforceScriptLocks(ctx, version, structure, summary); err != nil {
 		return scriptdomain.ScriptVersion{}, err
 	}
 	if err := s.repository.CreateScriptStructure(ctx, structure); err != nil {
@@ -77,24 +120,229 @@ func (s *Service) CreateScriptStructure(ctx context.Context, request CreateScrip
 	// The duration is DERIVED from the scenes and written onto the version row, which is why no
 	// tool accepts a duration: AGENT_CONTRACTS §17 puts "时长求和" in the code's column, and a
 	// declared total and a computed one can disagree while only one of them is checkable.
-	updated, err := s.recordStructureTotals(ctx, version, structure, request.Summary)
+	//
+	// The summary passed is the one `resolveSummary` chose, so the value written is the value the lock
+	// comparison saw. `recordStructureTotals` no longer re-decides it, because two places deciding the
+	// same fallback is how a write ends up storing something the check never looked at.
+	updated, err := s.recordStructureTotals(ctx, version, structure, summary)
 	if err != nil {
 		return scriptdomain.ScriptVersion{}, err
 	}
 	return updated, nil
 }
 
-// recordStructureTotals writes the summed duration onto the version row.
+// resolveSummary decides what summary the written version will carry.
 //
-// The version row exists already — it was created by CreateScriptVersion and this method filled in
-// its content — so this is an UPDATE. It runs in its own transaction because the structure is
-// already committed by now: a failure here leaves a version with content and a stale duration
-// rather than no version at all, and a stale duration is repairable where a missing version is not.
+// The rule is: what the caller stated, or — on a revision — what the version it revises carries. A
+// first version with no summary stays empty, which is legal: a draft's summary may not be written
+// yet, and §7.5 makes the column a default-empty TEXT rather than a requirement.
+func (s *Service) resolveSummary(ctx context.Context, version scriptdomain.ScriptVersion, stated string) (string, error) {
+	if strings.TrimSpace(stated) != "" {
+		return stated, nil
+	}
+	base := strings.TrimSpace(version.BasedOnVersionID)
+	if base == "" {
+		return version.Summary, nil
+	}
+	inherited, err := s.repository.GetScriptVersion(ctx, base)
+	if err != nil {
+		return "", err
+	}
+	return inherited.Summary, nil
+}
+
+// materialiseStructure turns the request into the payload the database will hold.
+//
+// A materialised `Structure` is taken as given — its identifiers are the caller's, which is what a
+// user's edit of an existing version produces. A `Draft` is built here, and building it is the
+// whole reason §17's "ID、顺序和唯一性" is code's business: every identifier is minted, every
+// ordinal is a position, and every child's scene reference is the scene it was nested under.
+func (s *Service) materialiseStructure(ctx context.Context, request CreateScriptStructureRequest, version scriptdomain.ScriptVersion) (scriptdomain.ScriptStructure, error) {
+	// The two emptiness cases are handled elsewhere and deliberately NOT here. "Both stated" is a
+	// contradiction only this method can see, so it is refused here. "Neither stated" produces an
+	// empty structure, which `ScriptStructure.Validate` already refuses with its own message — and
+	// checking it again would be a second rule stating the same thing, in a place a later change could
+	// make disagree with the first.
+	hasStructure := len(request.Structure.Scenes) > 0
+	hasDraft := len(request.Draft.Scenes) > 0
+	switch {
+	case hasStructure && hasDraft:
+		return scriptdomain.ScriptStructure{}, scriptdomain.InvalidError(
+			"State the script version's content once: either a structure or a draft, not both.")
+	case hasStructure:
+		structure := request.Structure
+		structure.ScriptVersionID = version.ID
+		return structure, nil
+	default:
+		built, err := s.buildDraft(ctx, version, request.Draft)
+		if err != nil {
+			return scriptdomain.ScriptStructure{}, err
+		}
+		return built, nil
+	}
+}
+
+// buildDraft assigns the identifiers and ordinals a draft leaves out.
+//
+// The ordinals come from the ARRAY POSITIONS, so a gap is not expressible: a caller that meant to
+// skip a scene cannot, because skipping one would only make the next scene take its place. That is
+// the property `ScriptStructure.Validate` also checks, and it holds here by construction — the
+// validator is what makes it true for the materialised path, where a caller COULD state a gap.
+//
+// The identifiers are minted per child, and a failure part-way leaves the minted ids unused rather
+// than half a version: nothing has been written yet, because this runs before the write.
+func (s *Service) buildDraft(ctx context.Context, version scriptdomain.ScriptVersion, draft scriptdomain.ScriptStructureDraft) (scriptdomain.ScriptStructure, error) {
+	now := s.now()
+	structure := scriptdomain.ScriptStructure{
+		ScriptVersionID: version.ID,
+		Scenes:          make([]scriptdomain.SceneStructure, 0, len(draft.Scenes)),
+	}
+	for sceneIndex, sceneDraft := range draft.Scenes {
+		sceneID, err := s.ids.New()
+		if err != nil {
+			return scriptdomain.ScriptStructure{}, storageFailure()
+		}
+		interior := sceneDraft.InteriorExterior
+		if interior == "" {
+			interior = scriptdomain.InteriorOTHER
+		}
+		entry := scriptdomain.SceneStructure{
+			Scene: scriptdomain.Scene{
+				ID:              sceneID,
+				ScriptVersionID: version.ID,
+				// The position, not a stated number: §17 gives order to the code, and a payload that
+				// could state both could state two different ones.
+				Ordinal:                  sceneIndex + 1,
+				SceneNumber:              strings.TrimSpace(sceneDraft.SceneNumber),
+				Slugline:                 sceneDraft.Slugline,
+				InteriorExterior:         interior,
+				LocationEntityID:         strings.TrimSpace(sceneDraft.LocationEntityID),
+				TimeOfDay:                sceneDraft.TimeOfDay,
+				Summary:                  sceneDraft.Summary,
+				DramaticGoal:             sceneDraft.DramaticGoal,
+				EstimatedDurationSeconds: sceneDraft.EstimatedDurationSeconds,
+				SourceStoryEventID:       strings.TrimSpace(sceneDraft.SourceStoryEventID),
+				IsOriginalAdaptation:     sceneDraft.IsOriginalAdaptation,
+				CreatedAt:                now,
+				UpdatedAt:                now,
+				Revision:                 1,
+			},
+			DialogueLines: make([]scriptdomain.DialogueLine, 0, len(sceneDraft.DialogueLines)),
+			Shots:         make([]scriptdomain.Shot, 0, len(sceneDraft.Shots)),
+		}
+		for lineIndex, lineDraft := range sceneDraft.DialogueLines {
+			lineID, err := s.ids.New()
+			if err != nil {
+				return scriptdomain.ScriptStructure{}, storageFailure()
+			}
+			lineType := lineDraft.Type
+			if lineType == "" {
+				lineType = scriptdomain.LineDialogue
+			}
+			entry.DialogueLines = append(entry.DialogueLines, scriptdomain.DialogueLine{
+				ID: lineID,
+				// The scene this line was NESTED under, which is the relation the nesting states. A
+				// flat list with a scene id per line could name a scene the payload does not contain.
+				SceneID:            sceneID,
+				Ordinal:            lineIndex + 1,
+				Type:               lineType,
+				CharacterEntityID:  strings.TrimSpace(lineDraft.CharacterEntityID),
+				Text:               lineDraft.Text,
+				Emotion:            lineDraft.Emotion,
+				PerformanceNote:    lineDraft.PerformanceNote,
+				SourceStoryEventID: strings.TrimSpace(lineDraft.SourceStoryEventID),
+				// A line a draft states is not locked. The lock is carried forward from the version
+				// being revised, below — a caller cannot release a pin by writing `false`, because a
+				// draft has no lock field to write.
+				Locked:    false,
+				CreatedAt: now,
+				UpdatedAt: now,
+				Revision:  1,
+			})
+		}
+		for shotIndex, shotDraft := range sceneDraft.Shots {
+			shotID, err := s.ids.New()
+			if err != nil {
+				return scriptdomain.ScriptStructure{}, storageFailure()
+			}
+			entry.Shots = append(entry.Shots, scriptdomain.Shot{
+				ID:                       shotID,
+				SceneID:                  sceneID,
+				Ordinal:                  shotIndex + 1,
+				ShotNumber:               strings.TrimSpace(shotDraft.ShotNumber),
+				ShotSize:                 shotDraft.ShotSize,
+				CameraAngle:              shotDraft.CameraAngle,
+				CameraMovement:           shotDraft.CameraMovement,
+				EstimatedDurationSeconds: shotDraft.EstimatedDurationSeconds,
+				VisualDescription:        shotDraft.VisualDescription,
+				ActionDescription:        shotDraft.ActionDescription,
+				AudioIntent:              shotDraft.AudioIntent,
+				ContinuityNotes:          shotDraft.ContinuityNotes,
+				// A shot written by a stage is a draft. Its number and its refinement belong to the
+				// storyboard stage (§9.5), so a stage cannot claim a shot is past review.
+				Status:    versioning.StatusDraft,
+				CreatedAt: now,
+				UpdatedAt: now,
+				Revision:  1,
+			})
+		}
+		structure.Scenes = append(structure.Scenes, entry)
+	}
+	return structure, nil
+}
+
+// carryDialogueLocks copies the `locked` flags of a base version's lines onto a revised version's.
+//
+// The match is POSITIONAL — scene ordinal, then line ordinal — because that is the only relation
+// two versions of a script are guaranteed to share: there is no line identity across versions, and
+// content matching would be a guess presented as a fact. A revision that reordered its scenes
+// therefore moves the pins with the positions rather than with the lines, which is the same
+// reading `DiffScriptStructure` reports.
+//
+// A base version with no scenes is not an error: it is a first draft, or a version whose content
+// was never written, and there are no flags to carry either way.
+func (s *Service) carryDialogueLocks(ctx context.Context, baseVersionID string, structure *scriptdomain.ScriptStructure) error {
+	base := strings.TrimSpace(baseVersionID)
+	if base == "" {
+		return nil
+	}
+	baseStructure, err := s.repository.GetScriptStructure(ctx, base)
+	if err != nil {
+		return err
+	}
+	if len(baseStructure.Scenes) == 0 {
+		return nil
+	}
+	for sceneIndex := range structure.Scenes {
+		if sceneIndex >= len(baseStructure.Scenes) {
+			break
+		}
+		baseScene := baseStructure.Scenes[sceneIndex]
+		lines := structure.Scenes[sceneIndex].DialogueLines
+		for lineIndex := range lines {
+			if lineIndex >= len(baseScene.DialogueLines) {
+				break
+			}
+			lines[lineIndex].Locked = baseScene.DialogueLines[lineIndex].Locked
+		}
+	}
+	return nil
+}
+
+// recordStructureTotals writes the summed duration and the resolved summary onto the version row.
+//
+// The version row exists already — it was created by CreateScriptVersion and this method fills in its
+// content — so this is an UPDATE. It runs in its own transaction because the structure is already
+// committed by now: a failure here leaves a version with content and a stale duration rather than no
+// version at all, and a stale duration is repairable where a missing version is not.
+//
+// `summary` has ALREADY been resolved by `resolveSummary` and compared by the lock enforcement, so
+// this method does not re-decide it. The first version did — it fell back to the version's own value
+// on an empty string — and that second fallback is a defect waiting to happen: the value the lock
+// check read and the value stored would be decided in two places, and the day they disagreed the
+// write would store something nobody checked.
 func (s *Service) recordStructureTotals(ctx context.Context, version scriptdomain.ScriptVersion, structure scriptdomain.ScriptStructure, summary string) (scriptdomain.ScriptVersion, error) {
 	total := structure.TotalDurationSeconds()
-	if summary == "" {
-		summary = version.Summary
-	}
 	if version.EstimatedDurationSeconds == total && version.Summary == summary {
 		return version, nil
 	}
@@ -108,46 +356,85 @@ func (s *Service) recordStructureTotals(ctx context.Context, version scriptdomai
 
 // enforceScriptLocks refuses a structure that changed a locked field of its base version.
 //
-// This is AC-SCRIPT-002's "锁定字段不变", and it is a refusal rather than a repair: a write path
-// that silently restored the locked values would produce a version the model did not write and
-// nobody chose, which is worse than failing the stage — the record would say the model produced
-// content it did not.
+// The two lockable fields of a script version are its summary and its structure, and they are
+// checked by two comparisons because they are two KINDS of field: the summary is a string, and the
+// structure is a list of scenes compared scene by scene at the same ordinal. A locked structure
+// therefore does not mean "do not touch anything" — it means the scene at each position must be the
+// scene that was there, which is what a user pinning a finished episode's shape is asking for.
 //
-// The two lockable fields of a script version are its summary and its structure, and the structure
-// is compared SCENE BY SCENE at the same ordinal. A locked structure therefore does not mean "do
-// not touch anything": it means the scene at each position must be the scene that was there, which
-// is what a user pinning a finished episode's shape is asking for.
-func (s *Service) enforceScriptLocks(ctx context.Context, version scriptdomain.ScriptVersion, incoming scriptdomain.ScriptStructure) error {
-	if strings.TrimSpace(version.BasedOnVersionID) == "" {
-		// A first version has no base, so it has nothing to preserve. That is not a bypass: a
-		// caller cannot reach it by omitting BasedOnVersionID on a REVISION, because the version
-		// row's own field is what is read here and not the request's.
-		return nil
-	}
-	// The locks are read from the BASE version, which is where the user pinned them.
-	//
-	// This was a real defect: the first version read them from the NEW version, where nothing can be
-	// locked yet because it was created a moment ago — so the set was always empty, the comparison
-	// never ran, and AC-SCRIPT-002's "锁定字段不变" was enforced nowhere while its test passed for the
-	// wrong reason. The service tests found it: a revision that rewrote a pinned field was accepted.
-	locks, err := s.repository.ListScriptFieldLocks(ctx, version.BasedOnVersionID)
+// `assertLocksCovered` runs on the whole lock set before either comparison, so a lock on a field
+// neither covers refuses the write rather than passing unchecked. That is the failure mode a split
+// comparison invites, and it is the one AC-SCRIPT-002 cannot afford: a lock that reads as a
+// protection and enforces nothing.
+func (s *Service) enforceScriptLocks(ctx context.Context, version scriptdomain.ScriptVersion, incoming scriptdomain.ScriptStructure, incomingSummary string) error {
+	locks, err := s.readLocks(ctx, version.BasedOnVersionID)
 	if err != nil {
 		return err
 	}
 	if len(locks) == 0 {
 		return nil
 	}
-	locked := scriptdomain.LockedFieldsOf(locks)
-	base, err := s.repository.GetScriptStructure(ctx, version.BasedOnVersionID)
+	// The coverage list is the UNION of the two comparisons below: the string field the generic
+	// comparison reads, and the structure this family compares separately. It is written as one list
+	// rather than derived, because deriving it would make the check agree with whatever the
+	// comparison happened to cover — which is the tautology it exists to break.
+	if err := assertLocksCovered(locks, scriptdomain.FamilyScript, []scriptdomain.LockableField{
+		scriptdomain.LockScriptSummary,
+		scriptdomain.LockScriptStructure,
+	}); err != nil {
+		return err
+	}
+	// The base structure and the base version are read once here. Both comparisons need a base, and
+	// reading them once means the two sides of the check cannot come from two different moments.
+	baseStructure, err := s.repository.GetScriptStructure(ctx, version.BasedOnVersionID)
 	if err != nil {
 		return err
 	}
-	if locked[scriptdomain.LockScriptStructure] {
-		if err := compareStructures(base, incoming); err != nil {
+	base, err := s.repository.GetScriptVersion(ctx, version.BasedOnVersionID)
+	if err != nil {
+		return err
+	}
+	// The string-valued lock is compared by the generic loop, and the structure lock — whose two
+	// sides are whole documents rather than two strings — is compared by `compareStructures` below.
+	// The partition is by FIELD and it is explicit: the coverage list above is what makes "every lock
+	// has a comparison" a checked property, and these two comparisons are what it checks against.
+	//
+	// `compareFieldSets` receives ALL the locks and skips the structure one by NOT CARRYING it in
+	// the maps: a field absent from a map is a refusal there, so the structure lock must be filtered
+	// out of the list rather than left in it. Filtering is the safe direction — a filter that removed
+	// too much would then refuse the write, where a filter that removed too little would be caught by
+	// the absent-from-map check.
+	stringLocks := make([]scriptdomain.FieldLock, 0, len(locks))
+	for _, lock := range locks {
+		if lock.Field == scriptdomain.LockScriptSummary {
+			stringLocks = append(stringLocks, lock)
+		}
+	}
+	if err := compareFieldSets(stringLocks, scriptdomain.FamilyScript,
+		fieldValues{scriptdomain.LockScriptSummary: base.Summary},
+		fieldValues{scriptdomain.LockScriptSummary: incomingSummary},
+	); err != nil {
+		return err
+	}
+	// The structure lock is not one of the string fields the loop above reads, so it is compared
+	// here. `covered` names it, which is what makes "there is a comparison for every lock" a
+	// property rather than a hope.
+	if hasLock(locks, scriptdomain.LockScriptStructure) {
+		if err := compareStructures(baseStructure, incoming); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// hasLock reports whether one field is in a lock set.
+func hasLock(locks []scriptdomain.FieldLock, field scriptdomain.LockableField) bool {
+	for _, lock := range locks {
+		if lock.Field == field {
+			return true
+		}
+	}
+	return false
 }
 
 // compareStructures refuses a structure that differs from its base in any locked position.
@@ -171,6 +458,69 @@ func compareStructures(base, incoming scriptdomain.ScriptStructure) error {
 			before.EstimatedDurationSeconds != after.EstimatedDurationSeconds {
 			return scriptdomain.ConflictError(
 				"A locked structure was changed: a scene the user pinned came back different.")
+		}
+	}
+	return nil
+}
+
+// assertStructureReferences refuses a structure that cites story-graph rows which do not exist.
+//
+// AGENT_CONTRACTS §17 puts "引用存在性" in the code's column, AC-SCRIPT-003 asks for "source event
+// 引用" as a formal relation, and AC-AGENT-003 makes a stage that reports a reference which does not
+// exist FAIL rather than pass. The schema cannot do this — see StoryReferenceRepository — so it is
+// done here, and it is done BEFORE the write so a refused structure leaves nothing behind.
+//
+// An empty project id skips the check rather than refusing the write, and that is not a hole: a
+// caller that stated no project has no project-scoped references to check, because the only route
+// that supplies them is the tool path, where the run's own project is always present. What the skip
+// does not do is let a reference through unexamined while claiming it was checked.
+func (s *Service) assertStructureReferences(ctx context.Context, projectID string, structure scriptdomain.ScriptStructure) error {
+	project := strings.TrimSpace(projectID)
+	if project == "" {
+		return nil
+	}
+	eventIDs := make([]string, 0, len(structure.Scenes))
+	entityIDs := make([]string, 0, len(structure.Scenes))
+	seenEvent := map[string]bool{}
+	seenEntity := map[string]bool{}
+	addEvent := func(id string) {
+		trimmed := strings.TrimSpace(id)
+		if trimmed == "" || seenEvent[trimmed] {
+			return
+		}
+		seenEvent[trimmed] = true
+		eventIDs = append(eventIDs, trimmed)
+	}
+	addEntity := func(id string) {
+		trimmed := strings.TrimSpace(id)
+		if trimmed == "" || seenEntity[trimmed] {
+			return
+		}
+		seenEntity[trimmed] = true
+		entityIDs = append(entityIDs, trimmed)
+	}
+	for _, scene := range structure.Scenes {
+		addEvent(scene.SourceStoryEventID)
+		addEntity(scene.LocationEntityID)
+		for _, line := range scene.DialogueLines {
+			addEvent(line.SourceStoryEventID)
+			addEntity(line.CharacterEntityID)
+		}
+	}
+	if len(eventIDs) > 0 {
+		if err := s.assertStoryEventsExist(ctx, project, eventIDs); err != nil {
+			return err
+		}
+	}
+	if len(entityIDs) > 0 {
+		missing, err := s.repository.MissingStoryEntityIDs(ctx, project, entityIDs)
+		if err != nil {
+			return err
+		}
+		if len(missing) > 0 {
+			return scriptdomain.InvalidError(
+				"The script cites story entities this project does not have: " + strings.Join(missing, ", ") +
+					". A scene's location and a line's speaker must be entities that exist.")
 		}
 	}
 	return nil

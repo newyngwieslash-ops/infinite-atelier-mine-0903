@@ -49,6 +49,19 @@ type SkeletonRepository interface {
 	// CreateStorySkeletonVersion stores one version. A duplicate (episode,
 	// version number) pair is a conflict.
 	CreateStorySkeletonVersion(ctx context.Context, record scriptdomain.StorySkeletonVersion) error
+	// CreateStorySkeletonVersionWithLinks stores one version AND the story events it selected,
+	// in ONE transaction.
+	//
+	// It is a separate method rather than a call the service makes after the insert, because the
+	// two are one artifact: DOMAIN_MODEL section 7.4 makes the selected events part of what a
+	// skeleton IS, so a version whose links were never written would be a skeleton with no
+	// selection — which a reviewer could accept without ever noticing. One transaction makes that
+	// state unrepresentable, and it is the same argument the whole-version structure write rests on.
+	//
+	// A version with an empty selection is legal and writes no link rows: a skeleton that selects
+	// nothing is a draft, and refusing it would make the first write of a stage fail for a reason
+	// the model cannot act on.
+	CreateStorySkeletonVersionWithLinks(ctx context.Context, record scriptdomain.StorySkeletonVersion, eventIDs []string) error
 	// GetStorySkeletonVersion returns one version by id.
 	GetStorySkeletonVersion(ctx context.Context, id string) (scriptdomain.StorySkeletonVersion, error)
 	// MaxStorySkeletonVersionNumber reports the highest version number an
@@ -68,6 +81,11 @@ type StrategyRepository interface {
 	// CreateAdaptationStrategyVersion stores one version. A duplicate (episode,
 	// version number) pair is a conflict.
 	CreateAdaptationStrategyVersion(ctx context.Context, record scriptdomain.AdaptationStrategyVersion) error
+	// CreateAdaptationStrategyVersionWithLinks stores one version AND its per-event treatments in
+	// ONE transaction, for the reason the skeleton's twin states: section 7.5 makes the retained,
+	// removed and reordered sets part of what a strategy IS, so a version without them is a
+	// strategy that decided nothing.
+	CreateAdaptationStrategyVersionWithLinks(ctx context.Context, record scriptdomain.AdaptationStrategyVersion, links []scriptdomain.StrategyEventLink) error
 	// GetAdaptationStrategyVersion returns one version by id.
 	GetAdaptationStrategyVersion(ctx context.Context, id string) (scriptdomain.AdaptationStrategyVersion, error)
 	// MaxAdaptationStrategyVersionNumber reports the highest version number an
@@ -203,22 +221,48 @@ type FieldLockRepository interface {
 	ListScriptFieldLocks(ctx context.Context, versionID string) ([]scriptdomain.FieldLock, error)
 }
 
-// EventLinkRepository writes the two link tables migration 000008 created and no writer used.
+// EventLinkRepository READS the two link tables migration 000008 created.
 //
 // DOMAIN_MODEL section 7.4 says a skeleton's selected events are a LINK TABLE and not JSON
 // ("Lists must be link tables or controlled structures, not Markdown"), and section 7.5 says the
 // same for a strategy's retained/removed/reordered sets. Both tables existed since WP-05 and both
 // had no writer until WP-08, so FR-040's "忠实保留、合并、删减和新增项" had nowhere to land.
+//
+// # Why the WRITES are not here
+//
+// A link set is meaningless without the version it belongs to, so the two are one unit of work and
+// are declared as one: `CreateStorySkeletonVersionWithLinks` on the skeleton port and
+// `CreateAdaptationStrategyVersionWithLinks` on the strategy port. A `LinkSkeletonEvents` callable
+// on its own would be a second way to state the same fact — and the one a caller could reach for a
+// version that does not exist, or reach for a version and then never write its links. What is left
+// here is the reading half, which is what a diff and a UI need.
 type EventLinkRepository interface {
-	// LinkSkeletonEvents records which story events one skeleton version selected.
-	LinkSkeletonEvents(ctx context.Context, versionID string, eventIDs []string, createdAt time.Time) error
 	// ListSkeletonEventIDs returns the events one skeleton version selected, in the order it
 	// recorded them.
 	ListSkeletonEventIDs(ctx context.Context, versionID string) ([]string, error)
-	// LinkStrategyEvents records one strategy version's per-event treatments.
-	LinkStrategyEvents(ctx context.Context, versionID string, links []scriptdomain.StrategyEventLink, createdAt time.Time) error
 	// ListStrategyEventLinks returns one strategy version's treatments.
 	ListStrategyEventLinks(ctx context.Context, versionID string) ([]scriptdomain.StrategyEventLink, error)
+}
+
+// StoryReferenceRepository answers whether the story-graph rows a script names actually exist.
+//
+// AGENT_CONTRACTS section 17 puts "引用存在性" (reference existence) in the code's column, and
+// AC-SCRIPT-003 asks for "source event 引用" as a formal relation. The schema cannot enforce it:
+// `scenes.source_story_event_id` and `dialogue_lines.source_story_event_id` are TEXT columns with
+// no foreign key, because deleting a story event must not delete a scene that dramatized it — the
+// citation is provenance, and provenance outlives the row. So the check is here, and it is a
+// REFUSAL rather than a repair: a scene citing an event that does not exist is a citation a reader
+// would follow into nothing, which is what AC-AGENT-003 makes fail a stage.
+//
+// The methods return what is MISSING rather than a yes/no, because the refusal has to name the
+// identifiers: a stage told only "a reference is wrong" would re-run and produce the same wrong
+// reference, which is the loop the repair budget exists to stop.
+type StoryReferenceRepository interface {
+	// MissingStoryEventIDs returns the subset of eventIDs that do not exist in the project, in
+	// the order it was given them.
+	MissingStoryEventIDs(ctx context.Context, projectID string, eventIDs []string) ([]string, error)
+	// MissingStoryEntityIDs returns the subset of entityIDs that do not exist in the project.
+	MissingStoryEntityIDs(ctx context.Context, projectID string, entityIDs []string) ([]string, error)
 }
 
 // VersionListRepository reads a version family's history for one episode.
@@ -249,6 +293,7 @@ type Repository interface {
 	StructureRepository
 	FieldLockRepository
 	EventLinkRepository
+	StoryReferenceRepository
 	VersionListRepository
 }
 
