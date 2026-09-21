@@ -201,7 +201,9 @@ func TestStoryboardRepositoryRoundTrip(t *testing.T) {
 	if err := repo.CreateStoryboardItem(ctx, storyboard.StoryboardItem{
 		ID: itemID, StoryboardVersionID: fixture.VersionID, ShotID: "drama-shot-1", Ordinal: 1,
 		ShotSize: "MCU", DurationSeconds: 4, VisualDescription: "a corridor",
-		Status: versioning.StatusDraft, CreatedAt: now, UpdatedAt: now, Revision: 1,
+		FirstFrameDescription: "the door ajar", LastFrameDescription: "the door open",
+		VideoMotionDescription: "the camera pushes in",
+		Status:                 versioning.StatusDraft, CreatedAt: now, UpdatedAt: now, Revision: 1,
 	}); err != nil {
 		t.Fatalf("CreateStoryboardItem: %v", err)
 	}
@@ -211,6 +213,19 @@ func TestStoryboardRepositoryRoundTrip(t *testing.T) {
 	}
 	if item.ShotID != "drama-shot-1" || item.Ordinal != 1 || item.DurationSeconds != 4 || item.ShotSize != "MCU" {
 		t.Fatalf("storyboard item round trip: %+v", item)
+	}
+	// FR-070's three descriptions survive the round trip. They are asserted separately from
+	// the fields above because the mapper reads columns POSITIONALLY: a column added to the
+	// SELECT without the scan, or the reverse, shifts every field after it and yields a
+	// plausible wrong value rather than an error.
+	for name, pair := range map[string][2]string{
+		"first frame":  {item.FirstFrameDescription, "the door ajar"},
+		"last frame":   {item.LastFrameDescription, "the door open"},
+		"video motion": {item.VideoMotionDescription, "the camera pushes in"},
+	} {
+		if pair[0] != pair[1] {
+			t.Errorf("the %s description came back as %q, want %q", name, pair[0], pair[1])
+		}
 	}
 	found, ok, err := repo.FindStoryboardItemByShot(ctx, fixture.VersionID, "drama-shot-1")
 	if err != nil || !ok || found.ID != itemID {

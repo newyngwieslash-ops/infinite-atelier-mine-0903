@@ -3,11 +3,13 @@ package main
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	appprojects "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/projects"
 	appscript "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/script"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/desktop"
+	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/asset"
 	scriptdomain "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/script"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/versioning"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/infrastructure/database"
@@ -265,6 +267,46 @@ func TestTheStageCommandsRefuseWithoutAPipeline(t *testing.T) {
 	}
 	if _, err := binding.RunScriptSupervision(desktop.RunScriptSupervisionRequest{StageRunID: "s"}); err == nil {
 		t.Fatal("a binding with no pipeline ran a supervision")
+	}
+}
+
+// TestComposeDramaSuppliesTheGapService is the assertion that keeps AC-BOARD-001's gate
+// from refusing in every real build.
+//
+// The batch gate reads an episode's approved gap report through this service, and its
+// unresolved-required-items query is what decides whether a batch may run. A build that
+// composed no gap service would have that query refuse for a missing dependency rather
+// than answer — a refusal that looks like "no analysis", which is the "interface with no
+// real path" shape this repository's reviews have found twice.
+//
+// The assertion is on the BEHAVIOUR a caller sees, because the service exposes no way to
+// ask "are you composed": an episode with no report must answer with the report-specific
+// refusal, not with a storage failure.
+func TestComposeDramaSuppliesTheGapService(t *testing.T) {
+	ctx := context.Background()
+	stack, canvasWriter, _ := composedDrama(t)
+	projectID := seedWiringProject(t, canvasWriter)
+	episode, err := stack.script.CreateEpisode(ctx, appscript.CreateEpisodeRequest{
+		ProjectID: projectID, SeasonNumber: 1, EpisodeNumber: 1, Title: "Gaps",
+	})
+	if err != nil {
+		t.Fatalf("creating an episode: %v", err)
+	}
+	// No report is approved yet, so the query refuses — and it refuses with the message
+	// that says WHICH situation this is.
+	_, err = stack.gaps.UnresolvedRequiredItems(ctx, episode.ID)
+	if err == nil {
+		t.Fatal("an episode with no approved gap report reported no missing assets")
+	}
+	domainErr, ok := asset.AsError(err)
+	if !ok || domainErr.Category != asset.CategoryConflict {
+		t.Fatalf("the refusal is %v, want the conflict that says no report is approved", err)
+	}
+	if !strings.Contains(domainErr.SafeMessage, "approved gap report") {
+		t.Fatalf("the refusal reads %q, which does not say what is missing", domainErr.SafeMessage)
+	}
+	if !stack.gaps.Available() {
+		t.Fatal("the composed stack carries no gap service")
 	}
 }
 

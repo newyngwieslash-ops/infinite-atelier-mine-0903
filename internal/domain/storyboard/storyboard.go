@@ -204,10 +204,16 @@ func (v StoryboardVersion) ValidateAgainst(scriptVersionID, directorPlanVersionI
 // PRD FR-070 lists seventeen things a storyboard table must show, and section
 // 9.4's field table is narrower than that list: it carries the staging
 // properties of the row (景别, 机位, 镜头运动, 预计时长, 视觉与动作描述,
-// 对白/旁白摘要, 连续性备注) and nothing else. FR-070's first-frame, last-frame
-// and video-motion descriptions are not columns here, and its asset references
-// are not either: section 7.8 normalises those ("Shot 与资产引用通过
-// AssetUsage/ShotAssetReference 正规化"), so the item does not restate them.
+// 对白/旁白摘要, 连续性备注) and nothing else. FR-070's asset references are
+// normalised away rather than restated: section 7.8 puts them in
+// AssetUsage/ShotAssetReference, so the item cites nothing.
+//
+// This comment used to defer FR-070's first-frame, last-frame and video-motion
+// descriptions the same way, and that was wrong. Migration 000018 adds them, and
+// the reason is what the two things ARE: a Shot is a line of the SCRIPT — what
+// happens, in what order, said by whom — written before anybody decided what the
+// camera does. "The first frame shows X" is not a fact about the script's shot but
+// a SHOOTING decision, so there was nowhere to store it until the columns existed.
 type StoryboardItem struct {
 	ID                   string
 	StoryboardVersionID  string
@@ -221,10 +227,17 @@ type StoryboardItem struct {
 	ActionDescription    string
 	DialogueAudioSummary string
 	ContinuityNotes      string
-	Status               versioning.Status
-	CreatedAt            time.Time
-	UpdatedAt            time.Time
-	Revision             int64
+	// FirstFrameDescription, LastFrameDescription and VideoMotionDescription are
+	// FR-070's remaining three fields. They are what a video model is given to render
+	// the shot's two ends and its motion, which is why they are the item's rather than
+	// the script's.
+	FirstFrameDescription  string
+	LastFrameDescription   string
+	VideoMotionDescription string
+	Status                 versioning.Status
+	CreatedAt              time.Time
+	UpdatedAt              time.Time
+	Revision               int64
 }
 
 // Validate checks a storyboard item before it is stored.

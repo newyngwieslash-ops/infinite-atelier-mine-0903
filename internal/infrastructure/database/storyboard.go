@@ -213,7 +213,8 @@ func (r *StoryboardRepository) MaxStoryboardVersionNumber(ctx context.Context, s
 
 const storyboardItemSelectColumns = `SELECT id, storyboard_version_id, shot_id, ordinal, shot_size,
 	camera_angle, camera_movement, duration_seconds, visual_description, action_description,
-	dialogue_audio_summary, continuity_notes, status, created_at, updated_at, revision FROM storyboard_items`
+	dialogue_audio_summary, continuity_notes, first_frame_description, last_frame_description,
+	video_motion_description, status, created_at, updated_at, revision FROM storyboard_items`
 
 // CreateStoryboardItem stores one shot's row in a storyboard version.
 func (r *StoryboardRepository) CreateStoryboardItem(ctx context.Context, item storyboard.StoryboardItem) error {
@@ -224,11 +225,13 @@ func (r *StoryboardRepository) CreateStoryboardItem(ctx context.Context, item st
 	_, err := conn.ExecContext(ctx, `INSERT INTO storyboard_items
 		(id, storyboard_version_id, shot_id, ordinal, shot_size, camera_angle, camera_movement,
 		 duration_seconds, visual_description, action_description, dialogue_audio_summary,
-		 continuity_notes, status, created_at, updated_at, revision)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 continuity_notes, first_frame_description, last_frame_description,
+		 video_motion_description, status, created_at, updated_at, revision)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		item.ID, item.StoryboardVersionID, item.ShotID, item.Ordinal, item.ShotSize, item.CameraAngle,
 		item.CameraMovement, item.DurationSeconds, item.VisualDescription, item.ActionDescription,
-		item.DialogueAudioSummary, item.ContinuityNotes, string(item.Status),
+		item.DialogueAudioSummary, item.ContinuityNotes, item.FirstFrameDescription,
+		item.LastFrameDescription, item.VideoMotionDescription, string(item.Status),
 		formatTime(item.CreatedAt), formatTime(item.UpdatedAt), item.Revision)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -558,7 +561,8 @@ func scanStoryboardItem(row rowScanner) (storyboard.StoryboardItem, error) {
 	if err := row.Scan(&item.ID, &item.StoryboardVersionID, &item.ShotID, &item.Ordinal,
 		&item.ShotSize, &item.CameraAngle, &item.CameraMovement, &item.DurationSeconds,
 		&item.VisualDescription, &item.ActionDescription, &item.DialogueAudioSummary,
-		&item.ContinuityNotes, &status, &createdAt, &updatedAt, &item.Revision); err != nil {
+		&item.ContinuityNotes, &item.FirstFrameDescription, &item.LastFrameDescription,
+		&item.VideoMotionDescription, &status, &createdAt, &updatedAt, &item.Revision); err != nil {
 		return storyboard.StoryboardItem{}, err
 	}
 	item.Status = versioning.Status(status)

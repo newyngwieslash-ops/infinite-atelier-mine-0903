@@ -27,7 +27,7 @@ func wp05SQL(t *testing.T, name string) []byte {
 	return migrationSQL(t, name)
 }
 
-// wp05Migrations is the full migration set through version 12.
+// wp05Migrations is the full migration set, at the head `wp05HeadVersion` states.
 func wp05Migrations(t *testing.T) fstest.MapFS {
 	t.Helper()
 	return fstest.MapFS{
@@ -48,15 +48,16 @@ func wp05Migrations(t *testing.T) fstest.MapFS {
 		"000015_agent_runtime.sql":               {Data: wp05SQL(t, "000015_agent_runtime.sql")},
 		"000016_agent_response_model.sql":        {Data: wp05SQL(t, "000016_agent_response_model.sql")},
 		"000017_script_field_locks.sql":          {Data: wp05SQL(t, "000017_script_field_locks.sql")},
+		"000018_production.sql":                  {Data: wp05SQL(t, "000018_production.sql")},
 	}
 }
 
 // wp05HeadVersion is the user_version the shared migration set reaches.
 //
 // The helper keeps its wp05 name because every test calls it by that name and
-// the set is the same set; only its head moves as migrations are added. It is 15
-// since WP-07 added the agent runtime tables.
-const wp05HeadVersion = 17
+// the set is the same set; only its head moves as migrations are added. It is 18
+// since WP-09 added the three storyboard descriptions and the asset gap report.
+const wp05HeadVersion = 18
 
 // applyMigrationFileSplits runs one migration file the way the runner does:
 // splitSQL on the raw text, then execute each fragment in order. It returns the

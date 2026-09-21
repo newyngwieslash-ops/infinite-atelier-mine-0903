@@ -32,6 +32,7 @@ type dramaWiring struct {
 	workflow   *appworkflow.Service
 	staleness  *appstaleness.Service
 	assets     *appassets.Service
+	gaps       *appassets.GapService
 	events     *appevents.Service
 	importing  *appimporting.Service
 	extraction *appextraction.Service
@@ -80,6 +81,7 @@ func composeDrama(handle *database.Handle, store *filestore.Store, canvas *apppr
 
 	storyRepository := database.NewStoryRepository(connection)
 	scriptRepository := database.NewScriptRepository(connection)
+	assetRepository := database.NewAssetRepository(connection)
 	storyboardRepository := database.NewStoryboardRepository(connection)
 	workflowRepository := database.NewWorkflowRepository(connection)
 	stalenessRepository := database.NewStalenessRepository(connection)
@@ -151,10 +153,20 @@ func composeDrama(handle *database.Handle, store *filestore.Store, canvas *apppr
 		// WP-04 shipped this service with no composition root, recording that
 		// it "exists for WP-05". This is that root.
 		assets: appassets.NewService(appassets.Options{
-			Repository: database.NewAssetRepository(connection),
+			Repository: assetRepository,
 			Clock:      clock,
 			IDs:        ids,
 			Events:     eventService,
+		}),
+		// The gap report's own service, over its own port on the same repository. It is
+		// built HERE because a report is what AC-BOARD-001's batch gate reads: without a
+		// composed service the gate would refuse for a missing dependency in every real
+		// build, which is the "interface with no real path" shape this repository's
+		// reviews have found twice.
+		gaps: appassets.NewGapService(appassets.GapOptions{
+			Gaps:  assetRepository,
+			Clock: clock,
+			IDs:   ids,
 		}),
 		events:    eventService,
 		importing: importingService,
