@@ -454,8 +454,14 @@ func (e *Engine) ApplySupervision(ctx context.Context, request RecordSupervision
 			StageRun: stage.ID,
 		}
 	}
+	// The revision comes from the ROW this method just read, not from the request. A caller cannot know
+	// the current revision — the runtime's own run record write bumps it — so a request-carried value
+	// would be stale by construction and every apply would conflict. The first version passed
+	// `request.Revision` through, and the canary found it: supervising a stage it had just run failed with
+	// "this stage attempt changed in another window", which is the compare-and-swap doing its job against
+	// a value that was never current.
 	return e.transitioner.TransitionStage(ctx, StageTransitionRequest{
-		StageRunID: stage.ID, Status: status, Revision: request.Revision, Actor: request.Actor,
+		StageRunID: stage.ID, Status: status, Revision: stage.Revision, Actor: request.Actor,
 	})
 }
 
@@ -531,8 +537,11 @@ func (e *Engine) ApplyGate(ctx context.Context, request ApplyGateRequest) (workf
 			StageRun: stage.ID,
 		}
 	}
+	// The revision is the one this method READ, for the reason ApplySupervision records: the decision row
+	// this call follows was written by another command, and a caller's copy of the revision would be
+	// whatever it happened to see before that.
 	return e.transitioner.TransitionStage(ctx, StageTransitionRequest{
-		StageRunID: stage.ID, Status: status, Revision: request.Revision, Actor: request.Actor,
+		StageRunID: stage.ID, Status: status, Revision: stage.Revision, Actor: request.Actor,
 	})
 }
 
@@ -594,8 +603,9 @@ func (e *Engine) StartRevision(ctx context.Context, request StageTransitionReque
 		return workflow.StageRun{}, &QuotaError{Limit: "auto_fix", Allowed: policy.MaxAutoFix, Used: revisions}
 	}
 	_ = state
+	// The revision is the one this method read, for the reason ApplySupervision records.
 	return e.transitioner.TransitionStage(ctx, StageTransitionRequest{
-		StageRunID: stage.ID, Status: workflow.StageRunning, Revision: request.Revision, Actor: request.Actor,
+		StageRunID: stage.ID, Status: workflow.StageRunning, Revision: stage.Revision, Actor: request.Actor,
 	})
 }
 

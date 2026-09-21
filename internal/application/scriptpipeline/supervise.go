@@ -258,7 +258,16 @@ type GateRequest struct {
 	// decision. It is a string rather than a slice because the column is JSON and the pipeline must not
 	// re-encode what the user's command stated.
 	IssueIDsJSON string
-	CreatedByID  string
+	// ArtifactVersionID names the version an approving decision puts in force, and it is REQUIRED for
+	// one that does.
+	//
+	// It is here because moving a stage and approving an artifact are TWO acts, and AC-SCRIPT-001's
+	// "approved 唯一" is about the second: an episode has one approved skeleton version, and the schema
+	// enforces that with a partial unique index. A gate that only moved the stage would leave the episode
+	// with no approved version while the workflow reported the stage passed — which is what the canary
+	// found, and it is not a small thing: every later stage reads the APPROVED version.
+	ArtifactVersionID string
+	CreatedByID       string
 }
 
 // ApplyUserGate records the user's decision and moves the stage.
@@ -309,11 +318,77 @@ func (s *Service) ApplyUserGate(ctx context.Context, request GateRequest) (workf
 	}); err != nil {
 		return workflow.StageRun{}, err
 	}
+	// The artifact is approved BEFORE the stage moves, and the order is what makes a failure recoverable:
+	// an approved version with a stage still waiting for its gate is a state a user can retry from, while
+	// a passed stage whose version was never approved is a workflow that claims success and a project with
+	// nothing to build from.
+	if isApprovingDecision(request.Decision) {
+		if err := s.approveArtifact(ctx, attempt, request); err != nil {
+			return workflow.StageRun{}, err
+		}
+	}
 	return s.engine.ApplyGate(ctx, agentruntime.ApplyGateRequest{
 		StageRunID: attempt.ID,
 		Decision:   request.Decision,
 		Actor:      userActor(request.CreatedByID),
 	})
+}
+
+// isApprovingDecision reports whether a decision makes the artifact the one in force.
+//
+// Three of §10.2's decisions do, and they do it for different reasons: `approve` accepts the artifact,
+// `manual_edit` makes the user's own version the artifact, and `skip` moves on without judging it. A
+// WAIVER is not in the list because §15.3's waiver accepts a STALE artifact rather than approving a new
+// one — the version in force is the one already approved. `fix` and `redo` do not, and `cancel` ends the
+// run.
+func isApprovingDecision(decision workflow.GateDecision) bool {
+	switch decision {
+	case workflow.GateApprove, workflow.GateManualEdit, workflow.GateSkip:
+		return true
+	default:
+		return false
+	}
+}
+
+// approveArtifact makes one version the artifact in force for its family.
+//
+// The family comes from the STAGE, so a caller cannot approve a version of another kind by naming it: a
+// skeleton version approved against the script stage would make "the approved artifact of this stage" a
+// statement the database recorded and no reader could reconcile with what the stage produced.
+func (s *Service) approveArtifact(ctx context.Context, attempt workflow.StageRun, request GateRequest) error {
+	agents, ok := AgentsForStage(attempt.Stage)
+	if !ok {
+		return agentRefusal(attempt.Stage)
+	}
+	versionID := trimOrEmpty(request.ArtifactVersionID)
+	if versionID == "" {
+		// Refused rather than skipped, and the refusal says what is missing: a decision that approves
+		// nothing is a gate that did not gate, and the caller's next step is to name the version it
+		// reviewed.
+		return agent.InvalidError("An approving decision must name the artifact version it approves.")
+	}
+	traceID := trimOrEmpty(request.CreatedByID)
+	switch agents.Family {
+	case scriptdomain.FamilyStorySkeleton:
+		if _, err := s.script.ApproveStorySkeletonVersion(ctx, appscript.ApproveStorySkeletonVersionRequest{
+			VersionID: versionID, TraceID: traceID,
+		}); err != nil {
+			return err
+		}
+	case scriptdomain.FamilyAdaptationStrategy:
+		if _, err := s.script.ApproveAdaptationStrategyVersion(ctx, appscript.ApproveAdaptationStrategyVersionRequest{
+			VersionID: versionID, TraceID: traceID,
+		}); err != nil {
+			return err
+		}
+	default:
+		if _, err := s.script.ApproveScriptVersion(ctx, appscript.ApproveScriptVersionRequest{
+			ScriptVersionID: versionID, TraceID: traceID,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // StartRevision begins the attempt a FIX or REDO asked for.
@@ -406,10 +481,12 @@ func (s *Service) ManualEdit(ctx context.Context, request ManualEditRequest) (St
 		return StageResult{}, err
 	}
 	moved, err := s.ApplyUserGate(ctx, GateRequest{
-		StageRunID:  attempt.ID,
-		Decision:    workflow.GateManualEdit,
-		Instruction: request.ChangeReason,
-		CreatedByID: request.CreatedByID,
+		StageRunID: attempt.ID,
+		Decision:   workflow.GateManualEdit,
+		// The user's own version is what the decision approves, which is §10.2's "用户的版本即产物".
+		ArtifactVersionID: versionID,
+		Instruction:       request.ChangeReason,
+		CreatedByID:       request.CreatedByID,
 	})
 	if err != nil {
 		// The version IS written, and the refusal says so by returning the identifier: a caller whose
