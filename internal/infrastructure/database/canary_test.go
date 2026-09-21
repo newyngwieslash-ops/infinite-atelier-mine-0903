@@ -127,8 +127,14 @@ func newCanary(t *testing.T) *canary {
 		Reviews: NewWorkflowRepository(db), Decisions: NewWorkflowRepository(db),
 		Events: NewWorkflowRepository(db), Clock: clock, IDs: generator, Recorder: eventService,
 	})
+	assetRepository := NewAssetRepository(db)
 	assetService := appassets.NewService(appassets.Options{
-		Repository: NewAssetRepository(db), Clock: clock, IDs: generator, Events: eventService,
+		Repository: assetRepository, Clock: clock, IDs: generator, Events: eventService,
+	})
+	// The gap service, which the two report tools need. It is composed over the same
+	// repository and is a separate constructor because a report is a different aggregate.
+	gapService := appassets.NewGapService(appassets.GapOptions{
+		Gaps: assetRepository, Clock: clock, IDs: generator,
 	})
 	projectService := appprojects.NewService(appprojects.Options{
 		Projects: NewProjectRepository(db), Canvas: NewCanvasRepository(db),
@@ -139,7 +145,7 @@ func newCanary(t *testing.T) *canary {
 
 	tools, err := agenttools.Build(agenttools.Deps{
 		Story: storyService, Script: scriptService, Storyboard: storyboardService,
-		Workflow: workflowService, Memory: memoryService, Assets: assetService,
+		Workflow: workflowService, Memory: memoryService, Assets: assetService, Gaps: gapService,
 		Projects: projectService,
 		// The chapter reader is not exercised by this chain: the canary runs the
 		// story-skeleton stage, whose tools read events and rules. A reader is still

@@ -56,6 +56,10 @@ var artifactStatements = map[string]string{
 	"storyboard_version":          `SELECT COUNT(*) FROM storyboard_versions WHERE id = ?`,
 	"storyboard_panel_version":    `SELECT COUNT(*) FROM storyboard_panel_versions WHERE id = ?`,
 	"asset_version":               `SELECT COUNT(*) FROM asset_versions WHERE id = ?`,
+	// The gap report, which WP-09's write tool reports as its artifact. It is a REPORT
+	// rather than a version of one of the four families: it has its own table, its own
+	// approval and its own precondition, so it has its own entry here.
+	"asset_gap_report": `SELECT COUNT(*) FROM asset_gap_reports WHERE id = ?`,
 	// A story skeleton's inputs are story facts rather than versions, and a stage reports
 	// them the same way, so the same vocabulary covers them.
 	"story_entity": `SELECT COUNT(*) FROM story_entities WHERE id = ? AND deleted_at = ''`,

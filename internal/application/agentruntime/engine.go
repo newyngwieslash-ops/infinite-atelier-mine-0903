@@ -149,6 +149,12 @@ var defaultStagePolicies = []GateConfig{
 	{Stage: "story_skeleton", Supervision: SupervisionRequired, UserGate: UserGateRequired, MaxAutoFix: DefaultMaxAutoFix},
 	{Stage: "adaptation_strategy", Supervision: SupervisionRequired, UserGate: UserGateRequired, MaxAutoFix: DefaultMaxAutoFix},
 	{Stage: "script_generation", Supervision: SupervisionRequired, UserGate: UserGateRequired, MaxAutoFix: DefaultMaxAutoFix},
+	// `director_plan` is WP-09's addition, and its settings are AGENT_CONTRACTS section
+	// 10.1's for that stage: supervision is conditional — a plan's visual style is judged
+	// against a project's own references rather than a ruleset — and the user gate is
+	// required, because FR-060 makes the plan the thing a person signs off before any
+	// storyboard is drawn from it. MaxAutoFix follows the package default.
+	{Stage: "director_plan", Supervision: SupervisionConditional, UserGate: UserGateRequired, MaxAutoFix: DefaultMaxAutoFix},
 	{Stage: "asset_gap_analysis", Supervision: SupervisionNone, UserGate: UserGateRequired, MaxAutoFix: DefaultMaxAutoFix},
 	{Stage: "asset_generation", Supervision: SupervisionConditional, UserGate: UserGateRequired, MaxAutoFix: DefaultMaxAutoFix},
 	{Stage: "storyboard_table", Supervision: SupervisionRequired, UserGate: UserGateRequired, MaxAutoFix: DefaultMaxAutoFix},

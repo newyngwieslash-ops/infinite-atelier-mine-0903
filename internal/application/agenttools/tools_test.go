@@ -131,6 +131,15 @@ func TestToolsWithOnlyOptionalArgumentsAcceptAnEmptyObject(t *testing.T) {
 		"storyboard.create_storyboard_version":       false,
 		"storyboard.create_storyboard_panel_version": false,
 		"asset.create_candidate_version":             false,
+		// WP-09's three. `script.read_shots` and `asset.create_gap_report` both require an
+		// identifier; `asset.read_gap_report` is FALSE against the empty object because its
+		// schema requires NOTHING and its handler refuses a call that named neither a
+		// report nor an episode. The two are consistent: the schema constrains a shape and
+		// the handler checks the values it uses, which is the division this table is
+		// checked against.
+		"script.read_shots":       false,
+		"asset.create_gap_report": false,
+		"asset.read_gap_report":   true,
 	}
 	if len(allOptional) != len(Keys()) {
 		t.Fatalf("this test names %d tools and the table registers %d", len(allOptional), len(Keys()))
@@ -222,12 +231,17 @@ func TestHandlerArgumentNamesMatchTheirSchemas(t *testing.T) {
 			"visualRhythm", "cameraLanguage", "colorLighting", "staging", "continuityRules",
 			"audioDirection", "changeReason"},
 		"storyboard.create_storyboard_version": {"episodeId", "scriptVersionId", "directorPlanVersionId",
-			"basedOnVersionId", "changeReason"},
+			"basedOnVersionId", "changeReason", "items"},
 		"storyboard.create_storyboard_panel_version": {"itemId", "prompt", "negativePrompt",
 			"basedOnVersionId", "changeReason"},
 		"asset.read_approved_assets":     {"types", "limit"},
 		"asset.create_candidate_version": {"assetId", "prompt", "negativePrompt", "metadataJson"},
-		"memory.deep_recall":             {"limit", "excludeMessageId"},
+		// WP-09's three, with the names their schemas declare.
+		"script.read_shots": {"scriptVersionId", "sceneId", "limit"},
+		"asset.create_gap_report": {"episodeId", "scriptVersionId", "summary", "basedOnVersionId",
+			"items"},
+		"asset.read_gap_report": {"reportId", "episodeId"},
+		"memory.deep_recall":    {"limit", "excludeMessageId"},
 	}
 	registered := Keys()
 	if len(expected) != len(registered) {
@@ -291,6 +305,7 @@ func TestNoToolIsWriteModeOutsideAnExecutionLayerTarget(t *testing.T) {
 		"storyboard.create_storyboard_version",
 		"storyboard.create_storyboard_panel_version",
 		"asset.create_candidate_version",
+		"asset.create_gap_report",
 	}
 	gotWrites := make([]string, 0, len(wantWrites))
 	for _, key := range tools.Keys() {
@@ -364,6 +379,7 @@ func fullDeps() Deps {
 		Workflow:   appworkflow.NewService(appworkflow.Options{}),
 		Memory:     appmemory.New(nil),
 		Assets:     appassets.NewService(appassets.Options{}),
+		Gaps:       appassets.NewGapService(appassets.GapOptions{}),
 		Projects:   appprojects.NewService(appprojects.Options{}),
 		Chapters:   stubChapterReader{},
 	}

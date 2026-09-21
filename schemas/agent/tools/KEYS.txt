@@ -10,6 +10,7 @@ script.read_script_structure
 script.create_story_skeleton_version
 script.create_adaptation_strategy_version
 script.create_script_version
+script.read_shots
 script.create_script_structure
 storyboard.read_director_plan
 storyboard.read_storyboard
@@ -17,5 +18,7 @@ storyboard.create_director_plan_version
 storyboard.create_storyboard_version
 storyboard.create_storyboard_panel_version
 asset.read_approved_assets
+asset.create_gap_report
+asset.read_gap_report
 asset.create_candidate_version
 memory.deep_recall

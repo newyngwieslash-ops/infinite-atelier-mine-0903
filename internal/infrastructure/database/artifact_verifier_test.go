@@ -30,6 +30,10 @@ func TestArtifactVerifierKnowsEveryTypeAWriteToolReports(t *testing.T) {
 		"storyboard_version",
 		"storyboard_panel_version",
 		"asset_version",
+		// WP-09's write tool reports this one. It is a REPORT rather than a version of one
+		// of the four families — its own table, its own approval, its own precondition —
+		// which is why it is a separate entry rather than a mode of `asset_version`.
+		"asset_gap_report",
 		"story_entity",
 		"story_event",
 	}

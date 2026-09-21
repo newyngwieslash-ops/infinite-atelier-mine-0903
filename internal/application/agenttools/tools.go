@@ -97,7 +97,11 @@ type Deps struct {
 	Workflow   *appworkflow.Service
 	Memory     *appmemory.Service
 	Assets     *appassets.Service
-	Projects   *appprojects.Service
+	// Gaps serves the asset gap report. It is a service of the ASSETS package but a
+	// separate one, because a report is a different aggregate from an asset and a build
+	// that has no episode or script store composes the assets service without it.
+	Gaps     *appassets.GapService
+	Projects *appprojects.Service
 	// Chapters reads a chapter's text. It is a port rather than a service because the
 	// adapter that implements it lives in the desktop layer.
 	Chapters ChapterReader
@@ -107,7 +111,7 @@ type Deps struct {
 func (d Deps) Available() bool {
 	return d.Story != nil && d.Script != nil && d.Storyboard != nil &&
 		d.Workflow != nil && d.Memory != nil && d.Assets != nil &&
-		d.Projects != nil && d.Chapters != nil
+		d.Gaps != nil && d.Projects != nil && d.Chapters != nil
 }
 
 // Keys lists every tool key this package registers.
@@ -165,6 +169,16 @@ var table = []tableEntry{
 	// and 时长求和 in the code's column, so this tool states a shape and the service derives the rest.
 	// The bound is the output's; the INPUT is bounded by its schema, which is where a model's scene
 	// count is refused rather than truncated.
+	// The shots, which are what a storyboard's rows are one per. The schema's storyboard
+	// stage had only `script.read_script_version` — a summary that answers "how many
+	// scenes" — so an agent asked to board a script could not see the shots it was
+	// boarding and would have had to invent them.
+	//
+	// It sits here rather than beside the other reads because the schema generator's table
+	// is the ORDER OF RECORD: `TestEverySchemaHasARegisteredTool` compares this list with
+	// KEYS.txt element by element, which is what makes a rename or a reorder visible
+	// rather than merely a difference.
+	{"script.read_shots", agent.ToolRead, "project", 256 * 1024, bindReadShots},
 	{"script.create_script_structure", agent.ToolWrite, "project", 16 * 1024, bindCreateScriptStructure},
 
 	// --- Storyboard reads ---
@@ -178,6 +192,11 @@ var table = []tableEntry{
 
 	// --- Assets ---
 	{"asset.read_approved_assets", agent.ToolRead, "project", 128 * 1024, bindReadApprovedAssets},
+	// The gap report's write and read. Section 10.1 gives asset_analysis a required user
+	// gate and a supervisor of NONE, so the model WRITES the analysis and a person
+	// approves it — which is why the write tool creates a draft and cannot approve.
+	{"asset.create_gap_report", agent.ToolWrite, "project", 16 * 1024, bindCreateGapReport},
+	{"asset.read_gap_report", agent.ToolRead, "project", 128 * 1024, bindReadGapReport},
 	{"asset.create_candidate_version", agent.ToolWrite, "project", 16 * 1024, bindCreateCandidateVersion},
 
 	// --- Memory ---

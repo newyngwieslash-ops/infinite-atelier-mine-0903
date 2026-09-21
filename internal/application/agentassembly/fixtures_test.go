@@ -42,6 +42,7 @@ func buildTable(t *testing.T) *agentruntime.Tools {
 		Workflow:   stubWorkflow(t),
 		Memory:     stubMemory(t),
 		Assets:     stubAssets(t),
+		Gaps:       stubGaps(t),
 		Projects:   stubProjects(t),
 		Chapters:   stubChapters{},
 	})
@@ -75,6 +76,16 @@ func stubMemory(t *testing.T) *appmemory.Service { t.Helper(); return appmemory.
 func stubAssets(t *testing.T) *appassets.Service {
 	t.Helper()
 	return appassets.NewService(appassets.Options{})
+}
+
+// stubGaps is the gap service the two report tools need.
+//
+// It is a SEPARATE constructor from the assets service because a gap report is a
+// different aggregate: `agenttools.Deps` requires both, and composing one over the
+// other's options would be a second answer to "what can a report do".
+func stubGaps(t *testing.T) *appassets.GapService {
+	t.Helper()
+	return appassets.NewGapService(appassets.GapOptions{})
 }
 func stubProjects(t *testing.T) *appprojects.Service {
 	t.Helper()

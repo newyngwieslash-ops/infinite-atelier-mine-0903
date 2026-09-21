@@ -28,6 +28,7 @@ func buildAssembly(t *testing.T) (*Assembly, *memVersions) {
 		Workflow:   stubWorkflow(t),
 		Memory:     stubMemory(t),
 		Assets:     stubAssets(t),
+		Gaps:       stubGaps(t),
 		Projects:   stubProjects(t),
 		Chapters:   stubChapters{},
 	})

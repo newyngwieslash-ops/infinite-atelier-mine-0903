@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://infinite-atelier.invalid/schemas/agent/tools/script.read_shots.json",
+  "title": "script.read_shots input",
+  "description": "Returns one script version's scenes and their SHOTS, in shooting order, with the story event each shot dramatises. The storyboard table's rows are one per shot, so an agent that has to write them must be able to READ them: without this tool it could only see a scene count and would have to invent the shots it was asked to board.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "scriptVersionId": {
+      "type": "string",
+      "description": "The script version whose shots to read.",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "sceneId": {
+      "type": "string",
+      "description": "Narrow the answer to one scene. Empty returns every scene's shots.",
+      "maxLength": 200
+    },
+    "limit": {
+      "type": "integer",
+      "description": "How many shots to return.",
+      "minimum": 1,
+      "maximum": 400
+    }
+  },
+  "required": [
+    "scriptVersionId"
+  ]
+}

@@ -231,13 +231,18 @@ func TestStageNameIsOpenButBounded(t *testing.T) {
 			t.Fatalf("FR-100's documented stage %q was rejected: %v", name, err)
 		}
 	}
-	if len(DocumentedStageNames) != 10 {
-		t.Fatalf("FR-100 lists 10 default gate stages, the reference list has %d", len(DocumentedStageNames))
+	// ELEVEN, not FR-100's ten, and the difference is WP-09's: `director_plan` is
+	// AGENT_CONTRACTS section 10.1's stage for an artifact PRD FR-060 requires, and
+	// section 10.1 is the document that CONFIGURES it (supervision conditional, user
+	// gate required). The reference list carries it so the policy lookup does not fall
+	// through to the default for a stage the specification names.
+	if len(DocumentedStageNames) != 11 {
+		t.Fatalf("the reference list has %d stages, want FR-100's ten plus director_plan", len(DocumentedStageNames))
 	}
-	// AGENT_CONTRACTS section 10.1's spellings differ from FR-100's and must be
+	// AGENT_CONTRACTS section 10.1's OTHER spellings differ from FR-100's and must be
 	// accepted too, because choosing between the two lists is not this
 	// package's decision.
-	for _, name := range []string{"event_extraction", "script_writing", "director_plan", "storyboard_image", "final_review"} {
+	for _, name := range []string{"event_extraction", "script_writing", "storyboard_image", "final_review"} {
 		if err := ValidateStageName(StageName(name)); err != nil {
 			t.Fatalf("AGENT_CONTRACTS section 10.1's stage %q was rejected: %v", name, err)
 		}

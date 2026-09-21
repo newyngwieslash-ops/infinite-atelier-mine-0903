@@ -276,6 +276,19 @@ type CreateStoryboardItemRequest struct {
 	ActionDescription    string
 	DialogueAudioSummary string
 	ContinuityNotes      string
+	// FirstFrameDescription, LastFrameDescription and VideoMotionDescription are
+	// FR-070's remaining three fields, added by migration 000018. They are what a video
+	// model is given to render the shot's two ends and its motion, which is why they
+	// belong to the SHOOTING decision rather than to the script's shot.
+	FirstFrameDescription  string
+	LastFrameDescription   string
+	VideoMotionDescription string
+	// There is deliberately NO created-by here, and its absence is a fact about the
+	// schema rather than an oversight: `storyboard_items` has no such column, so a field
+	// would be one this method could not store. The attribution FR-100's audit reads
+	// lives on the VERSION the rows belong to (`storyboard_versions.created_by_*`) and on
+	// the domain event the caller records — which is where a reader already looks for
+	// "who wrote this board".
 }
 
 // CreateStoryboardItem adds a shot's row to a storyboard version.
@@ -313,23 +326,27 @@ func (s *Service) CreateStoryboardItem(ctx context.Context, request CreateStoryb
 	}
 	now := s.now()
 	item := storyboard.StoryboardItem{
-		ID:                   id,
-		StoryboardVersionID:  request.StoryboardVersionID,
-		ShotID:               strings.TrimSpace(request.ShotID),
-		Ordinal:              request.Ordinal,
-		ShotSize:             request.ShotSize,
-		CameraAngle:          request.CameraAngle,
-		CameraMovement:       request.CameraMovement,
-		DurationSeconds:      request.DurationSeconds,
-		VisualDescription:    request.VisualDescription,
-		ActionDescription:    request.ActionDescription,
-		DialogueAudioSummary: request.DialogueAudioSummary,
-		ContinuityNotes:      request.ContinuityNotes,
-		Status:               versioning.StatusDraft,
-		CreatedAt:            now,
-		UpdatedAt:            now,
-		Revision:             1,
+		ID:                     id,
+		StoryboardVersionID:    request.StoryboardVersionID,
+		ShotID:                 strings.TrimSpace(request.ShotID),
+		Ordinal:                request.Ordinal,
+		ShotSize:               request.ShotSize,
+		CameraAngle:            request.CameraAngle,
+		CameraMovement:         request.CameraMovement,
+		DurationSeconds:        request.DurationSeconds,
+		VisualDescription:      request.VisualDescription,
+		ActionDescription:      request.ActionDescription,
+		DialogueAudioSummary:   request.DialogueAudioSummary,
+		ContinuityNotes:        request.ContinuityNotes,
+		FirstFrameDescription:  request.FirstFrameDescription,
+		LastFrameDescription:   request.LastFrameDescription,
+		VideoMotionDescription: request.VideoMotionDescription,
+		Status:                 versioning.StatusDraft,
+		CreatedAt:              now,
+		UpdatedAt:              now,
+		Revision:               1,
 	}
+
 	if err := item.Validate(); err != nil {
 		return storyboard.StoryboardItem{}, err
 	}
@@ -453,6 +470,25 @@ func (s *Service) ListPanels(ctx context.Context, storyboardItemID string) ([]st
 		return nil, storageFailure()
 	}
 	return s.panels.ListPanelVersions(ctx, storyboardItemID)
+}
+
+// ProjectOfEpisode returns the project an episode belongs to.
+//
+// The repository port has answered this since WP-05 — the approvals that must file a
+// governance event in a project's stream use it — and it was not EXPOSED on the service,
+// so the only callers were the two approval methods inside this package. WP-09's
+// production pipeline needs the same fact for its own scope check, and a second
+// implementation of "episode to project" would be a second answer to a question the
+// episode table already settles.
+//
+// A missing episode is a domain not-found rather than an empty string, so "no such
+// episode" and "an episode with no project" cannot be confused — which matters to the
+// caller, because the first is a stale identifier and the second would be a corrupt row.
+func (s *Service) ProjectOfEpisode(ctx context.Context, episodeID string) (string, error) {
+	if !s.Available() {
+		return "", storageFailure()
+	}
+	return s.directorPlans.ProjectOfEpisode(ctx, episodeID)
 }
 
 // GetDirectorPlanVersion returns one plan version by id.

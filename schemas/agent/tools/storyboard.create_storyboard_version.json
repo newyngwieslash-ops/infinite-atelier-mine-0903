@@ -33,6 +33,109 @@
       "type": "string",
       "description": "Why this version exists, in one sentence.",
       "maxLength": 500
+    },
+    "items": {
+      "type": "array",
+      "description": "The board's rows, one per shot, in shooting order. FR-070 requires every one of these fields per shot, and the ordinals are assigned from this array's order rather than supplied.",
+      "minItems": 1,
+      "maxItems": 400,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "shotId"
+        ],
+        "properties": {
+          "shotId": {
+            "type": "string",
+            "description": "The script shot this row boards. It must belong to the version's script.",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "shotSize": {
+            "type": "string",
+            "description": "The framing: CU, MCU, MS, WS and so on, as FR-070 requires.",
+            "maxLength": 60
+          },
+          "cameraAngle": {
+            "type": "string",
+            "description": "Where the camera is, such as eye level or high angle.",
+            "maxLength": 200
+          },
+          "cameraMovement": {
+            "type": "string",
+            "description": "How the camera moves: static, pan, dolly, and so on.",
+            "maxLength": 200
+          },
+          "durationSeconds": {
+            "type": "integer",
+            "description": "How long the shot runs.",
+            "minimum": 0,
+            "maximum": 3600
+          },
+          "visualDescription": {
+            "type": "string",
+            "description": "What the frame shows.",
+            "maxLength": 2000
+          },
+          "actionDescription": {
+            "type": "string",
+            "description": "What happens in the shot.",
+            "maxLength": 2000
+          },
+          "dialogueAudioSummary": {
+            "type": "string",
+            "description": "The dialogue or narration this shot carries.",
+            "maxLength": 2000
+          },
+          "continuityNotes": {
+            "type": "string",
+            "description": "What this shot must keep consistent with its neighbours.",
+            "maxLength": 2000
+          },
+          "firstFrameDescription": {
+            "type": "string",
+            "description": "What the first frame shows, which is what a video model is given to start from.",
+            "maxLength": 2000
+          },
+          "lastFrameDescription": {
+            "type": "string",
+            "description": "What the last frame shows.",
+            "maxLength": 2000
+          },
+          "videoMotionDescription": {
+            "type": "string",
+            "description": "The motion a video model is asked to produce across the shot.",
+            "maxLength": 2000
+          },
+          "assetRefs": {
+            "type": "array",
+            "description": "The assets this shot uses, by asset identifier and role. The codes check that each names an APPROVED version of the project.",
+            "maxItems": 40,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "assetId",
+                "usageRole"
+              ],
+              "properties": {
+                "assetId": {
+                  "type": "string",
+                  "description": "The asset this shot uses.",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "usageRole": {
+                  "type": "string",
+                  "description": "What the asset is used as, such as costume or location.",
+                  "maxLength": 60
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "required": [

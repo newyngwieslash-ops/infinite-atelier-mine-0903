@@ -11,6 +11,7 @@ import (
 	appstoryboard "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/storyboard"
 	appworkflow "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/workflow"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/agent"
+	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/asset"
 	scriptdomain "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/script"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/story"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/storyboard"
@@ -1033,6 +1034,77 @@ func artifactResult(stage, entityType, entityID string, versionNumber int, statu
 		"summary":       "Created " + label + " version " + itoaSmall(versionNumber) + ".",
 		"nextAction":    "review",
 	}
+}
+
+// artifactResultWithItems is `artifactResult` plus the rows a write produced.
+//
+// The storyboard table's write is the one tool whose result is a SET rather than a single
+// artifact: FR-070 makes the rows the board's content, and a result naming only the
+// version would leave a reader unable to tell a board of twelve shots from an empty one.
+// The version is still the FIRST artifact, because that is the row a gate approves.
+func artifactResultWithItems(stage, entityType, entityID string, versionNumber int, status, label string, itemIDs []string) map[string]any {
+	result := artifactResult(stage, entityType, entityID, versionNumber, status, label)
+	result["itemIds"] = itemIDs
+	result["itemCount"] = len(itemIDs)
+	if len(itemIDs) == 0 {
+		// An empty board is stated as such rather than left to be inferred from a zero:
+		// a caller reading "itemCount: 0" and one reading a missing field make different
+		// decisions, and only one of them is right.
+		result["summary"] = "Created " + label + " version " + itoaSmall(versionNumber) + " with no rows."
+		return result
+	}
+	result["summary"] = "Created " + label + " version " + itoaSmall(versionNumber) +
+		" with " + itoaSmall(len(itemIDs)) + " rows."
+	return result
+}
+
+// recordShotAssetUsage records that a storyboard row uses an asset.
+//
+// §7.8 normalises the reference ("Shot 与资产引用通过 AssetUsage/ShotAssetReference 正规化"),
+// so a row's asset refs are USAGES rather than a column — and a usage names an asset
+// VERSION rather than an asset, because §8.6's consumer consumes a version. The version is
+// the asset's APPROVED one, which is the only kind §9.5 lets a panel's image derive from:
+// a reference to a candidate would make a board depend on an image no user has accepted.
+//
+// It is refused rather than skipped when nothing is approved, and the refusal names the
+// asset: a row citing an asset with no approved version looks complete and would render
+// nothing, which is exactly the defect a supervisor would report later and more expensively.
+func recordShotAssetUsage(ctx context.Context, deps Deps, projectID, itemID, assetID, usageRole string) error {
+	if err := contextDone(ctx); err != nil {
+		return err
+	}
+	id, err := required(assetID, "asset")
+	if err != nil {
+		return err
+	}
+	record, err := deps.Assets.GetAsset(ctx, id)
+	if err != nil {
+		return err
+	}
+	if record.ProjectID != projectID {
+		return agent.SecurityError("That asset belongs to another project.")
+	}
+	approved := strings.TrimSpace(record.CurrentApprovedVersionID)
+	if approved == "" {
+		return agent.InvalidError("The asset " + record.Name + " has no approved version, so a storyboard row cannot cite it yet.")
+	}
+	role := strings.TrimSpace(usageRole)
+	if role == "" {
+		role = "reference"
+	}
+	// The consumer is the SHOT rather than the item: §8.6's vocabulary names a shot, and
+	// the item is a board's row about that shot — the asset is what the picture uses, and
+	// the picture is the shot.
+	if _, err := deps.Assets.AddUsage(ctx, appassets.AddUsageRequest{
+		AssetVersionID: approved,
+		ConsumerType:   asset.ConsumerShot,
+		ConsumerID:     itemID,
+		UsageRole:      role,
+		Required:       true,
+	}); err != nil {
+		return err
+	}
+	return nil
 }
 
 // ---------------------------------------------------------------------------

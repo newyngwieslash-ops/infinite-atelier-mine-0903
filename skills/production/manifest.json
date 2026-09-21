@@ -30,10 +30,12 @@
       "outputSchema": "schemas/agent/execution-result.v1.json",
       "allowedTools": [
         "script.read_script_version",
+        "script.read_shots",
+        "storyboard.read_director_plan",
         "storyboard.create_director_plan_version"
       ],
       "limits": {
-        "maxToolCalls": 8,
+        "maxToolCalls": 10,
         "timeoutSeconds": 300
       }
     },
@@ -45,10 +47,12 @@
       "outputSchema": "schemas/agent/execution-result.v1.json",
       "allowedTools": [
         "story.read_events",
-        "asset.read_approved_assets"
+        "asset.read_approved_assets",
+        "asset.read_gap_report",
+        "asset.create_gap_report"
       ],
       "limits": {
-        "maxToolCalls": 8,
+        "maxToolCalls": 12,
         "timeoutSeconds": 300
       }
     },
@@ -75,11 +79,14 @@
       "outputSchema": "schemas/agent/execution-result.v1.json",
       "allowedTools": [
         "script.read_script_version",
+        "script.read_shots",
         "storyboard.read_director_plan",
+        "asset.read_approved_assets",
+        "asset.read_gap_report",
         "storyboard.create_storyboard_version"
       ],
       "limits": {
-        "maxToolCalls": 8,
+        "maxToolCalls": 12,
         "timeoutSeconds": 300
       }
     },
@@ -91,10 +98,12 @@
       "outputSchema": "schemas/agent/execution-result.v1.json",
       "allowedTools": [
         "storyboard.read_storyboard",
+        "asset.read_approved_assets",
+        "asset.read_gap_report",
         "storyboard.create_storyboard_panel_version"
       ],
       "limits": {
-        "maxToolCalls": 8,
+        "maxToolCalls": 12,
         "timeoutSeconds": 300
       }
     },
@@ -106,10 +115,11 @@
       "outputSchema": "schemas/agent/review-report.v1.json",
       "allowedTools": [
         "script.read_script_version",
+        "script.read_shots",
         "storyboard.read_director_plan"
       ],
       "limits": {
-        "maxToolCalls": 12,
+        "maxToolCalls": 14,
         "timeoutSeconds": 300
       }
     },
@@ -121,10 +131,13 @@
       "outputSchema": "schemas/agent/review-report.v1.json",
       "allowedTools": [
         "storyboard.read_storyboard",
-        "script.read_script_version"
+        "script.read_script_version",
+        "script.read_shots",
+        "asset.read_approved_assets",
+        "asset.read_gap_report"
       ],
       "limits": {
-        "maxToolCalls": 12,
+        "maxToolCalls": 16,
         "timeoutSeconds": 300
       }
     },
@@ -136,10 +149,12 @@
       "outputSchema": "schemas/agent/review-report.v1.json",
       "allowedTools": [
         "storyboard.read_storyboard",
-        "asset.read_approved_assets"
+        "script.read_shots",
+        "asset.read_approved_assets",
+        "asset.read_gap_report"
       ],
       "limits": {
-        "maxToolCalls": 12,
+        "maxToolCalls": 16,
         "timeoutSeconds": 300
       }
     }

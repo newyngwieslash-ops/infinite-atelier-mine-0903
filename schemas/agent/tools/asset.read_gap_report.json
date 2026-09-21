@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://infinite-atelier.invalid/schemas/agent/tools/asset.read_gap_report.json",
+  "title": "asset.read_gap_report input",
+  "description": "Returns one gap report and its lines in the report's order, or the episode's APPROVED report when the caller asks by episode. It is the read an agent makes before writing a batch, because section 9.5's rule is that a required asset which is missing stops the batch rather than being noticed later.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "reportId": {
+      "type": "string",
+      "description": "The report to read. Empty reads the episode's approved report.",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "episodeId": {
+      "type": "string",
+      "description": "The episode whose approved report to read. Required when reportId is empty.",
+      "minLength": 1,
+      "maxLength": 200
+    }
+  }
+}

@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://infinite-atelier.invalid/schemas/agent/tools/asset.create_gap_report.json",
+  "title": "asset.create_gap_report input",
+  "description": "Records one analysis of what an episode's script needs and the asset library does not have, as a new DRAFT report. It cannot approve: section 10.1 gives asset_analysis a required user gate, so the report a user approves is the one the gate acts on. Every line is either a story fact an existing asset satisfies or a story fact with no asset yet.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "episodeId": {
+      "type": "string",
+      "description": "The episode this analysis is about.",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "scriptVersionId": {
+      "type": "string",
+      "description": "The script version that was analysed.",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "summary": {
+      "type": "string",
+      "description": "What the analysis found, in a sentence or two.",
+      "maxLength": 2000
+    },
+    "basedOnVersionId": {
+      "type": "string",
+      "description": "The report this analysis replaces, or empty for the first.",
+      "maxLength": 200
+    },
+    "items": {
+      "type": "array",
+      "description": "One line per story fact the script needs. The order is the report's order and the ordinals are assigned from it.",
+      "minItems": 1,
+      "maxItems": 400,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "assetType",
+          "status"
+        ],
+        "properties": {
+          "assetType": {
+            "type": "string",
+            "description": "One of the asset types, such as character, location, prop or costume.",
+            "maxLength": 60
+          },
+          "storyEntityId": {
+            "type": "string",
+            "description": "The story entity the asset is needed for, when the analysis can name one.",
+            "maxLength": 200
+          },
+          "storyEntityName": {
+            "type": "string",
+            "description": "The story fact's name, which is what a MISSING line has instead of an identifier.",
+            "maxLength": 200
+          },
+          "assetId": {
+            "type": "string",
+            "description": "The asset that satisfies this line. Required when status is satisfied.",
+            "maxLength": 200
+          },
+          "status": {
+            "type": "string",
+            "description": "Either 'missing' or 'satisfied'.",
+            "maxLength": 200
+          },
+          "usageRole": {
+            "type": "string",
+            "description": "What the asset is used as, such as reference or subject. Empty means reference.",
+            "maxLength": 200
+          },
+          "required": {
+            "type": "boolean",
+            "description": "Whether the production cannot proceed without it. A missing REQUIRED asset blocks a batch."
+          },
+          "notes": {
+            "type": "string",
+            "description": "Anything a reviewer should know, such as why it is optional.",
+            "maxLength": 2000
+          }
+        }
+      }
+    }
+  },
+  "required": [
+    "episodeId",
+    "scriptVersionId",
+    "items"
+  ]
+}

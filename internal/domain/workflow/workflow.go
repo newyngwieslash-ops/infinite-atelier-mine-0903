@@ -315,17 +315,24 @@ type StageName string
 // MaxStageNameLength is the schema's bound on a stage key.
 const MaxStageNameLength = 120
 
-// DocumentedStageNames lists PRD FR-100's ten default quality-gate keys.
+// DocumentedStageNames lists the default quality-gate keys the two documents agree on.
 //
 // It is a REFERENCE list for documentation, error messages and the UI's default
 // ordering. It is NOT a constraint: ValidateStageName accepts any non-empty
 // name within MaxStageNameLength, because AGENT_CONTRACTS section 10.1 defines a
 // different set for the same gate and choosing between them is WP-07's call.
+//
+// `director_plan` is WP-09's addition, and it is FR-100's list that was missing it
+// rather than its own: section 10.1 gives the stage `supervision: conditional` and
+// `userGate: required`, PRD FR-060 requires the artifact, and the two other lists in
+// that section name it. A stage the specification configures has to exist here, or the
+// policy lookup falls through to the default and the stage's own settings are lost.
 var DocumentedStageNames = []string{
 	"chapter_event_extraction",
 	"story_skeleton",
 	"adaptation_strategy",
 	"script_generation",
+	"director_plan",
 	"asset_gap_analysis",
 	"asset_generation",
 	"storyboard_table",
