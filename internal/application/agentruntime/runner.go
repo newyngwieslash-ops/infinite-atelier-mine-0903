@@ -49,8 +49,22 @@ type ModelRequest struct {
 	// 13's "低成本阶段不默认使用最昂贵模型" is a configuration rule.
 	ModelID string
 	// ProviderID names the configured provider, or empty to let the port choose.
+	//
+	// EMPTY MEANS "THE POLICY FOR THIS LAYER", not "any provider". Section 13 makes the model a
+	// per-LAYER choice, so the port resolves an unnamed provider by looking at the layer this request
+	// states — and a port that could not see the layer would have to fall back to "the first enabled
+	// provider", which is what an earlier build did and what made every layer share one model.
 	ProviderID string
-	Messages   []TextMessage
+	// Layer is which of the three agent layers is asking, and ProjectID is which project's policy
+	// applies.
+	//
+	// The runtime knows the LAYER: the agent's registration says so. It knows the PROJECT because the
+	// invocation states it. Both travel on the request because the policy that decides the provider and
+	// the model is stated per layer PER PROJECT, and the port that reads that policy is the only place
+	// the three can be joined.
+	Layer     agent.AgentLayer
+	ProjectID string
+	Messages  []TextMessage
 	// MaxOutputTokens and Temperature come from the model policy. Zero means the
 	// policy did not state them, which is different from stating zero.
 	MaxOutputTokens int
@@ -390,8 +404,13 @@ func (r *Runtime) Run(ctx context.Context, invocation Invocation) (Outcome, erro
 		reply, err := r.models.Complete(runCtx, ModelRequest{
 			ModelID:    invocation.ModelID,
 			ProviderID: invocation.ProviderID,
-			Messages:   prompt.AsTextMessages(),
-			Deadline:   spec.Limits.MaxDuration,
+			// The layer comes from the REGISTRATION rather than from the invocation, so a caller cannot
+			// ask for a supervisor while being served a decision model: the policy is a fact about which
+			// agent is running, and the registry is what says which agent that is.
+			Layer:     spec.Layer,
+			ProjectID: invocation.ProjectID,
+			Messages:  prompt.AsTextMessages(),
+			Deadline:  spec.Limits.MaxDuration,
 		})
 		if err != nil {
 			code := classifyModelFailure(err)

@@ -34,7 +34,15 @@ type TextGenerator interface {
 type TextGenerationRequest struct {
 	ProviderID string
 	Model      string
-	Messages   []TextMessage
+	// Layer is which agent layer is asking, so a port that resolves an UNNAMED provider can read the
+	// policy section 13 states per layer. Without it the only answer available to a port is "whichever
+	// provider is enabled first", which makes the layer's policy unrepresentable.
+	Layer agent.AgentLayer
+	// ProjectID scopes the policy lookup: a model policy belongs to a PROJECT, so a port resolving one
+	// needs to know which project's. Empty means the caller is not working in a project, and the policy
+	// lookup is then skipped rather than guessed at.
+	ProjectID string
+	Messages  []TextMessage
 }
 
 // TextGenerationResult is a provider's answer.
@@ -89,7 +97,8 @@ func (b *ModelBridge) Complete(ctx context.Context, request ModelRequest) (Model
 		messages = append(messages, TextMessage{Role: message.Role, Content: message.Content})
 	}
 	result, err := b.generator.Generate(ctx, TextGenerationRequest{
-		ProviderID: request.ProviderID, Model: request.ModelID, Messages: messages,
+		ProviderID: request.ProviderID, Model: request.ModelID, Layer: request.Layer,
+		ProjectID: request.ProjectID, Messages: messages,
 	})
 	if err != nil {
 		return ModelReply{}, err
