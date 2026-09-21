@@ -316,14 +316,25 @@ func TestSkillDocumentsCarryEveryRequiredSection(t *testing.T) {
 	}
 }
 
-// TestSkillDocumentsAreSkeletonsWithoutBusinessContent is scope item 16's assertion.
+// TestSkillDocumentsAreRealProseInTheScriptPackAndSkeletonsInProduction is the successor to WP-05's
+// "空 Skill 骨架" assertion.
 //
-// "Script/Production 空 Skill 骨架，不实现业务内容" — the packs carry the section structure
-// and nothing else. This checks that no document has grown prose beyond its section
-// headings, which is what a later work package will fill in. The bound is generous
-// because the point is to catch a document that was WRITTEN, not to police wording.
-func TestSkillDocumentsAreSkeletonsWithoutBusinessContent(t *testing.T) {
+// WP-05's scope item 16 required both packs to carry section structure and NOTHING ELSE, and its test
+// asserted that no document exceeded a per-section budget — because the business content was a later
+// work package's. WP-08 is that later package for the SCRIPT pack: its eight documents are what a model
+// reads, so the assertion has to reverse direction rather than be deleted.
+//
+// The two halves are asserted together, because either alone would be satisfied by the wrong state:
+//
+//   - the script pack's documents are PROSE, measured as more than the per-section budget WP-05's rule
+//     used. A budget is a crude test and it is the honest one here: the property is "a person wrote
+//     this", and a document that merely renamed its headings does not have it.
+//   - the production pack's documents are still SKELETONS, which is WP-09's and WP-11's to fill. Asserting
+//     this keeps a half-written production document from looking like finished work, and it keeps the
+//     claim honest: WP-08 filled one pack, not both.
+func TestSkillDocumentsAreRealProseInTheScriptPackAndSkeletonsInProduction(t *testing.T) {
 	assembly, _ := buildAssembly(t)
+	// The same budget WP-05 used. A document under it has headings and guidance and no prose.
 	const perSectionBudget = 400
 	for _, name := range assembly.PackNames() {
 		pack, _ := assembly.Pack(name)
@@ -333,9 +344,23 @@ func TestSkillDocumentsAreSkeletonsWithoutBusinessContent(t *testing.T) {
 				t.Errorf("the document for %s has no sections", key)
 				continue
 			}
-			if budget := sections * perSectionBudget; len([]rune(document)) > budget {
-				t.Errorf("the document for %s is %d runes over %d sections, which reads as content rather than a skeleton",
-					key, len([]rune(document)), sections)
+			runes := len([]rune(document))
+			overBudget := runes > sections*perSectionBudget
+			if name == "script" {
+				if !overBudget {
+					t.Errorf("the document for %s is %d runes over %d sections, which is still a skeleton: WP-08 owns filling the script pack",
+						key, runes, sections)
+				}
+				// And the generator's placeholder must be gone, which is the marker WP-05's own test was
+				// written against.
+				if strings.Contains(document, "WP-0X fills this in") {
+					t.Errorf("the document for %s still carries the generator's placeholder", key)
+				}
+				continue
+			}
+			if overBudget {
+				t.Errorf("the document for %s is %d runes over %d sections, which reads as content: the production pack is WP-09's and WP-11's to fill",
+					key, runes, sections)
 			}
 		}
 	}
