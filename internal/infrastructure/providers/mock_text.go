@@ -208,10 +208,8 @@ func (m *MockTextAdapter) Generate(ctx context.Context, request providers.TextRe
 	// reads what the prompt's contract says the agent may and may not call.
 	result := m.reply(mockReplyFor(request, scenario, call), request.Model)
 	if scenario == MockScenarioToolCall {
-		key := mockOwnTool(request)
-		result.ToolCalls = []providers.TextToolCall{{
-			Key: key, Arguments: mockToolArguments(key, request),
-		}}
+		key, arguments := mockScriptToolCall(request)
+		result.ToolCalls = []providers.TextToolCall{{Key: key, Arguments: arguments}}
 	}
 	if scenario == MockScenarioIllegalTool {
 		result.ToolCalls = []providers.TextToolCall{{
@@ -337,6 +335,208 @@ func mockIndexString(value int) string {
 		value /= 10
 	}
 	return digits
+}
+
+// mockScriptStageOf reports which of the three SCRIPT execution stages this request is for.
+//
+// It reads the SKILL layer's TITLE, which is a line beginning `# script/script.execution.<name>`, and
+// nothing else — the first version scanned every message for the stage's substring and got the wrong
+// answer, because a tool contract lists `script.create_story_skeleton_version` for the STRATEGY agent
+// too (a strategy is written from a skeleton). A matcher that can be satisfied by a tool name is a
+// matcher that reports whichever stage happens to appear first in a list.
+//
+// The title is the same signal `mockIsExtractionAgent` reads, for the same reason: it names the agent
+// the runtime constructed the prompt for, and the pack generator and the manifest both derive it from
+// the agent's own key, so a rename cannot silently break it.
+//
+// The HasPrefix is STRICTER THAN IT NEEDS TO BE, and a mutation pass established that: relaxing it to
+// a Contains kills no test, because the generator always writes the title on the first line of the
+// skill, so a later line quoting another stage's name can never be reached first. It is kept strict
+// because a skill document is prose a person writes, and "the title is the first line" is a
+// convention the generator currently honours rather than a rule this matcher enforces. The cost of
+// keeping it is one comparison per line.
+func mockScriptStageOf(request providers.TextRequest) string {
+	const prefix = "# script/script.execution."
+	for _, message := range request.Messages {
+		for _, line := range strings.Split(message.Content, "\n") {
+			trimmed := strings.TrimSpace(line)
+			if !strings.HasPrefix(trimmed, prefix) {
+				continue
+			}
+			stage := strings.TrimSpace(strings.TrimPrefix(trimmed, prefix))
+			// The title is the whole line, so anything after the name is not part of it.
+			if index := strings.IndexAny(stage, " \t"); index >= 0 {
+				stage = stage[:index]
+			}
+			switch stage {
+			case "story_skeleton", "adaptation_strategy", "script_generation":
+				return stage
+			}
+		}
+	}
+	return ""
+}
+
+// mockScriptToolCall is the write a script execution stage asks for.
+//
+// The KEY is chosen rather than searched for: the contract lists several tools and only one produces
+// the artifact this stage owes, so "the first write tool" picks the wrong one for generation. The
+// arguments come from the prompt for the reason `mockToolArguments` records — the workflow-state layer
+// carries the episode and the versions the run is about, so a call that writes names what it writes
+// about instead of inventing an identifier the artifact verifier would then refuse.
+func mockScriptToolCall(request providers.TextRequest) (string, json.RawMessage) {
+	switch mockScriptStageOf(request) {
+	case "story_skeleton":
+		return "script.create_story_skeleton_version", mockSkeletonArguments(request)
+	case "adaptation_strategy":
+		return "script.create_adaptation_strategy_version", mockStrategyArguments(request)
+	case "script_generation":
+		// The STRUCTURE write is what this stage owes. Its version row is created by the pipeline
+		// before the model is called, because a structure needs a version to hang off — so the state
+		// layer names that version and this call fills it.
+		return "script.create_script_structure", mockStructureArguments(request)
+	default:
+		key := mockOwnTool(request)
+		return key, mockToolArguments(key, request)
+	}
+}
+
+// mockSkeletonArguments states a skeleton with every field the schema wants.
+//
+// The selection comes from the prompt when the state names events, so the link set is a real relation
+// to rows the project has. When it names none the selection is empty, which the schema allows and the
+// service accepts: a mock that invented event ids would fail the reference check the service now
+// makes, and the test would then be asserting about a failure it caused itself.
+func mockSkeletonArguments(request providers.TextRequest) json.RawMessage {
+	state := mockWorkflowStateOf(request)
+	arguments := map[string]any{
+		"openingHook":       "The deterministic mock's opening: a name is spoken before it is explained.",
+		"coreConflict":      "The mock's conflict: the person who knows the name will not say it.",
+		"turningPointsJson": `["the name is spoken","the board is found"]`,
+		"climax":            "The mock's climax: the board turns up in the water.",
+		"endingHook":        "The mock's ending: someone is waiting at the far bank.",
+		"changeReason":      "The deterministic mock answered a story_skeleton stage.",
+	}
+	if episode := fieldOnLine(state, "episode="); episode != "" {
+		arguments["episodeId"] = episode
+	}
+	if events := fieldOnLine(state, "selected_events="); events != "" {
+		arguments["selectedEventIds"] = splitStateList(events)
+	}
+	return mockArgumentJSON(arguments)
+}
+
+// mockStrategyArguments states a strategy with one treatment per event the prompt named.
+//
+// Every event is RETAINED, and the treatment is stated rather than left out: a treatment with no
+// decision is refused by the service, because "retained" and "removed" are opposite decisions and
+// neither follows from an absence. The order is the state's, which is the adaptation's order.
+func mockStrategyArguments(request providers.TextRequest) json.RawMessage {
+	state := mockWorkflowStateOf(request)
+	links := []any{}
+	for _, event := range splitStateList(fieldOnLine(state, "selected_events=")) {
+		links = append(links, map[string]any{"storyEventId": event, "treatment": "retained"})
+	}
+	arguments := map[string]any{
+		"strategySummary":       "The deterministic mock keeps every event it was given, in order.",
+		"adaptationMode":        "balanced",
+		"mergedEventGroupsJson": `[]`,
+		"rationale":             "The mock answered an adaptation_strategy stage.",
+		"eventLinks":            links,
+	}
+	if episode := fieldOnLine(state, "episode="); episode != "" {
+		arguments["episodeId"] = episode
+	}
+	return mockArgumentJSON(arguments)
+}
+
+// mockStructureArguments states a whole script version's content.
+//
+// It writes TWO SCENES with lines and a shot, and it states no identifier, ordinal or duration — the
+// schema has no field for any of them, which is §17's "ID、顺序和唯一性" and "时长求和" being the code's
+// job rather than a model's. The scene durations are FIXED constants rather than derived from the
+// prompt, because what a test needs from this mock is a version whose summed duration is a known
+// number: the canary asserts the derived total against what the scenes state, and a mock that varied
+// its durations would make that assertion depend on the fixture instead of on the code.
+//
+// The second scene is marked `isOriginalAdaptation` (原创改编标记) and cites no source event, so the
+// canary can tell an invention from a faithful adaptation — the distinction AC-SCRIPT-003 asks for.
+func mockStructureArguments(request providers.TextRequest) json.RawMessage {
+	state := mockWorkflowStateOf(request)
+	arguments := map[string]any{
+		"summary": "The deterministic mock's script: two scenes at the ferry crossing.",
+		"scenes": []any{
+			map[string]any{
+				"sceneNumber":              "1",
+				"slugline":                 "INT. 渡口 - 日",
+				"interiorExterior":         "INT",
+				"timeOfDay":                "日",
+				"summary":                  "白掌柜念出那个名字。",
+				"dramaticGoal":             "交代铜牌",
+				"estimatedDurationSeconds": 90,
+				"isOriginalAdaptation":     false,
+				"dialogueLines": []any{
+					map[string]any{"type": "dialogue", "text": "这牌子不是你的。"},
+					map[string]any{"type": "narration", "text": "雾气漫上来。"},
+				},
+				"shots": []any{
+					map[string]any{
+						"shotNumber": "1A", "shotSize": "wide", "visualDescription": "河面起雾，渡船靠岸。",
+					},
+				},
+			},
+			map[string]any{
+				"sceneNumber":              "2",
+				"slugline":                 "EXT. 渡口 - 夜",
+				"interiorExterior":         "EXT",
+				"timeOfDay":                "夜",
+				"summary":                  "铜牌入水。",
+				"dramaticGoal":             "留下悬念",
+				"estimatedDurationSeconds": 60,
+				"isOriginalAdaptation":     true,
+				"dialogueLines":            []any{},
+				"shots":                    []any{},
+			},
+		},
+	}
+	if version := fieldOnLine(state, "script_version="); version != "" {
+		arguments["versionId"] = version
+	}
+	if episode := fieldOnLine(state, "episode="); episode != "" {
+		arguments["episodeId"] = episode
+	}
+	return mockArgumentJSON(arguments)
+}
+
+// splitStateList reads a comma-separated list out of a workflow-state field.
+//
+// The separator is a comma rather than the space `fieldOnLine` stops at, so a state can carry a
+// list in one field. Blank entries are dropped rather than passed through, because an empty id would
+// be refused by the service's own trimming and the refusal would name nothing.
+func splitStateList(value string) []string {
+	out := []string{}
+	for _, entry := range strings.Split(value, ",") {
+		if trimmed := strings.TrimSpace(entry); trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	return out
+}
+
+// mockArgumentJSON renders a tool's arguments deterministically.
+//
+// Separate from `mockJSON`, which renders a SCHEMA document. The encoder's sorted map ordering is what
+// makes the output stable, so two runs of the same scenario produce the same bytes — which is the
+// property every assertion in this file rests on.
+func mockArgumentJSON(document map[string]any) json.RawMessage {
+	encoded, err := json.Marshal(document)
+	if err != nil {
+		// An argument document that will not marshal is this file's bug. Returning an empty object
+		// lets the tool's own schema refuse it, which is a readable failure in a test rather than a
+		// panic that takes the binary down for a reason unrelated to what was being tested.
+		return json.RawMessage(`{}`)
+	}
+	return encoded
 }
 
 // mockIsExtractionAgent reports whether the request is for the event-extraction agent.
@@ -519,6 +719,14 @@ func mockLayerOf(request providers.TextRequest) string {
 // 至少有预期 artifact" is what decides. So the mock reports what an execution with
 // no writes honestly is, which is a partial that needs a person — and a caller that
 // wants the success path uses MockScenarioToolCall, whose tool does the write.
+//
+// ONE EXCEPTION, and it is the script stages'. The tool-call scenario is what writes
+// their artifact, so a reply that said `partial` with no artifact would be describing
+// a run whose WRITE is happening beside it — and the runtime's own rule reads the
+// document, not the tool call. A `script.*` execution stage therefore answers
+// `complete` WITH the reference the tool is about to create, which is the shape the
+// runtime's success rule requires. The reference names the version the state layer
+// carried, so it is the row the tool will write rather than an invented one.
 func mockExecutionResult(request providers.TextRequest) string {
 	stage, stageRun := mockStageOf(request)
 	document := map[string]any{
@@ -529,7 +737,50 @@ func mockExecutionResult(request providers.TextRequest) string {
 		"nextAction":    "wait_user",
 		"summary":       "The deterministic mock read the stage and proposed nothing to write.",
 	}
+	// The three script stages write through a tool call, so their document carries the artifact
+	// reference and says what it is doing.
+	//
+	// The reference is REQUIRED for `complete`, and that is §7.4's rule rather than this file's
+	// choice: "success 至少有预期 artifact", which the runtime enforces ON TOP of the schema. A reply
+	// that said complete with no artifact is refused by the runner — a canary found exactly that when
+	// this branch was added — so a state that cannot name the row leaves the reply at `partial`. That
+	// is the honest reading: the stage did its work, and this mock cannot say what row it produced.
+	if scriptStage := mockScriptStageOf(request); scriptStage != "" {
+		entityType, entityID := mockScriptArtifactOf(request, scriptStage)
+		if entityID == "" {
+			document["summary"] = "The deterministic mock ran the " + scriptStage +
+				" stage, and the state named no version to report an artifact for."
+			return mockJSON(document)
+		}
+		document["status"] = "complete"
+		document["nextAction"] = "review"
+		document["summary"] = "The deterministic mock wrote the " + scriptStage + " artifact."
+		document["artifacts"] = []any{map[string]any{
+			"entityType": entityType,
+			"entityId":   entityID,
+			"operation":  "created",
+		}}
+	}
 	return mockJSON(document)
+}
+
+// mockScriptArtifactOf names the row a script stage's write creates.
+//
+// The identifier comes from the workflow state, which the pipeline rendered from the database — so
+// this reports the version the run is actually about. An empty id means the state did not name one,
+// and the artifact list is then omitted rather than filled with an invention: the runtime's verifier
+// reads these references back, and a fabricated id would fail it for a reason that is this file's
+// fault rather than the code under test's.
+func mockScriptArtifactOf(request providers.TextRequest, scriptStage string) (string, string) {
+	state := mockWorkflowStateOf(request)
+	switch scriptStage {
+	case "story_skeleton":
+		return "story_skeleton_version", fieldOnLine(state, "skeleton_version=")
+	case "adaptation_strategy":
+		return "adaptation_strategy_version", fieldOnLine(state, "strategy_version=")
+	default:
+		return "script_version", fieldOnLine(state, "script_version=")
+	}
 }
 
 // mockDecisionResult answers a decision agent.

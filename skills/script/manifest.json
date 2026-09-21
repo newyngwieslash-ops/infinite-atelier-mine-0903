@@ -79,8 +79,11 @@
       "allowedTools": [
         "script.read_story_skeleton",
         "script.read_adaptation_strategy",
+        "script.read_script_version",
+        "script.read_script_structure",
         "story.read_rules",
-        "script.create_script_version"
+        "script.create_script_version",
+        "script.create_script_structure"
       ],
       "limits": {
         "maxToolCalls": 8,
@@ -127,7 +130,9 @@
       "outputSchema": "schemas/agent/review-report.v1.json",
       "allowedTools": [
         "script.read_script_version",
+        "script.read_script_structure",
         "script.read_story_skeleton",
+        "script.read_adaptation_strategy",
         "story.read_rules"
       ],
       "limits": {
