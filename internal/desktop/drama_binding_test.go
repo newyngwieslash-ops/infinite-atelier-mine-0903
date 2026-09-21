@@ -1093,6 +1093,28 @@ func (s *dramaStore) CreateDecision(_ context.Context, decision workflow.UserGat
 	return nil
 }
 
+// LatestDecisionForStage answers the read the FIX loop makes.
+//
+// The map has no order, so the newest is found by comparing created_at — and a store that returned
+// whichever row the map happened to yield would make a test about "the decision the user last made"
+// depend on Go's map iteration order, which is deliberately random.
+func (s *dramaStore) LatestDecisionForStage(_ context.Context, stageRunID string) (workflow.UserGateDecision, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var newest workflow.UserGateDecision
+	found := false
+	for _, decision := range s.decisions {
+		if decision.StageRunID != stageRunID {
+			continue
+		}
+		if !found || decision.CreatedAt.After(newest.CreatedAt) {
+			newest = decision
+			found = true
+		}
+	}
+	return newest, found, nil
+}
+
 func (s *dramaStore) ListEvents(_ context.Context, runID string) ([]workflow.WorkflowEvent, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

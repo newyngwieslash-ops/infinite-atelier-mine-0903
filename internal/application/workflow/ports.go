@@ -93,6 +93,18 @@ type ReviewRepository interface {
 // DecisionRepository persists user gate decisions.
 type DecisionRepository interface {
 	CreateDecision(ctx context.Context, decision workflow.UserGateDecision) error
+	// LatestDecisionForStage returns the newest decision recorded for one stage attempt.
+	//
+	// It exists because the decision row IS the FIX instruction, and the reason is not convenience:
+	// section 12.2 stores the findings a FIX names on the DECISION (`issue_ids_json`), and the
+	// pipeline that builds the next attempt reads them back HERE rather than receiving them as an
+	// argument. A value threaded from the gate command to the re-run would be lost by a restart
+	// between the two, and the re-run would then be a FIX that fixed nothing — while still being
+	// recorded as one.
+	//
+	// The boolean is false when a stage has no decision yet, which is the ordinary state of an
+	// attempt nobody has reviewed.
+	LatestDecisionForStage(ctx context.Context, stageRunID string) (workflow.UserGateDecision, bool, error)
 }
 
 // EventRepository persists workflow audit events on their own, for the queries

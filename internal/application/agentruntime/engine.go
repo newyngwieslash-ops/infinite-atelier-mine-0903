@@ -640,6 +640,38 @@ func (e *Engine) revisionCount(ctx context.Context, stageRunID string) (int, err
 	return counter.RevisionCount(ctx, stageRunID)
 }
 
+// Transition moves one attempt to a new status.
+//
+// It is the STAGE MACHINE's single entry point for a move that is not a review, a gate or a revision —
+// the "the run finished, now review it" step, which is the one a driving pipeline makes. The domain's
+// machine is what decides whether the edge is legal: this method forwards to the transitioner, which
+// validates against `workflow`'s table, so a caller cannot skip a status by using it.
+//
+// It exists so the pipeline that drives a stage does not have to reach through the engine to the
+// transitioner and reimplement the revision bookkeeping. That is not a convenience: the revision
+// number a compare-and-swap needs belongs to the ROW, and a caller that read the row and then wrote
+// it would be racing every other writer of the same stage.
+func (e *Engine) Transition(ctx context.Context, request StageTransitionRequest) (workflow.StageRun, error) {
+	if !e.Available() {
+		return workflow.StageRun{}, agent.UnavailableError()
+	}
+	if strings.TrimSpace(request.StageRunID) == "" {
+		return workflow.StageRun{}, agent.InvalidError("A stage run is required.")
+	}
+	if !workflow.IsValidStageStatus(request.Status) {
+		return workflow.StageRun{}, agent.InvalidError("That stage status is not recognised.")
+	}
+	// The revision is READ rather than taken from the caller, so a stale one produces a conflict at
+	// the transitioner instead of a silent overwrite — the same reason every other write in this
+	// repository carries an expected revision.
+	stage, _, err := e.stageFor(ctx, request.StageRunID)
+	if err != nil {
+		return workflow.StageRun{}, err
+	}
+	request.Revision = stage.Revision
+	return e.transitioner.TransitionStage(ctx, request)
+}
+
 // stageFor loads one stage's row and its siblings' state.
 //
 // The stage's own row does not carry enough to decide anything — a decision needs

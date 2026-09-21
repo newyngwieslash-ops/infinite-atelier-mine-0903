@@ -522,6 +522,27 @@ type SubmitGateDecisionRequest struct {
 	CreatedByID string
 }
 
+// LatestDecisionForStage returns the newest decision recorded for one stage attempt.
+//
+// It is the READ the FIX loop needs, and it exists because the decision row IS the instruction: section
+// 12.2 stores the findings a FIX names on the decision (`issue_ids_json`), and the pipeline that builds
+// the next attempt reads them back from HERE rather than receiving them as an argument. A value threaded
+// from the gate command to the re-run would be lost by a restart between the two, and the re-run would
+// then be a FIX that fixed nothing while still being recorded as one.
+//
+// The boolean is false when the attempt has no decision, which is the ordinary state of an attempt
+// nobody has reviewed — not an error.
+func (s *Service) LatestDecisionForStage(ctx context.Context, stageRunID string) (workflow.UserGateDecision, bool, error) {
+	if !s.Available() {
+		return workflow.UserGateDecision{}, false, storageFailure()
+	}
+	trimmed := strings.TrimSpace(stageRunID)
+	if trimmed == "" {
+		return workflow.UserGateDecision{}, false, workflow.InvalidError("A stage run is required.")
+	}
+	return s.decisions.LatestDecisionForStage(ctx, trimmed)
+}
+
 // SubmitGateDecision stores a user's decision at a quality gate.
 //
 // The decision is validated by the domain before it is written, which is what

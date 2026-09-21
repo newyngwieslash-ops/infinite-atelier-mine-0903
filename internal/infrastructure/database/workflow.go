@@ -3,6 +3,7 @@ package database
 import (
 	"context"
 	"database/sql"
+	"strings"
 
 	workflowapp "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/workflow"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/versioning"
@@ -403,6 +404,50 @@ func (r *WorkflowRepository) CreateDecision(ctx context.Context, decision workfl
 	return nil
 }
 
+// decisionSelectColumns is the decision row's projection, in the order scanDecision reads it.
+const decisionSelectColumns = `SELECT id, workflow_run_id, stage_run_id, decision, issue_ids_json,
+	instruction, reason, locked_entity_refs_json, created_by, created_at FROM user_gate_decisions`
+
+// LatestDecisionForStage returns the newest decision recorded for one stage attempt.
+//
+// The ORDER is created_at DESC with the id as a tiebreaker, because two decisions recorded in the same
+// clock tick are possible (a user can revoke and re-decide) and SQLite would otherwise return whichever
+// row it happened to read first. The identifier is a UUIDv7, so it sorts by creation time too — which
+// makes the tiebreak faithful rather than arbitrary.
+func (r *WorkflowRepository) LatestDecisionForStage(ctx context.Context, stageRunID string) (workflow.UserGateDecision, bool, error) {
+	conn := r.conn()
+	if conn == nil {
+		return workflow.UserGateDecision{}, false, storageError("WORKFLOW_STORE_UNAVAILABLE", "The workflow store is unavailable.", nil)
+	}
+	row := conn.QueryRowContext(ctx, decisionSelectColumns+
+		` WHERE stage_run_id = ? ORDER BY created_at DESC, id DESC LIMIT 1`, stageRunID)
+	decision, err := scanDecision(row)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			// No decision yet is an ordinary state, not an error: an attempt nobody has reviewed has
+			// no row, and the caller's answer is "there is nothing to read".
+			return workflow.UserGateDecision{}, false, nil
+		}
+		return workflow.UserGateDecision{}, false, storageError("WORKFLOW_READ_FAILED", "The gate decision could not be read.", err)
+	}
+	return decision, true, nil
+}
+
+// scanDecision reads one decision row.
+func scanDecision(row *sql.Row) (workflow.UserGateDecision, error) {
+	var decision workflow.UserGateDecision
+	var decisionValue, createdBy, createdAt string
+	if err := row.Scan(&decision.ID, &decision.WorkflowRunID, &decision.StageRunID, &decisionValue,
+		&decision.IssueIDsJSON, &decision.Instruction, &decision.Reason,
+		&decision.LockedEntityRefsJSON, &createdBy, &createdAt); err != nil {
+		return workflow.UserGateDecision{}, err
+	}
+	decision.Decision = workflow.GateDecision(decisionValue)
+	decision.CreatedByType, decision.CreatedByID = decodeCreatedBy(createdBy)
+	decision.CreatedAt = parseTime(createdAt)
+	return decision, nil
+}
+
 const eventSelectColumns = `SELECT id, workflow_run_id, stage_run_id, event_type, from_status,
 	to_status, payload_json, actor_type, actor_id, created_at FROM workflow_events`
 
@@ -466,6 +511,21 @@ func encodeCreatedBy(kind versioning.CreatedByType, id string) string {
 		return string(kind)
 	}
 	return string(kind) + ":" + id
+}
+
+// decodeCreatedBy reads what encodeCreatedBy wrote.
+//
+// A value with no colon is a kind with no identifier, which is what an animation or a system actor
+// records. An unrecognised kind is returned as-is rather than refused: the COLUMN is
+// `created_by TEXT NOT NULL DEFAULT ”` with no CHECK, so a row written by an older build could carry
+// a value this vocabulary does not have — and a reader that refused the whole row for one unreadable
+// field would make an audit trail unreadable in front of the person trying to read it.
+func decodeCreatedBy(value string) (versioning.CreatedByType, string) {
+	index := strings.Index(value, ":")
+	if index < 0 {
+		return versioning.CreatedByType(value), ""
+	}
+	return versioning.CreatedByType(value[:index]), value[index+1:]
 }
 
 // scanRun reads one workflow run row.

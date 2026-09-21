@@ -237,6 +237,22 @@ func (r *memoryRepo) CreateDecision(_ context.Context, decision workflow.UserGat
 	return nil
 }
 
+// LatestDecisionForStage returns the newest decision for one attempt.
+//
+// The double scans BACKWARDS, because the real query orders by created_at DESC and a double that
+// returned the first match would answer "the oldest decision" — which reads as the same thing until a
+// user revises a decision, and then it is a FIX running against findings the user replaced.
+func (r *memoryRepo) LatestDecisionForStage(_ context.Context, stageRunID string) (workflow.UserGateDecision, bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for index := len(r.decisions) - 1; index >= 0; index-- {
+		if r.decisions[index].StageRunID == stageRunID {
+			return r.decisions[index], true, nil
+		}
+	}
+	return workflow.UserGateDecision{}, false, nil
+}
+
 func (r *memoryRepo) ListEvents(_ context.Context, workflowRunID string) ([]workflow.WorkflowEvent, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
