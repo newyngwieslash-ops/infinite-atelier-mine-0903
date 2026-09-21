@@ -12,6 +12,7 @@ import (
 
 	appscript "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/script"
 	appscriptpipeline "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/scriptpipeline"
+	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/stagepipeline"
 	scriptdomain "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/script"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/versioning"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/workflow"
@@ -71,13 +72,15 @@ func TestCanaryScriptPipelineToApprovedScript(t *testing.T) {
 	eventIDs := canary.seedStoryEvents(t, 2)
 
 	// --- S1: the story skeleton ---
-	skeleton := canary.runScriptStage(t, appscriptpipeline.StageRequest{
-		WorkflowRunID:    canary.ids.workflowRun,
-		Stage:            appscriptpipeline.StageStorySkeleton,
-		ProjectID:        canary.ids.project,
-		EpisodeID:        canary.ids.episode,
-		Task:             "Write the skeleton for this episode.",
-		SelectedEventIDs: eventIDs,
+	skeleton := canary.runScriptStage(t, stagepipeline.StageRequest{
+		WorkflowRunID: canary.ids.workflowRun,
+		Stage:         appscriptpipeline.StageStorySkeleton,
+		ProjectID:     canary.ids.project,
+		EpisodeID:     canary.ids.episode,
+		Task:          "Write the skeleton for this episode.",
+		State: appscriptpipeline.StateFields{
+			SelectedEventIDs: eventIDs,
+		},
 	})
 	// AC-SCRIPT-001's chain: the workflow was created, an independent AgentRun ran, a VERSION exists, and
 	// the stage moved to reviews.
@@ -110,7 +113,7 @@ func TestCanaryScriptPipelineToApprovedScript(t *testing.T) {
 	canary.assertPinnedFieldIsProtected(t, skeletonVersionID)
 
 	// --- S2: the adaptation strategy ---
-	strategy := canary.runScriptStage(t, appscriptpipeline.StageRequest{
+	strategy := canary.runScriptStage(t, stagepipeline.StageRequest{
 		WorkflowRunID: canary.ids.workflowRun,
 		Stage:         appscriptpipeline.StageAdaptationStrategy,
 		ProjectID:     canary.ids.project,
@@ -130,15 +133,17 @@ func TestCanaryScriptPipelineToApprovedScript(t *testing.T) {
 	// write tool takes the version's id. This is the ordering the pipeline's own state layer assumes: a
 	// generation stage's prompt carries `script_version=` for exactly this reason.
 	scriptVersionID := canary.seedScriptVersionRow(t, skeletonVersionID, strategyVersionID)
-	generation := canary.runScriptStage(t, appscriptpipeline.StageRequest{
-		WorkflowRunID:     canary.ids.workflowRun,
-		Stage:             appscriptpipeline.StageScriptGeneration,
-		ProjectID:         canary.ids.project,
-		EpisodeID:         canary.ids.episode,
-		Task:              "Write the script.",
-		ScriptVersionID:   scriptVersionID,
-		SkeletonVersionID: skeletonVersionID,
-		StrategyVersionID: strategyVersionID,
+	generation := canary.runScriptStage(t, stagepipeline.StageRequest{
+		WorkflowRunID: canary.ids.workflowRun,
+		Stage:         appscriptpipeline.StageScriptGeneration,
+		ProjectID:     canary.ids.project,
+		EpisodeID:     canary.ids.episode,
+		Task:          "Write the script.",
+		State: appscriptpipeline.StateFields{
+			ScriptVersionID:   scriptVersionID,
+			SkeletonVersionID: skeletonVersionID,
+			StrategyVersionID: strategyVersionID,
+		},
 	})
 	canary.assertStageReviewed(t, generation.StageRun, "script_generation")
 	// The write went to the version the state named, which is what makes the row and the content one
@@ -174,7 +179,7 @@ func TestCanaryScriptPipelineToApprovedScript(t *testing.T) {
 }
 
 // runScriptStage runs one stage through the pipeline and asserts the attempt is in play.
-func (c *scriptCanary) runScriptStage(t *testing.T, request appscriptpipeline.StageRequest) appscriptpipeline.StageResult {
+func (c *scriptCanary) runScriptStage(t *testing.T, request stagepipeline.StageRequest) stagepipeline.StageResult {
 	t.Helper()
 	result, err := c.pipeline.RunStage(context.Background(), request)
 	if err != nil {
@@ -222,7 +227,7 @@ func (c *scriptCanary) assertStageReviewed(t *testing.T, stage workflow.StageRun
 //
 // The count is asserted, because a stage that wrote two versions or none would make every later
 // assertion about "the version" ambiguous — and the ambiguity would be the bug.
-func (c *scriptCanary) singleArtifactOf(t *testing.T, result appscriptpipeline.StageResult, stageName string) string {
+func (c *scriptCanary) singleArtifactOf(t *testing.T, result stagepipeline.StageResult, stageName string) string {
 	t.Helper()
 	if len(result.ArtifactIDs) != 1 {
 		t.Fatalf("%s: the stage wrote %v, want exactly one version", stageName, result.ArtifactIDs)
@@ -241,12 +246,12 @@ func (c *scriptCanary) singleArtifactOf(t *testing.T, result appscriptpipeline.S
 // all (§6.3's matrix, and the registry refuses a manifest that grants it one). A supervisor answering the
 // tool-call scenario therefore asks for a write it is not allowed to make, and the ACL refuses it — which
 // is the ACL working, and would make this walk a test of the refusal rather than of the review.
-func (c *scriptCanary) review(t *testing.T, stage workflow.StageRun, artifactVersionID string) appscriptpipeline.SupervisionResult {
+func (c *scriptCanary) review(t *testing.T, stage workflow.StageRun, artifactVersionID string) stagepipeline.SupervisionResult {
 	t.Helper()
 	c.mock.SetScenario(infraproviders.MockScenarioNormal)
 	// Restored for the caller, because the next execution stage in the walk needs it.
 	defer c.mock.SetScenario(infraproviders.MockScenarioToolCall)
-	result, err := c.pipeline.RunSupervision(context.Background(), appscriptpipeline.SupervisionRequest{
+	result, err := c.pipeline.RunSupervision(context.Background(), stagepipeline.SupervisionRequest{
 		StageRunID:        stage.ID,
 		ProjectID:         c.ids.project,
 		EpisodeID:         c.ids.episode,
@@ -284,7 +289,7 @@ func (c *scriptCanary) review(t *testing.T, stage workflow.StageRun, artifactVer
 // the approval makes a version the one in force. AC-SCRIPT-001's "approved 唯一" is about the second.
 func (c *scriptCanary) pass(t *testing.T, stage workflow.StageRun, versionID, instruction string) {
 	t.Helper()
-	moved, err := c.pipeline.ApplyUserGate(context.Background(), appscriptpipeline.GateRequest{
+	moved, err := c.pipeline.ApplyUserGate(context.Background(), stagepipeline.GateRequest{
 		StageRunID:        stage.ID,
 		Decision:          workflow.GateApprove,
 		ArtifactVersionID: versionID,

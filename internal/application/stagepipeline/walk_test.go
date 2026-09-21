@@ -1,4 +1,4 @@
-package scriptpipeline
+package stagepipeline
 
 import (
 	"context"
@@ -9,7 +9,7 @@ import (
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/workflow"
 )
 
-// locks_wp08_test.go covers the version walk a FIX makes: which stage attempt produced which version,
+// walk_test.go covers the version walk a FIX makes: which stage attempt produced which version,
 // and which fields of that version a user pinned.
 //
 // The quality review measured `locksFor`, `versionOfDecision` and `runsForStage` at 0% coverage, and
@@ -42,7 +42,10 @@ func (f *runReaderFake) ListToolCalls(_ context.Context, runID string) ([]agent.
 // and a call of another family's write is evidence of another artifact.
 func TestTheVersionAWalkFindsWhatTheAttemptWrote(t *testing.T) {
 	ctx := context.Background()
-	agents, _ := AgentsForStage(StageScriptGeneration)
+	agents := StageAgents{
+		ArtifactType:    "script_version",
+		WriteToolPrefix: "script.create_",
+	}
 	// The stage attempt owns one run. Its FIRST call is a read whose result happens to carry an
 	// `entityId`, and its second is the write. A walk that took any call's result would stop at the first
 	// — which is the mutation the review found surviving.

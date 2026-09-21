@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/stagepipeline"
+
 	agentruntime "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/agentruntime"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/skill"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/agent"
@@ -56,11 +58,13 @@ func TestTheStageMapIsCompleteForEveryStageThisPipelineDrives(t *testing.T) {
 		// Every field is used by a caller, so an empty one is a stage that half works: the execution key
 		// starts the attempt, the supervision key reviews it, the artifact type names what was written,
 		// and the family is what reads its locks.
+		// The FAMILY is deliberately not asserted here: the mechanism does not carry it,
+		// because only a layer knows which domain its artifact belongs to. It is asserted in
+		// `layer_test.go` against the domain's own vocabulary, which is where it is readable.
 		for name, value := range map[string]string{
 			"execution":   agents.Execution,
 			"supervision": agents.Supervision,
 			"artifact":    agents.ArtifactType,
-			"family":      string(agents.Family),
 		} {
 			if strings.TrimSpace(value) == "" {
 				t.Errorf("%s: the %s is empty", stage, name)
@@ -72,7 +76,7 @@ func TestTheStageMapIsCompleteForEveryStageThisPipelineDrives(t *testing.T) {
 	if _, ok := AgentsForStage("storyboard_table"); ok {
 		t.Fatal("a stage this pipeline does not drive has an entry")
 	}
-	_, err := New(nilOptions()).RunStage(context.Background(), StageRequest{Stage: "storyboard_table"})
+	_, err := New(nilOptions()).RunStage(context.Background(), stagepipeline.StageRequest{Stage: "storyboard_table"})
 	if err == nil {
 		t.Fatal("an undriven stage was accepted")
 	}
@@ -214,7 +218,7 @@ func TestArtifactIDsComeFromToolCallsRatherThanTheAnswer(t *testing.T) {
 			{ToolKey: "script.create_script_structure", OutputJSON: called},
 		},
 	}
-	ids := artifactIDsOf(outcome)
+	ids := stagepipeline.ArtifactIDsOf(outcome)
 	if len(ids) != 1 {
 		t.Fatalf("the identifiers are %v, want exactly the one a write produced", ids)
 	}
@@ -224,7 +228,7 @@ func TestArtifactIDsComeFromToolCallsRatherThanTheAnswer(t *testing.T) {
 	// A call whose result could not be parsed yields nothing rather than an error: the caller's next step
 	// is to look at the run, not to fail the stage twice.
 	for _, raw := range []string{"", "not json", `{"artifacts":[]}`, `{"artifacts":[{"entityId":""}]}`} {
-		if id := entityIDOf(raw); id != "" {
+		if id := stagepipeline.EntityIDOf(raw); id != "" {
 			t.Errorf("a result of %q yielded the identifier %q", raw, id)
 		}
 	}
@@ -237,16 +241,20 @@ func TestArtifactIDsComeFromToolCallsRatherThanTheAnswer(t *testing.T) {
 // asserted against the mock's `fieldOnLine` convention, because the deterministic model parses this
 // string and the two cannot drift without a canary failing somewhere far from the cause.
 func TestTheStateLayerCarriesTheFieldsTheToolsNeed(t *testing.T) {
-	service := New(nilOptions())
-	state := service.stateFor(testStageRun(), StageRequest{
-		WorkflowRunID:     "run-1",
-		Stage:             StageScriptGeneration,
-		ProjectID:         "project-1",
-		EpisodeID:         "episode-1",
-		ScriptVersionID:   "version-1",
-		SkeletonVersionID: "skeleton-1",
-		StrategyVersionID: "strategy-1",
-		SelectedEventIDs:  []string{"event-1", "event-2"},
+	// The renderer is the LAYER's, because the fields are this layer's knowledge: the mechanism
+	// asks the layer for the state string and never inspects it.
+	layer := NewLayer(nil)
+	state := layer.StateFor(testStageRun(), stagepipeline.StageRequest{
+		WorkflowRunID: "run-1",
+		Stage:         StageScriptGeneration,
+		ProjectID:     "project-1",
+		EpisodeID:     "episode-1",
+		State: StateFields{
+			ScriptVersionID:   "version-1",
+			SkeletonVersionID: "skeleton-1",
+			StrategyVersionID: "strategy-1",
+			SelectedEventIDs:  []string{"event-1", "event-2"},
+		},
 	})
 	// Each field, in the `name=value` form the mock reads. The separator is a space, which is why the
 	// selected-event list is comma-separated inside one field.
@@ -266,7 +274,7 @@ func TestTheStateLayerCarriesTheFieldsTheToolsNeed(t *testing.T) {
 	}
 	// An EMPTY field is omitted rather than rendered blank: a model reading `script_version=` would take
 	// it for an identifier that exists and is empty.
-	bare := service.stateFor(testStageRun(), StageRequest{
+	bare := layer.StateFor(testStageRun(), stagepipeline.StageRequest{
 		WorkflowRunID: "run-1", Stage: StageStorySkeleton,
 	})
 	for _, absent := range []string{"script_version=", "episode=", "selected_events="} {
@@ -291,30 +299,30 @@ func TestTheStateLayerCarriesTheFieldsTheToolsNeed(t *testing.T) {
 // scratch while being recorded as a revision against specific issues, which is the exact failure the
 // read-back exists to prevent.
 func TestIssueIDsAreReadFromTheDecisionRow(t *testing.T) {
-	ids, err := issueIDsOf(`["issue-1","issue-2"]`)
+	ids, err := stagepipeline.IssueIDsOf(`["issue-1","issue-2"]`)
 	if err != nil || len(ids) != 2 || ids[0] != "issue-1" {
 		t.Fatalf("the findings are %v, %v", ids, err)
 	}
 	// The column's ordinary empty value.
-	ids, err = issueIDsOf("[]")
+	ids, err = stagepipeline.IssueIDsOf("[]")
 	if err != nil || len(ids) != 0 {
 		t.Fatalf("an empty finding list returned %v, %v", ids, err)
 	}
-	ids, err = issueIDsOf("")
+	ids, err = stagepipeline.IssueIDsOf("")
 	if err != nil || len(ids) != 0 {
 		t.Fatalf("an empty column returned %v, %v", ids, err)
 	}
 	// Blank entries are dropped, because an empty identifier names nothing a re-run could address.
-	ids, err = issueIDsOf(`["issue-1","","   "]`)
+	ids, err = stagepipeline.IssueIDsOf(`["issue-1","","   "]`)
 	if err != nil || len(ids) != 1 {
 		t.Fatalf("a list with blanks returned %v, %v", ids, err)
 	}
 	// A malformed list is refused rather than treated as empty.
-	if _, err := issueIDsOf(`["issue-1"`); err == nil {
+	if _, err := stagepipeline.IssueIDsOf(`["issue-1"`); err == nil {
 		t.Fatal("a malformed finding list was accepted, so a FIX could run with no findings")
 	}
 	// A shape that is not an array at all is refused too.
-	if _, err := issueIDsOf(`{"issue":"1"}`); err == nil {
+	if _, err := stagepipeline.IssueIDsOf(`{"issue":"1"}`); err == nil {
 		t.Fatal("a finding list that is not an array was accepted")
 	}
 }
@@ -325,15 +333,15 @@ func TestIssueIDsAreReadFromTheDecisionRow(t *testing.T) {
 // value rather than an empty array — and a pin with no identifier names nothing, so it is dropped rather
 // than passed on.
 func TestLockedRefsAreReadFromTheDecisionRow(t *testing.T) {
-	refs, err := lockedRefsOf("")
+	refs, err := stagepipeline.LockedRefsOf("")
 	if err != nil || len(refs) != 0 {
 		t.Fatalf("an empty column returned %v, %v", refs, err)
 	}
-	refs, err = lockedRefsOf(`[]`)
+	refs, err = stagepipeline.LockedRefsOf(`[]`)
 	if err != nil || len(refs) != 0 {
 		t.Fatalf("an empty array returned %v, %v", refs, err)
 	}
-	refs, err = lockedRefsOf(`[{"entityType":"scene","entityId":"scene-1","field":"summary","label":"the opening"}]`)
+	refs, err = stagepipeline.LockedRefsOf(`[{"entityType":"scene","entityId":"scene-1","field":"summary","label":"the opening"}]`)
 	if err != nil {
 		t.Fatalf("a well-formed pin was refused: %v", err)
 	}
@@ -342,7 +350,7 @@ func TestLockedRefsAreReadFromTheDecisionRow(t *testing.T) {
 	}
 	// A pin with no identifier is dropped: it names nothing a model could read, and passing it on would
 	// send the model looking for a row that does not exist.
-	refs, err = lockedRefsOf(`[{"entityType":"scene","entityId":"  ","label":"x"},{"entityType":"scene","entityId":"scene-2"}]`)
+	refs, err = stagepipeline.LockedRefsOf(`[{"entityType":"scene","entityId":"  ","label":"x"},{"entityType":"scene","entityId":"scene-2"}]`)
 	if err != nil {
 		t.Fatalf("a list with a blank pin was refused: %v", err)
 	}
@@ -351,7 +359,7 @@ func TestLockedRefsAreReadFromTheDecisionRow(t *testing.T) {
 	}
 	// A malformed list is refused rather than dropped, because a revision that could not read the user's
 	// pins would rewrite content the user protected.
-	if _, err := lockedRefsOf(`[{"entityId":`); err == nil {
+	if _, err := stagepipeline.LockedRefsOf(`[{"entityId":`); err == nil {
 		t.Fatal("a malformed pin list was accepted")
 	}
 }

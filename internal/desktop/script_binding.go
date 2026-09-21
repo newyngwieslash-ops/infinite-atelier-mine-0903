@@ -5,6 +5,7 @@ import (
 
 	appscript "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/script"
 	appscriptpipeline "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/scriptpipeline"
+	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/stagepipeline"
 	scriptdomain "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/script"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/versioning"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/workflow"
@@ -871,17 +872,22 @@ func (b *DramaBinding) ProjectScriptVersion(request ProjectScriptVersionRequest)
 // A nil pipeline is the ordinary state of a build without an agent stack, and every method below then
 // refuses. That direction is deliberate: a stage that reported success without running would be a workflow
 // advancing on nothing.
+// The five commands are declared with the GENERIC mechanism's request and result types,
+// because a production pipeline satisfies this interface too — that is what makes one
+// binding serve both layers. The only script-specific member is `ManualEdit`, whose
+// payload is the script layer's own; a production pipeline implements it by asserting its
+// own payload, and the mechanism refuses a payload the stage cannot use.
 type StagePipeline interface {
 	// RunStage starts one attempt and runs its execution agent.
-	RunStage(ctx context.Context, request appscriptpipeline.StageRequest) (appscriptpipeline.StageResult, error)
+	RunStage(ctx context.Context, request stagepipeline.StageRequest) (stagepipeline.StageResult, error)
 	// RunSupervision reviews one attempt and applies the verdict.
-	RunSupervision(ctx context.Context, request appscriptpipeline.SupervisionRequest) (appscriptpipeline.SupervisionResult, error)
+	RunSupervision(ctx context.Context, request stagepipeline.SupervisionRequest) (stagepipeline.SupervisionResult, error)
 	// ApplyUserGate records the user's decision and moves the stage.
-	ApplyUserGate(ctx context.Context, request appscriptpipeline.GateRequest) (workflow.StageRun, error)
+	ApplyUserGate(ctx context.Context, request stagepipeline.GateRequest) (workflow.StageRun, error)
 	// StartRevision begins the attempt a FIX or REDO asked for.
 	StartRevision(ctx context.Context, stageRunID string) (workflow.StageRun, error)
 	// ManualEdit writes the user's own version and passes the stage.
-	ManualEdit(ctx context.Context, request appscriptpipeline.ManualEditRequest) (appscriptpipeline.StageResult, error)
+	ManualEdit(ctx context.Context, request appscriptpipeline.ManualEditRequest) (stagepipeline.StageResult, error)
 }
 
 // AttachPipeline supplies the stage pipeline. A nil one leaves the stage commands failing closed.
@@ -939,7 +945,7 @@ func (b *DramaBinding) RunScriptStage(request RunScriptStageRequest) (ScriptStag
 	if pipeline == nil {
 		return ScriptStageResultDTO{}, bindingUnavailable()
 	}
-	result, err := pipeline.RunStage(b.context(), appscriptpipeline.StageRequest{
+	result, err := pipeline.RunStage(b.context(), stagepipeline.StageRequest{
 		WorkflowRunID:     request.WorkflowRunID,
 		Stage:             appscriptpipeline.Stage(request.Stage),
 		ProjectID:         request.ProjectID,
@@ -948,12 +954,19 @@ func (b *DramaBinding) RunScriptStage(request RunScriptStageRequest) (ScriptStag
 		TaskIsUntrusted:   request.TaskIsUntrusted,
 		UserMessage:       request.UserMessage,
 		FixFromStageRunID: request.FixFromStageRunID,
-		SkeletonVersionID: request.SkeletonVersionID,
-		StrategyVersionID: request.StrategyVersionID,
-		ScriptVersionID:   request.ScriptVersionID,
-		SelectedEventIDs:  request.SelectedEventIDs,
 		ModelID:           request.ModelID,
 		ProviderID:        request.ProviderID,
+		// The upstream versions and the event selection travel in the PROMPT's state layer,
+		// which is what the stage's tools name: a strategy reads the skeleton it adapts, and a
+		// generation stage reads both. Omitting them is not a harmless default — the state
+		// renderer omits an empty field, so the model would be told nothing about what it is
+		// writing from.
+		State: appscriptpipeline.StateFields{
+			SkeletonVersionID: request.SkeletonVersionID,
+			StrategyVersionID: request.StrategyVersionID,
+			ScriptVersionID:   request.ScriptVersionID,
+			SelectedEventIDs:  request.SelectedEventIDs,
+		},
 	})
 	if err != nil {
 		return ScriptStageResultDTO{}, toDramaError(err)
@@ -985,7 +998,7 @@ func (b *DramaBinding) RunScriptSupervision(request RunScriptSupervisionRequest)
 	if pipeline == nil {
 		return ReviewReportDTO{}, bindingUnavailable()
 	}
-	result, err := pipeline.RunSupervision(b.context(), appscriptpipeline.SupervisionRequest{
+	result, err := pipeline.RunSupervision(b.context(), stagepipeline.SupervisionRequest{
 		StageRunID:        request.StageRunID,
 		ProjectID:         request.ProjectID,
 		EpisodeID:         request.EpisodeID,
@@ -1027,7 +1040,7 @@ func (b *DramaBinding) ApplyScriptGate(request ApplyScriptGateRequest) (StageRun
 	if pipeline == nil {
 		return StageRunDTO{}, bindingUnavailable()
 	}
-	moved, err := pipeline.ApplyUserGate(b.context(), appscriptpipeline.GateRequest{
+	moved, err := pipeline.ApplyUserGate(b.context(), stagepipeline.GateRequest{
 		StageRunID:           request.StageRunID,
 		Decision:             workflow.GateDecision(request.Decision),
 		ArtifactVersionID:    request.ArtifactVersionID,
