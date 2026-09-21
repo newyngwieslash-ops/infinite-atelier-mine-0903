@@ -148,5 +148,33 @@ if (Test-Path $HostileGen) {
     Write-Host "SKIP: hostile-input fixture check — the generator is missing."
 }
 
+$ToolSchemaGen = Join-Path $RootDir "scripts\gen-tool-schemas.mjs"
+if (Test-Path $ToolSchemaGen) {
+    Push-Location $RootDir
+    try {
+        Invoke-Step "tool schemas are current" { node scripts/gen-tool-schemas.mjs --check }
+    } finally {
+        Pop-Location
+    }
+} else {
+    Write-Host "SKIP: tool schema check — the generator is missing."
+}
+
+# The skill packs' check has two halves since WP-08: a MANIFEST is generated and must match the table
+# byte for byte, while a skill DOCUMENT is authored and must carry section 4.3's thirteen headings. The
+# distinction is the generator's own — see its comment. Without this step a manifest edited by hand
+# would silently diverge from the key list the build loads.
+$SkillPackGen = Join-Path $RootDir "scripts\gen-skill-packs.mjs"
+if (Test-Path $SkillPackGen) {
+    Push-Location $RootDir
+    try {
+        Invoke-Step "skill packs are current" { node scripts/gen-skill-packs.mjs --check }
+    } finally {
+        Pop-Location
+    }
+} else {
+    Write-Host "SKIP: skill pack check — the generator is missing."
+}
+
 Restore-EmbedPlaceholder
 Write-Host "`nPASS: available verification gates completed."

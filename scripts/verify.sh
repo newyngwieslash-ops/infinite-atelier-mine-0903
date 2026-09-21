@@ -111,6 +111,24 @@ else
   printf 'SKIP: hostile-input fixture check — the generator is missing.\n'
 fi
 
+if [ -f "$ROOT_DIR/scripts/gen-tool-schemas.mjs" ]; then
+  cd "$ROOT_DIR"
+  run_step "tool schemas are current" node scripts/gen-tool-schemas.mjs --check
+else
+  printf 'SKIP: tool schema check — the generator is missing.\n'
+fi
+
+# The skill packs' check has two halves since WP-08: a MANIFEST is generated and must match the table
+# byte for byte, while a skill DOCUMENT is authored and must carry section 4.3's thirteen headings. The
+# distinction is the generator's own — see its comment. Without this step a manifest edited by hand
+# would silently diverge from the key list the build loads.
+if [ -f "$ROOT_DIR/scripts/gen-skill-packs.mjs" ]; then
+  cd "$ROOT_DIR"
+  run_step "skill packs are current" node scripts/gen-skill-packs.mjs --check
+else
+  printf 'SKIP: skill pack check — the generator is missing.\n'
+fi
+
 if command -v wails >/dev/null 2>&1; then
   cd "$ROOT_DIR"
   run_step "Wails production build" wails build
