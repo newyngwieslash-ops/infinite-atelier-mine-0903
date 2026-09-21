@@ -29,6 +29,7 @@ import (
 	appvalidation "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/validation"
 	appworkflow "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/workflow"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/agent"
+	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/provider"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/versioning"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/workflow"
 	infraproviders "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/infrastructure/providers"
@@ -63,6 +64,14 @@ type canary struct {
 	story    *appstory.Service
 	script   *appscript.Service
 	workflow *appworkflow.Service
+	// storyboard and assets are the two services the PRODUCTION canary's tools call. They
+	// were local variables in `newCanary` until WP-09 because the script chain reaches
+	// neither: a storyboard tool and an asset tool are the production stages'.
+	storyboard *appstoryboard.Service
+	assets     *appassets.Service
+	// registry is the provider registry the image mock registers with. The SCRIPT chain
+	// never resolves an image port, which is why it was not held before WP-09.
+	registry *infraproviders.Registry
 	ids      canaryIDs
 	// chapters holds the text of the chapters this fixture seeded, keyed by chapter id. The
 	// production reader walks to a file store; a fixture keeps the text in memory, which is
@@ -164,6 +173,16 @@ func newCanary(t *testing.T) *canary {
 		t.Fatalf("assembling the packs: %v", err)
 	}
 	mock := infraproviders.NewMockTextAdapter()
+	// The registry is built here rather than left to the caller because the PRODUCTION
+	// canary has to register an image adapter with the same one the runtime resolves
+	// through: two registries would be two answers to "which adapter answers this kind".
+	// The registry takes the PRODUCTION provider repository for two of its three ports and
+	// a refusing secret resolver for the third: the canary's chain never reads a secret —
+	// the mock adapter is registered in process and contacts nothing — and a resolver that
+	// refused is honest about that rather than returning empty bytes that an adapter might
+	// treat as a credential.
+	registry := infraproviders.NewRegistry(NewProviderRepository(db), refusingSecrets{}, NewProviderRepository(db))
+	registry.WithMockTextAdapter(mock)
 	runtime := agentruntime.New(agentruntime.Options{
 		Registry: assembly.Registry(), Tools: tools,
 		Models:   agentruntime.NewModelBridge(canaryModel{adapter: mock}),
@@ -179,10 +198,22 @@ func newCanary(t *testing.T) *canary {
 	})
 	return &canary{
 		db: db, repo: repository, runtime: runtime, engine: engine,
-		assembly: assembly, tools: tools, mock: mock,
+		assembly: assembly, tools: tools, mock: mock, registry: registry,
 		story: storyService, script: scriptService, workflow: workflowService,
+		storyboard: storyboardService, assets: assetService,
 		ids: ids, chapters: map[string]string{},
 	}
+}
+
+// refusingSecrets is the SecretResolver the canary's registry is built with.
+//
+// It refuses rather than returning empty bytes: a provider call that needed a credential
+// in this build is a call the canary did not mean to make, and an empty secret would be
+// sent as one.
+type refusingSecrets struct{}
+
+func (refusingSecrets) ResolveInternal(context.Context, string) ([]byte, error) {
+	return nil, provider.NewConfigurationError()
 }
 
 // canaryValidate adapts the real validator to the runtime's Validator type, exactly as

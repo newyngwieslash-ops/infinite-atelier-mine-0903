@@ -66,7 +66,7 @@ func New(options Options) *Service {
 			Workflow: options.Workflow,
 			Assembly: options.Assembly,
 			Runs:     options.Runs,
-			Layer:    NewLayer(options.Storyboard),
+			Layer:    NewLayer(options.Storyboard, options.Gaps, options.Assets),
 			Episodes: episodes,
 		}),
 		storyboard:          options.Storyboard,

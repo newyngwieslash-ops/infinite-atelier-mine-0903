@@ -192,7 +192,7 @@ func (c *scriptCanary) runScriptStage(t *testing.T, request stagepipeline.StageR
 }
 
 // assertStageReviewed covers AC-SCRIPT-001's "Execution 独立 AgentRun" and the review hand-off.
-func (c *scriptCanary) assertStageReviewed(t *testing.T, stage workflow.StageRun, stageName string) {
+func (c *canary) assertStageReviewed(t *testing.T, stage workflow.StageRun, stageName string) {
 	t.Helper()
 	if stage.Stage != workflow.StageName(stageName) {
 		t.Fatalf("the attempt names stage %q, want %q", stage.Stage, stageName)
@@ -287,9 +287,9 @@ func (c *scriptCanary) review(t *testing.T, stage workflow.StageRun, artifactVer
 //
 // The version travels with the decision because the two acts are separate: the gate moves the STAGE, and
 // the approval makes a version the one in force. AC-SCRIPT-001's "approved 唯一" is about the second.
-func (c *scriptCanary) pass(t *testing.T, stage workflow.StageRun, versionID, instruction string) {
+func (c *canary) passThrough(t *testing.T, pipeline passPipeline, stage workflow.StageRun, versionID, instruction string) {
 	t.Helper()
-	moved, err := c.pipeline.ApplyUserGate(context.Background(), stagepipeline.GateRequest{
+	moved, err := pipeline.ApplyUserGate(context.Background(), stagepipeline.GateRequest{
 		StageRunID:        stage.ID,
 		Decision:          workflow.GateApprove,
 		ArtifactVersionID: versionID,
@@ -300,8 +300,18 @@ func (c *scriptCanary) pass(t *testing.T, stage workflow.StageRun, versionID, in
 		t.Fatalf("approving %s: %v", stage.Stage, err)
 	}
 	if moved.Status != workflow.StagePassed {
-		t.Fatalf("%s: the stage is %q after approval, want passed", stage.Stage, moved.Status)
+		t.Fatalf("%s: the stage is %q after the user passed it, want passed", stage.Stage, moved.Status)
 	}
+}
+
+// passPipeline is the one command the shared approval needs.
+type passPipeline interface {
+	ApplyUserGate(ctx context.Context, request stagepipeline.GateRequest) (workflow.StageRun, error)
+}
+
+func (c *scriptCanary) pass(t *testing.T, stage workflow.StageRun, versionID, instruction string) {
+	t.Helper()
+	c.passThrough(t, c.pipeline, stage, versionID, instruction)
 }
 
 // approvedSkeleton returns the episode's approved skeleton version.

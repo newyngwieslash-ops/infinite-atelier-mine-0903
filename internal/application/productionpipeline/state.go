@@ -33,6 +33,14 @@ const (
 	fieldStoryboard   = "storyboard_version="
 	fieldItem         = "storyboard_item="
 	fieldGapReport    = "asset_gap_report="
+	// fieldShotIDs is the comma-joined list of shots the storyboard stage is boarding.
+	//
+	// It travels because the stage's write tool CHECKS every row's citation against the
+	// script's own shots — `storyboard_items.shot_id` has no foreign key, so the handler is
+	// what keeps an invented id out — and a model that could not see the ids could only
+	// guess them. The convention is the script layer's for a list in one field:
+	// comma-separated inside it, because the separator between fields is a space.
+	fieldShotIDs = "shot_ids="
 )
 
 // renderState renders the prompt's workflow-state layer for one attempt.
@@ -59,6 +67,12 @@ func renderState(attempt workflow.StageRun, request stagepipeline.StageRequest, 
 	}
 	if episode != "" {
 		parts = append(parts, fieldEpisode+episode)
+	}
+	// The shot list travels whole and comma-joined, and it is emitted only when it has one:
+	// an empty `shot_ids=` would read to a model as "the script has shots and none were
+	// named", which is a different statement from "this stage was not given them".
+	if len(fields.ShotIDs) > 0 {
+		parts = append(parts, fieldShotIDs+strings.Join(fields.ShotIDs, ","))
 	}
 	for _, field := range []struct {
 		name  string

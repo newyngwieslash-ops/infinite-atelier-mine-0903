@@ -28,11 +28,20 @@ const (
 	// arms: an agent runtime asking for text must not be answered by a media adapter,
 	// and a job asking for video must not be answered by this one.
 	KindMockText Kind = "mock_text"
+	// KindMockImage is the deterministic in-process IMAGE adapter, added by WP-09 for
+	// the same reason and with the same two guardrails: AC-BOARD-003 is a test about
+	// several image jobs — two candidates a shot, a concurrency limit, a cancellation, a
+	// retry — and none of it can run against a real adapter in CI.
+	//
+	// A THIRD kind rather than a reuse of KindMockMedia, for the reason KindMockText
+	// states: the three answer different capability ports, and an image job that reached a
+	// video mock would be answered by an adapter that does not implement its interface.
+	KindMockImage Kind = "mock_image"
 )
 
 // ValidKinds returns the provider kinds trusted by the current registry.
 func ValidKinds() []Kind {
-	return []Kind{KindOpenAICompatible, KindGeminiCompatible, KindMockMedia, KindMockText}
+	return []Kind{KindOpenAICompatible, KindGeminiCompatible, KindMockMedia, KindMockText, KindMockImage}
 }
 
 // IsValidKind reports whether the kind is accepted for persisted configs.

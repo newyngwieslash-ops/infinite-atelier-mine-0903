@@ -182,16 +182,36 @@ func (s *Service) RunStage(ctx context.Context, request StageRequest) (StageResu
 		// a record, and a re-run is a REVISION rather than a fresh attempt.
 		return StageResult{StageRun: attempt, Outcome: outcome}, err
 	}
-	reviewing, err := s.engine.Transition(ctx, agentruntime.StageTransitionRequest{
+	// THE STAGE PARKS WHERE ITS NEXT STEP IS, and for a stage with no supervisor that is
+	// the user's gate rather than a review.
+	//
+	// This is a real case rather than a defensive branch: AGENT_CONTRACTS section 10.1
+	// marks `asset_analysis` `supervision: false`, and its output is a list of facts about
+	// the asset library — each line either names an asset that exists or says one does not
+	// — so there is nothing for a ruleset to judge that the database does not already
+	// answer. A stage parked at `reviewing` with nobody to review it can never reach
+	// `waiting_user`, and `ApplyGate` refuses a stage that is not waiting — so the whole
+	// pipeline would stop at the first unsupervised stage, which is what the production
+	// canary found when it asserted the status.
+	//
+	// It is decided from the LAYER's own map rather than from the engine's policy table,
+	// because the map is what states which agents serve a stage and the two could disagree:
+	// a policy that said "supervised" for a stage whose supervisor is unnamed would send
+	// this method looking for an agent that does not exist.
+	parked := workflow.StageReviewing
+	if strings.TrimSpace(agents.Supervision) == "" {
+		parked = workflow.StageWaitingUser
+	}
+	transitioned, err := s.engine.Transition(ctx, agentruntime.StageTransitionRequest{
 		StageRunID: attempt.ID,
-		Status:     workflow.StageReviewing,
+		Status:     parked,
 		Actor:      s.actor(),
 	})
 	if err != nil {
 		return StageResult{StageRun: attempt, Outcome: outcome}, err
 	}
 	return StageResult{
-		StageRun:    reviewing,
+		StageRun:    transitioned,
 		Outcome:     outcome,
 		ArtifactIDs: ArtifactIDsOf(outcome),
 	}, nil

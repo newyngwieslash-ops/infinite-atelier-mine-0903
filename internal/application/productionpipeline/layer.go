@@ -29,6 +29,7 @@ import (
 	"strings"
 
 	agentruntime "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/agentruntime"
+	appassets "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/assets"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/stagepipeline"
 	appstoryboard "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/storyboard"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/agent"
@@ -126,13 +127,22 @@ func AgentsForStage(stage Stage) (stagepipeline.StageAgents, bool) {
 }
 
 // Layer adapts this package's knowledge to the generic mechanism.
+//
+// It holds the three services whose APPROVALS are the real ones, because a stage's gate
+// makes its artifact the one in force: the director plan and the storyboard have their own
+// commands, the gap report has one with its own precondition, and an asset version is
+// approved through the assets service that performs the impact analysis §8.2 requires.
+// A layer that "approved" any of them itself would be a second approval path with a second
+// set of rules.
 type Layer struct {
 	storyboard *appstoryboard.Service
+	gaps       *appassets.GapService
+	assets     *appassets.Service
 }
 
-// NewLayer builds the production layer over its service.
-func NewLayer(storyboardService *appstoryboard.Service) *Layer {
-	return &Layer{storyboard: storyboardService}
+// NewLayer builds the production layer over its services.
+func NewLayer(storyboardService *appstoryboard.Service, gapService *appassets.GapService, assetService *appassets.Service) *Layer {
+	return &Layer{storyboard: storyboardService, gaps: gapService, assets: assetService}
 }
 
 // Compile-time proof that this layer satisfies the mechanism.
@@ -155,19 +165,24 @@ func (l *Layer) StateFor(attempt workflow.StageRun, request stagepipeline.StageR
 	return renderState(attempt, request, fields)
 }
 
-// Approve puts one version in force for its family.
+// Approve puts one version in force for its family, through that family's own command.
 //
-// The family comes from the STAGE, so a caller cannot approve a version of another kind
-// by naming it. The two stages with no approval of their own are REFUSED, and each
-// refusal names why:
+// EACH STAGE DELEGATES RATHER THAN REIMPLEMENTING, and the three paths differ on purpose:
 //
-//   - `asset_gap_analysis` writes a gap report, which has its own approval with its own
-//     precondition — no required asset still missing — and that check lives in the gap
-//     service rather than here.
-//   - `asset_generation` produces CANDIDATES, and §9.5's rule is that one of them is
-//     approved by being made a panel's image, which is the panel approval rather than
-//     this one. An asset version approved in isolation would be a version in force that
-//     nothing uses.
+//   - `director_plan` and `storyboard_table` call the storyboard service's approvals,
+//     which supersede the previous version and record a governance event.
+//   - `asset_gap_analysis` calls the GAP service's, whose approval refuses a report that
+//     still has a required asset missing. That precondition is the whole reason the report
+//     cannot be approved through a generic path.
+//   - `asset_generation` calls the ASSETS service's, which performs the impact analysis
+//     §8.2 requires before an approval switch and refuses without the caller's
+//     acknowledgement. The acknowledgement is supplied here because the gate IS that
+//     acknowledgement: the user reviewed the candidate and decided.
+//
+// `storyboard_panel_generation` is REFUSED, and that is §9.5's rule rather than an
+// omission: a panel's image is approved by being made the panel's canonical image, which
+// is `ApprovePanelImage` — a command whose subject is the SCENE's image rather than the
+// stage's artifact. An approval through this gate would have to guess which candidate.
 func (l *Layer) Approve(ctx context.Context, stage Stage, versionID, traceID string) error {
 	switch stage {
 	case StageDirectorPlan:
@@ -186,9 +201,29 @@ func (l *Layer) Approve(ctx context.Context, stage Stage, versionID, traceID str
 			VersionID: versionID, TraceID: traceID,
 		})
 		return err
-	case StageAssetGapAnalysis, StageAssetGeneration, StageStoryboardPanel:
+	case StageAssetGapAnalysis:
+		if l == nil || l.gaps == nil {
+			return agent.UnavailableError()
+		}
+		_, err := l.gaps.ApproveGapReport(ctx, appassets.ApproveGapReportRequest{
+			ReportID: versionID, TraceID: traceID,
+		})
+		return err
+	case StageAssetGeneration:
+		if l == nil || l.assets == nil {
+			return agent.UnavailableError()
+		}
+		_, err := l.assets.ApproveVersion(ctx, appassets.ApproveVersionRequest{
+			VersionID: versionID,
+			// The gate IS the acknowledgement: the user reviewed the candidate and decided,
+			// which is what §8.2 asks for. A caller reaching this method has already been
+			// through `ApplyUserGate`, which is the only route here.
+			ImpactAcknowledged: true,
+		})
+		return err
+	case StageStoryboardPanel:
 		return agent.InvalidError(
-			"The " + string(stage) + " stage has its own approval, so it cannot be approved through a stage gate.")
+			"A panel's image is approved by making it the panel's canonical image, which this gate cannot choose.")
 	default:
 		return agent.InvalidError("This pipeline does not drive the stage " + string(stage) + ".")
 	}
@@ -213,13 +248,12 @@ func (l *Layer) Locks(ctx context.Context, stage Stage, versionID string) ([]age
 
 // WriteVersion writes the user's own version for a manual edit.
 //
-// It is REFUSED for every production stage, and the refusal is stated rather than
-// silently returning an empty id: a manual edit's payload for these artifacts is a
-// director plan, a storyboard version with its items, or a panel — three shapes none of
-// which this build's manual-edit command has a form for. A user editing a board does it
-// through the table UI's own commands, which write items directly, so routing that
-// through the stage machine's manual edit would be a second write path with a second set
-// of rules.
+// It is REFUSED for every production stage, and the refusal is stated rather than silently
+// returning an empty id: a manual edit's payload for these artifacts is a director plan, a
+// storyboard with its rows, or a panel — three shapes none of which this build's
+// manual-edit command has a form for. A user editing a board does it through the table
+// UI's own commands, so routing that through the stage machine's manual edit would be a
+// second write path with a second set of rules.
 func (l *Layer) WriteVersion(ctx context.Context, stage Stage, agents stagepipeline.StageAgents, request stagepipeline.ManualEditRequest) (string, error) {
 	if _, err := familyOfStage(stage); err != nil {
 		return "", err
@@ -257,6 +291,11 @@ type StateFields struct {
 	StoryboardVersionID   string
 	StoryboardItemID      string
 	AssetGapReportID      string
+	// ShotIDs are the shots the board stage boards, in the script's order. They travel
+	// because the stage's write tool CHECKS every row's citation against the script's own
+	// shots — `storyboard_items.shot_id` has no foreign key, so the handler is what keeps
+	// an invented id out — and a model that could not see the ids could only guess them.
+	ShotIDs []string
 }
 
 // itoa renders a small non-negative integer without importing strconv for one call site.

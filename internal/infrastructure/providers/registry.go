@@ -45,6 +45,11 @@ type Registry struct {
 	// only for KindMockText, which no persisted configuration can carry; see
 	// WithMockTextAdapter.
 	mockText providers.TextPort
+
+	// mockImage is the deterministic image adapter, with the same guardrails as
+	// mockText and for the same reason: AC-BOARD-003 is a test about several image jobs,
+	// and AGENT_CONTRACTS section 18.3 forbids CI from calling a paid provider.
+	mockImage appjobs.ImagePort
 }
 
 // NewRegistry builds the provider registry.
@@ -81,6 +86,21 @@ func (r *Registry) WithMockTextAdapter(adapter providers.TextPort) *Registry {
 	return r
 }
 
+// WithMockImageAdapter registers the deterministic image adapter.
+//
+// It is registered separately from the media adapters and reachable only for
+// KindMockImage, which IsUserConfigurableKind refuses and the application layer therefore
+// will not persist, so a real provider configuration cannot select it. Keeping the
+// registration at the composition root makes it visible which build carries the mock, in
+// the same way WithMockTextAdapter does.
+func (r *Registry) WithMockImageAdapter(adapter appjobs.ImagePort) *Registry {
+	if r == nil {
+		return r
+	}
+	r.mockImage = adapter
+	return r
+}
+
 // ImagePortFor returns the image adapter for a provider ID.
 func (r *Registry) ImagePortFor(ctx context.Context, providerID string) (appjobs.ImagePort, error) {
 	if r == nil || r.configs == nil {
@@ -95,6 +115,18 @@ func (r *Registry) ImagePortFor(ctx context.Context, providerID string) (appjobs
 		return NewOpenAIImageAdapter(r), nil
 	case provider.KindGeminiCompatible:
 		return NewGeminiImageAdapter(r), nil
+	case provider.KindMockImage:
+		// The mock is returned as the SAME instance it was registered as rather than
+		// built per call, because its call log and its failure queue are state a test set
+		// up deliberately: a fresh adapter per lookup would discard both.
+		//
+		// A registry with no mock registered reports "unsupported" rather than building
+		// one, so a build that did not opt in cannot be answered by a mock that appeared
+		// anyway.
+		if r.mockImage == nil {
+			return nil, provider.NewUnsupportedError()
+		}
+		return r.mockImage, nil
 	default:
 		return nil, provider.NewUnsupportedError()
 	}
