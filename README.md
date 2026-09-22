@@ -192,6 +192,23 @@ WP-09 实现 Production Agent 层：资产、导演与分镜（**不接入任何
 - **`testdata/canary-drama/` 补齐两份**：**故意错误分镜**（第 6 镜穿错服装，故障点名它所在的行与规则）与期望分镜（同样行、仅该行修正，其余字段**逐字段相同**）；
 - 本包**不包含**：真实付费 Provider 调用、视频/音频/字幕/导出（WP-11）、Semantic Memory（WP-10）、按阶段（而非按层）的模型策略（用户已确认继续延后）、MONOFORM 的完整双向场景同步（用户选定基础桥）、以及表格与画布的**双向**同步。**两轮独立评审**（一轮对账规范、一轮 53 个变异）发现并修掉的问题逐条记在 `docs/adr/0013-production-pipeline-stage-vocabulary-gap-report-and-monoform-envelope.md`；其中**三处 PARTIAL 验收**与**两处验证限制**见 `docs/implementation/STATUS.md` §0j。
 
+WP-10 实现持久记忆、跨阶段一致性与质量中心（**不接入任何付费 Provider**）：
+
+- **迁移 `000019`**：`memory_items`（DOMAIN_MODEL §14.1 的字段）、`memory_summary_sources`（§14.2）、`memory_entity_links`（§14.3），以及 `review_issues.source`——AGENT_CONTRACTS §11.4 要求的 `source=deterministic|llm` 标记，默认 `'llm'` 所以此前写入的每条发现都保持原义。只前向增加，未改动任何已发布迁移；
+- **记忆不是 transcript**：`memory_items` 是新表，不与 `agent_messages` 合并。后者的生命周期属于 run（随 run 级联删除），记忆的生命周期属于**用户**：§14.5 给了用户固定、编辑、删除与重建向量的权利，把 `locked` 与 `embedding_blob` 塞进 transcript 会让「删除这条记忆」变成改运行时自己的记录。episodic 记忆用 `source_type`/`source_id` 指向它来自的消息，所以一条回忆永远能走回原话（ADR-0014 §1）；
+- **运行时终于写了用户那一轮**：此前只有 assistant 的回复落库，每个 transcript 都是半场对话，会话无法重建——§12.4 的第一条写入源「用户消息」没有任何写入者。现在运行时**先召回、再写当前消息**（§12.2 的顺序），端口在运行时上，调用者无法颠倒这两步；
+- **四通道召回**（§12.1）：recent（transcript 尾部 + store 里未摘要的 episodic 记忆，按消息 ID 去重）、summaries、semantic（**唯一受阈值约束的通道**）、facts（固定且高重要度，**不走阈值**——AC-MEM-003 点名的那条例外）。融合权重就是 §12.2 的 0.55/0.20/0.15/0.10，写成命名常量；`DefaultThreshold = 0.30` 而不是 0，因为 FR-120 明确禁止无条件返回低相关结果；
+- **摘要是确定性的抽取式摘要**（用户选定）：`extractive/v1` 把来源渲染成 `role: content` 行并截断标记，规则版本随行存储。这让 AC-MEM-004 的 provenance 变成**可核对**而不是承诺——读者能逐行把摘要对回来源；也让 AC-MEM-005 的「恢复原始消息」是一次机械行走而不是模型的一次尝试（ADR-0014 §6）；
+- **向量索引是精确扫描**：小端 float32 存 BLOB，Go 里做归一化点积。ADR-0002 §68 拒绝动态扩展加载，所以 `sqlite-vec` 需要它自己的兼容性与安全证据，而持久记忆不足以justify 这件事。**scope 过滤在 SQL 里**而不是打分之后——§12.2 要求过滤先于评分，把这个规则放进查询里才是结构性的；
+- **Embedding 可替换**（用户选定）：`CapabilityEmbedding` 加两个实现——OpenAI 兼容的 `/v1/embeddings` 客户端（复用受控 client、密钥解析与脱敏审计）与确定性的特征哈希适配器。后者同时是 FR-120 的**关键词降级**：在用户自己的机器上算向量，没有任何文本离开进程。**它不被任何 provider 配置选中**——`IsUserConfigurableKind` 与数据库 CHECK 都拒绝该 kind，所以组合构建里只有用户配置过的 provider 会收到文本（ADR-0014 §4，这条限制在 §0k 里明写）；
+- **六条确定性一致性规则**（scope 13/14）：服装连续性、道具连续性、外景/地点连续性、镜头覆盖与顺序、时长总和、资产批准版本。每条都在**要对比的数据缺失时保持沉默**——一条对着缺失数据开火的检查是用户会学会忽略的检查，这条纪律有正反两面的测试；
+- **合并进同一份报告**（用户选定，§11.4 的字面要求）：确定性发现**先于**模型计算，渲染进它的任务让它不必重新推导一个 join，然后按 (rule, entity, field) 去重合并、保留更严重的那条，`ReviewPassed` 让确定性阻断项**推翻**一个满意的裁判——AC-E2E-004 的 FIX 步骤依赖的正是这条分支；
+- **`MemoryCreated` 终于被发射**：ADR-0009 §5 把它指派给本包，迁移 000013 的闭vocabulary 从 WP-05 起就接受它，而此前无人发射；
+- **`memory.deep_recall` 加深**：WP-07 注册它时留了注释说「WP-10 加深它」，而本包第一版没有——工具仍返回最近窗口，而它的名字、manifest 授权与 §12.3 都承诺那次行走。现在带 `query` 时走完整的摘要→阈值→rerank→还原原始消息，不带时保留窗口；
+- **记忆中心分区**：列表、固定/编辑/删除（删除与编辑都要 `confirm`，编辑会清空向量所以重建前不可检索）、**召回预览**（每个候选的融合分数**与原始相似度并列**，所以「低于阈值被丢弃」与「本来就没有」可以分辨）、摘要来源行**点击打开**来源记忆（AC-MEM-004 的「UI 可跳原始消息」）；质量中心新增**发现面板**，这是评审读路径有史以来第一个调用者（含 WP-09 修好的 evidence 列），每条发现标明由哪一半产生，并可跳转到实体所在分区；
+- **Canary 与验收**：`testdata/canary-drama/memory-recall.json`（§18.1 要求的「Memory recall 问题」）含早期设定、掩埋它的大量消息、问题与**两个点名自己用途的诱饵**；AC-MEM-001/002/003/004/005 各有真实迁移库上的测试，AC-E2E-004 的五个分句在**装配好的 production 栈**上走通，AC-E2E-005 走完整链路；
+- 本包**不包含**：真实付费 Provider 调用、视频/音频/字幕/导出（WP-11）、本地 ONNX 与 `sqlite-vec`（V1）、模型驱动的语义摘要、按阶段（而非按层）的模型策略（用户已确认继续延后）、Event Graph 可视化（v1.0）。**两轮独立评审**（一轮对账规范、一轮 **167 个变异 / 52 击杀 / 81 存活**）发现并修掉的问题逐条记在 `docs/adr/0014-persistent-memory-store-summary-vector-embedding-and-deterministic-checks.md`；其中**四处 PARTIAL 验收**与**三处验证限制**、以及本包**明确不覆盖的九项**见 `docs/implementation/STATUS.md` §0k。
+
 ## 使用说明
 
 1. 打开右上角配置，添加渠道的 API 地址与模型。

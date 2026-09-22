@@ -1,11 +1,255 @@
 # Implementation Status
 
-> Last updated: 2026-09-22
+> Last updated: 2026-09-23
 > Product: Infinite Atelier Core + Drama Production Pack
-> Current work package: **WP-09 — ProductionAgent：资产、导演与分镜**
-> Status: **COMPLETE for the 14 ROADMAP items, with three PARTIAL acceptance clauses and two verification limits named in section 0j.** The production half of the pipeline is built end to end: the stage mechanism extracted so two layers share one implementation, the director plan and the asset gap analysis and the storyboard table and the panel stages with their supervisors, nine real skill documents, migration 000018's FR-070 columns and the versioned gap report, the asset provenance the mapper had been dropping, the impact edge that makes an approval switch reach a panel, the image batch with its gate and the candidate collection and the single-row fix, the deterministic image mock that lets AC-BOARD-003 run in CI, the MONOFORM envelope, the two Studio sections, and the shot projection. Section 0j states what this package delivered, the defects TWO INDEPENDENT REVIEWS found in it, and — plainly — the three criteria that are PARTIAL and why. WP-01 through WP-08 remain COMPLETE for their recorded scopes.
+> Current work package: **WP-10 — Persistent Memory、Consistency 与 Quality Center**
+> Status: **COMPLETE for the 17 ROADMAP items, with four PARTIAL acceptance clauses and three verification limits named in section 0k.** The memory half of the product is built: migration 000019's three tables and the `review_issues.source` column, the memory aggregate with DOMAIN_MODEL section 14.5's invariants as functions, the float32 BLOB vector index with the scope filter in SQL, the scored recall with section 12.2's four channels and its fusion weights, the extractive summary chain with provable provenance, the deep recall that walks a summary back to its messages, FR-120's five user commands and their Memory Center section, the embedding capability with a real adapter and a deterministic one, the six deterministic consistency rules merged into the supervisor's own report with the `source` mark, and the Quality Center's findings pane — the first caller the review read path has ever had. Section 0k states what this package delivered, the defects TWO INDEPENDENT REVIEWS found in it (167 mutations, 52 killed; six blockers across two rounds), and — plainly — the four criteria that are PARTIAL and why. WP-01 through WP-09 remain COMPLETE for their recorded scopes.
 
 WP-03 start baseline (2026-09-15): branch `codex/wp-01-desktop-foundation`, HEAD `a243891455ec17687dd54b5ac90d3bd64478a1a1`, empty index. Freshly re-run baseline: `go test ./... -count=1` PASS (15 packages at start), `go vet ./...` PASS, `web` `npm run typecheck` PASS, `npm test` PASS (15 tests), `npm run build` PASS. Go commands require `GOTOOLCHAIN=go1.25.0 GOSUMDB=sum.golang.org` on this host because the user-level `go env` sets `GOSUMDB=off`, which blocks toolchain verification. The working tree already contained the WP-01/WP-02 tracked and untracked work plus the user's brand rename; none of it was modified outside the WP-03 scope.
+
+
+# 0k. WP-10 result: persistent memory, the deterministic checks and the Quality Center (2026-09-23)
+
+## Scope completed
+
+- **Status: COMPLETE for the 17 ROADMAP items.** Four acceptance clauses are PARTIAL and
+  three verification limits are named at the end of this section; each is stated rather than
+  glossed. Two independent reviews ran against the package and the defects they found are
+  listed below with what was done about each.
+
+- **Migration `000019_memory_and_consistency.sql`**: `memory_items` (DOMAIN_MODEL section
+  14.1's fields), `memory_summary_sources` (section 14.2), `memory_entity_links` (section
+  14.3), and `review_issues.source` — AGENT_CONTRACTS section 11.4's `source=deterministic|llm`
+  mark, defaulted to `'llm'` so every finding written before it keeps its meaning. Forward
+  only; no published migration was modified.
+
+- **The memory aggregate** (`internal/domain/memory/`): the four shapes, the five memory
+  types, section 14.5's invariants as functions (`CanModifyMemory` for the locked rule,
+  `EmbeddingIsCurrent` for the index version), the float32 little-endian BLOB codec, and the
+  fused score with section 12.2's own weights as named constants.
+
+- **The store and its index** (`internal/infrastructure/database/memory.go`,
+  `memory_index.go`): scoped, parameterised reads with the project in every WHERE clause; the
+  exact-scan vector index over the BLOB column; a compile-time assertion that the store
+  satisfies the port — which the first version did NOT, and nothing failed because the service
+  takes an interface.
+
+- **The recall** (`internal/application/memory/`): DOMAIN_MODEL section 14.4's scope with
+  `ScopeFor` as the single run-to-scope mapping; `BuildMemoryContext` with section 12.1's four
+  channels, the threshold applied to the semantic channel only, the pinned high-importance
+  exception AC-MEM-003 names, the token budget, and `Truncated` reporting; `DeepRecall` with
+  section 12.3's five steps and provenance per restored message.
+
+- **FR-120's five user commands**: view, pin, edit, delete (with the summary-invalidation
+  policy in both directions) and rebuild embeddings, each bound on `MemoryBinding` and each
+  acting as the user, because section 14.5's locked rule turns on the actor.
+
+- **The embedding capability**: `CapabilityEmbedding`, a deterministic feature-hash adapter,
+  and an OpenAI-compatible `/v1/embeddings` client, both behind one `Embedder` port, with the
+  provider resolution opt-in per project.
+
+- **The runtime's memory layer**: the runtime now writes the USER's turn — which nothing did
+  before, so every transcript was half a conversation — and recalls before it writes, in the
+  order section 12.2 states, with the port on the runtime so a caller cannot invert the two.
+
+- **The deterministic checks** (`internal/domain/consistency/`,
+  `internal/application/consistency/`): six rules — costume continuity, prop continuity,
+  location continuity, shot coverage and order, duration total, approved asset version — each
+  reporting nothing when the data it would compare against is absent, and each with a positive
+  and a negative test over the real schema.
+
+- **The merge**: section 11.4's "合并两类证据，并标记 source". The findings are computed
+  BEFORE the model runs, rendered into its task so it is not asked to re-derive a join, and
+  merged with its own on (rule, entity, field) keeping the more severe statement.
+  `ReviewPassed` makes a deterministic blocker overrule a happy verdict.
+
+- **The Quality Center's findings pane** and the **Memory Center section**: the review read
+  path's first caller, with each finding marked by which half produced it and a jump to the
+  entity's section; and the memory list, the pin/edit/delete commands, the recall preview with
+  each candidate's fused score beside its raw similarity, and a summary's sources as rows that
+  open the source memory.
+
+- **`MemoryCreated` is emitted.** ADR-0009 section 5 assigned it to this package and the name
+  has been in migration 000013's closed vocabulary since WP-05; nothing emitted it until now.
+
+- **`memory.deep_recall` deepens.** It was registered by WP-07 with a comment promising this
+  package would deepen it, and the first version of this package did not: the tool still
+  returned the recent window while its name, its manifest grant and section 12.3 all promised
+  the walk. It now runs the flow when given a query and keeps the window when not.
+
+## Defects found, by two independent reviews
+
+The first review was a spec review; the second ran 167 mutations across the new code and
+proved each survivor rather than asserting it.
+
+**Blockers, all fixed:**
+
+1. **The store did not satisfy its port.** `MemoryRepository` declared its own filter type and
+   a `VectorCandidates` with a different signature, so `appmemory.Repository` was unsatisfied,
+   `StorageAvailable` was false in every composed build, and every memory command returned "no
+   memory store is configured" while the store sat implemented and tested. Nothing failed to
+   compile because the service takes an interface and nothing asserted the implementation
+   satisfied it. Fixed with the aliased types and a `var _ Repository = (*MemoryRepository)(nil)`
+   assertion that immediately caught the drift, plus an integration test that drives the service
+   the way the composition root does.
+
+2. **Every summary row failed its own validation.** `Summarize` set `SourceType: SourceSummary`
+   and no `SourceID`, and the domain demanded both-or-neither — so the summary table could never
+   be written, and AC-MEM-004 and AC-MEM-005 had no runnable path. Fixed by stating the rule per
+   type: a summary cites its sources through the relation table and the source columns stay empty.
+
+3. **The context builder never applied its default threshold.** It clamped a negative to zero
+   and passed zero through, so `PassesThreshold`'s `>= 0` admitted everything the search
+   returned — literally FR-120's forbidden "无条件返回低相关结果". The constant existed and was
+   read by nothing on that path.
+
+4. **The vector search dropped the agent scope.** It filtered the project and the episode and
+   discarded `scope.AgentKey`, while four comments asserted the scope filter ran in full. A
+   decision agent could recall a supervisor's conversation by similarity.
+
+5. **`memory.deep_recall` performed no deep recall** (see above), and **`RememberFact` had no
+   production caller at all**, so the semantic type was unreachable, FR-120's semantic channel
+   could only be empty, and AC-MEM-003's pinned exception could never fire in a real build.
+
+6. **Three comments claimed behaviour the code did not have**: the memory binding's "UI 可跳
+   原始消息", the quality centre's "jumpable reference", and the consistency checker's
+   "compile-time proof" — which was `var _ = appconsistency.NewChecker`, a FUNCTION VALUE that
+   proves nothing. All three are now true rather than reworded: the section navigates, the
+   reference is a button, and the assertion is against a real interface.
+
+**Majors, all addressed:**
+
+7. **`LOCATION_CONTINUITY` was declared and never implemented** — a constant with a doc comment
+   claiming scope item 14's location clause. It is now a rule with the two halves it needs.
+
+8. **A pre-existing defect WP-09 shipped, found by this package's wiring test**:
+   `agenttools.Build` requires `Deps.Gaps` and `composeAgents` never passed it, so the tool
+   table refused and the whole agent stack was nil in every composed build. That is the third
+   one-call-site omission of the same shape, and the first thing in the repository to assert
+   the composed stack is non-nil.
+
+9. **Two defects the acceptance tests themselves found**: the token budget did not apply to the
+   store's recent window (the channel was appended after the loop that charges the budget), and
+   level-one summaries picked up summary rows as their own sources, so the second summarise run
+   condensed the first.
+
+10. **`embedItems` silently discarded every vector**: it built a `VectorItem` without the model
+    and version the index requires, and the index's refusal was swallowed by design.
+
+11. **The merge and the deterministic pass had no coverage at all.** `grep -rn "Checks:"` across
+    the test files returned nothing, and ten mutations survived — including dropping the blocker
+    gate from the pass predicate, which is the whole point of the deterministic half.
+
+12. **The desktop binding had no test**, and three project-scoped reads had no prefix-sharing
+    neighbour, so a `LIKE 'project-1%'` mutation on the summary window, the pinned channel or the
+    rebuild survived the suite.
+
+## Acceptance
+
+| Criterion | Verdict | Where |
+|---|---|---|
+| AC-MEM-001 Scope | **PASS** | `TestACME001ScopeIsolation`: two projects with identical content, the prefix-sharing pair, plus episode and agent scopes; three separate leak tests including the pinned channel and the deep-recall walk |
+| AC-MEM-002 Self-hit | **PASS** | `TestTheRuntimeRecallsBeforeItWritesAndRemembersBothTurns` (the order, through a real run) and `TestACME002SelfHitExclusionAndOrder` (the exclusion, counted across all four channels) |
+| AC-MEM-003 Threshold | **PASS** | `TestACME003ThresholdDropsBelowRelevance`: the semantic channel empty, no forced Top-K, the pinned fact present on its own rule; plus `TestACME003TheLockedRuleHoldsAcrossProjectsToo` |
+| AC-MEM-004 Summary provenance | **PASS** | `TestACME004SummaryProvenanceAndPolicy`: sources linked and resolving, role/agent/time preserved, the deletion policy in both directions, the hole visible |
+| AC-MEM-005 Deep Recall | **PASS** | `TestACME005DeepRecallWalksBackToTheMessages`: the summary found, reranked, the originals restored with provenance, the bound enforced, and the automatic path asserted not to walk |
+| AC-E2E-004 Quality revision | **PASS** | `TestE2E004ACostumeFaultIsLocatedAndThenFixed` over the assembled production stack: located, blocked, a new version, the old one kept, the corrected board clean, other rows unchanged |
+| AC-E2E-005 Deep memory | **PASS** | `TestACMME005TheCanaryScenarioRunsThroughTheWholeChain` over `testdata/canary-drama/memory-recall.json` |
+| 跨项目泄露 0 | **PASS** | Five tests: the prefix pair, the deep-recall walk, the pinned channel, the store's own guards, and the summary window |
+| Supervisor evidence | **PASS** | `TestE2E004TheFindingReachesTheReportShape`: the `source` mark and both version refs in the column the database holds |
+| Memory 可查看/删除 | **PASS** | `MemoryBinding`'s thirteen methods, with the confirmation and actor rules asserted in `internal/desktop/memory_binding_wp10_test.go` |
+| 低相关候选不强制返回 | **PASS** | `DefaultThreshold = 0.30` with the test that failed before it was applied |
+
+## Verification
+
+- `GOTOOLCHAIN=go1.25.0 GOSUMDB=sum.golang.org go test ./... -count=1` — **PASS**, 51 packages.
+- `go vet ./... .` — **PASS**; `gofmt -l internal/ *.go` — clean; `git diff --check` — **PASS**.
+- `node scripts/security-scan.mjs` — **PASS**, 552 files scanned.
+- `node scripts/gen-canary-fixture.mjs --check` — **PASS** (6 fixtures);
+  `gen-malicious-fixtures.mjs --check` — **PASS** (11);
+  `gen-tool-schemas.mjs --check` — **PASS**; `gen-skill-packs.mjs --check` — **PASS**.
+- `npm run typecheck` — **PASS**; `npm test` — **PASS**, 52 tests; `npm run build` — **PASS**;
+  `npm run build:monoform` — **PASS**.
+- `npx playwright test` — **PASS**, 25 passed / 1 skipped.
+- `wails build` — **PASS**; `wails generate module` regenerated `MemoryBinding` and the models.
+
+### Verification limits, stated
+
+- **`go test -race` cannot run on this host**: the C toolchain reports
+  `cc1.exe: 64-bit mode not compiled in`. This is an ENVIRONMENT FAILURE, not a pass, and no
+  race evidence exists for this package.
+- **`gen-tool-schemas.mjs --check` prints nothing on success** and exits 0; the exit code was
+  captured explicitly rather than trusting the empty output.
+- **No real provider was called.** Every provider test uses a double, and no embedding call left
+  the process.
+
+## Mutation testing
+
+An independent review ran **167 mutations** across the new code: **52 killed, 81 survived, 34
+unusable** (uncompilable or equivalent). The survivors are reported in three classes:
+
+- **Reachable code with a missing test** — the merge and the deterministic pass (10 mutations,
+  now covered by `merge_wp10_test.go`), the desktop binding (13 methods, now covered by
+  `memory_binding_wp10_test.go`), the repository's own guards (6, now covered by
+  `guard_wp10_test.go`), the three prefix-leak reads (3, now in the same file), and the rerank's
+  internals.
+- **Equivalent mutations** — a guard shadowed by a later check on the same path, or defence in
+  depth that is genuinely redundant. These are correctly survivors.
+- **Unreachable code**, which is the defect class this repository treats as a finding:
+  `MockEmbeddingAdapter` and `OpenAITextEmbeddingAdapter` are executed by no test, and
+  `Registry.WithMockEmbeddingAdapter` has no caller in any file. The consequence is recorded in
+  ADR-0014 section 4 and in the limits below.
+
+## What this package does NOT cover, stated plainly
+
+1. **AC-MEM-001's "跨项目泄露 0" is asserted, not audited.** Five tests cover the paths that
+   read a project, and every query in `memory.go` names the project in its WHERE clause — but
+   there is no test that enumerates every read and asserts each one is scoped, so a NEW read
+   added without a project guard would need a new test rather than failing an existing one.
+2. **The deterministic rules cover storyboards only.** AGENT_CONTRACTS section 11.1's script
+   rules and 11.2's asset rules have no mechanical half in this build: their artifacts have no
+   structure the six rules' shape fits without inventing vocabulary the specification does not
+   give. `CheckedStages` lists the one stage, and the checker returns no findings for others
+   rather than guessing.
+3. **FR-110's ten quality categories are partly covered.** The deterministic half covers
+   Character (costume), Asset, Temporal (prop, duration) and Location. Narrative, Fidelity,
+   Visual and Technical are the supervisor's skills. **Safety and Cost are covered by
+   neither**, and nothing in the package says so — this is the honest gap this section exists
+   to state.
+4. **FR-110's `score` and `grade` are never populated.** The columns exist and the schema
+   carries them; `ReviewFromOutcome` does not read them, so a report's score is always nil and
+   its grade always empty. The report's `nextAction` is spelled `recommendedAction` in this
+   build, which is what AGENT_CONTRACTS calls it and the PRD does not.
+5. **AGENT_CONTRACTS section 12.1's `provenance` output field is absent** from
+   `MemoryContext`. Provenance travels per item instead, which is the more useful shape for
+   the four channels, and `SemanticSearched` is a field section 12.1 does not have.
+6. **The keyword fallback is not reachable through configuration.** The deterministic embedding
+   adapter exists and its kind is registered, but `IsUserConfigurableKind` refuses it and no
+   composition root writes a provider row of that kind — the same three-guardrail treatment the
+   other mocks have. ADR-0014 section 4 records the reasoning and the alternative.
+7. **No third summary level.** FR-120's ladder is message → episode → project; this build
+   implements the first two, and `summary.go` says why the third would need a trigger the
+   specification does not give.
+8. **`VectorIndex.Rebuild` refuses.** It needs an embedding provider the infrastructure layer
+   has no registry for; the rebuild lives on the application service, which does have one, and
+   the interface method says so rather than pretending.
+9. **`memory.deep_recall`'s rerank is lexical, not semantic.** The bound that keeps it a
+   rerank rather than a second search is asserted, but a summary whose wording differs from the
+   query's will not be promoted by it. That is the cost ADR-0014 section 6 records.
+
+## Git and data safety
+
+- Existing user changes preserved: **yes**. The brand-rename files and the untracked
+  `.zcode/plans/` scratch were left intact; `.zcode/` is now gitignored so a future `git add -A`
+  cannot sweep it in, and a user-authored proposal document that a stray `git add` had tracked
+  was removed from the INDEX only, with the file left on disk.
+- Automatic commit/push/stash/reset/clean: **none** beyond the commits the user's instruction
+  authorised.
+- Secrets found or introduced: **none**. The embedding adapters reuse the controlled client, the
+  secret resolution and the redacted audit; the deterministic adapter has no network path.
+- Migrations/backups: `000019` is forward only, `000001` through `000018` were not modified, and
+  no user database was touched.
+- Real Provider calls: **none**.
 
 # 0j. WP-09 result: the production pipeline, the gap report and the MONOFORM bridge (2026-09-22)
 
