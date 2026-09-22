@@ -142,3 +142,49 @@ type readerLimits struct {
 func defaultReaderLimits() readerLimits {
 	return readerLimits{maxBytes: MaxArchiveBytes}
 }
+
+// Promoter is the port a restore's result is put in force through.
+//
+// It is separate from `Sink` because the two are called at different times by
+// different actors: staging happens while an archive is being validated, and
+// promoting happens after a user has seen what the archive contains and said yes.
+// One interface would let a caller promote as a side effect of validating.
+type Promoter interface {
+	// Promote puts a staged restore in force, replacing the live database and object
+	// store. It returns the paths it currently holds in a backup area, so a caller
+	// can report where the previous state went.
+	Promote(ctx context.Context, request PromoteRequest) (PromoteResult, error)
+	// Rollback undoes a promotion that could not be verified, putting the previous
+	// state back. It is called by Promote itself on a verification failure, and is
+	// exported so an operator can invoke it deliberately.
+	Rollback(ctx context.Context) (PromoteResult, error)
+	// HasBackupState reports whether a promotion's displaced state is still on disk.
+	// A true value at startup means a promotion was interrupted, and the caller
+	// decides whether to roll it back or accept it.
+	HasBackupState() bool
+}
+
+// PromoteRequest asks for a staged restore to be put in force.
+type PromoteRequest struct {
+	// Confirmed must be true. It records that a person was shown what the archive
+	// contains — `PreviewBackup` is what shows them — and chose to proceed.
+	Confirmed bool
+	// KeepPrevious, when true, copies rather than moves the displaced state, so the
+	// previous database and objects survive the promotion. It costs the disk space of
+	// both states, which is why it is not the default.
+	KeepPrevious bool
+}
+
+// PromoteResult reports what a promotion did.
+type PromoteResult struct {
+	// DatabasePath is where the live database now is.
+	DatabasePath string
+	// PreviousDatabasePath is where the displaced database was put, empty when there
+	// was none or when the previous state was not kept.
+	PreviousDatabasePath string
+	// FilesReplaced is how many objects the staged store held.
+	FilesReplaced int
+	// RolledBack reports whether a verification failure caused the previous state to
+	// be restored. A caller that sees true must NOT report the restore as successful.
+	RolledBack bool
+}

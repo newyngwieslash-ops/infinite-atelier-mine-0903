@@ -23,7 +23,9 @@ func backupFixture(t *testing.T) (*BackupStore, *filestore.Store, *FileRepositor
 	if err != nil {
 		t.Fatal(err)
 	}
-	backupStore := NewBackupStore(handle.SQL(), filepath.Join(root, "files"),
+	// The database path is the handle's own, because a promotion replaces THAT file:
+	// a fixture that named a different one would move a database no test ever opened.
+	backupStore := NewBackupStore(handle.SQL(), handle.DatabasePath(), filepath.Join(root, "files"),
 		filepath.Join(root, "temp"), filepath.Join(root, "snapshots"), "1.0.0-test")
 	return backupStore, store, NewFileRepository(handle.SQL()), NewProjectRepository(handle.SQL())
 }

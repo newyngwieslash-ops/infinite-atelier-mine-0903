@@ -26,6 +26,11 @@ type Handle struct {
 	db       *sql.DB
 	err      *apperror.Error
 	snapshot string
+	// databasePath is the file `open` was given, carried so a restore's atomic swap can
+	// name the file it replaces. It is set on every path a caller can observe, including
+	// the safe-mode one, because a caller reporting where the database is needs the
+	// answer even when the database could not be opened.
+	databasePath string
 }
 
 // Open opens or creates the application database, migrates it, and fails closed.
@@ -33,7 +38,22 @@ func Open(ctx context.Context, dbPath, snapshotDir string) (*Handle, error) {
 	return open(ctx, dbPath, snapshotDir, embeddedMigrations, time.Now)
 }
 
+// open is the real constructor, and the one thing it does beyond delegating is record the
+// database PATH on the handle it returns.
+//
+// The path is recorded here rather than at each of the six places inside that build a
+// handle, because a safe-mode handle needs it too: a caller reporting where the database
+// is must get an answer on the path where the database could not be opened, and a
+// parameter threaded through six returns is six chances to forget one.
 func open(ctx context.Context, dbPath, snapshotDir string, fsys fs.FS, now func() time.Time) (*Handle, error) {
+	handle, err := openDatabase(ctx, dbPath, snapshotDir, fsys, now)
+	if handle != nil {
+		handle.databasePath = dbPath
+	}
+	return handle, err
+}
+
+func openDatabase(ctx context.Context, dbPath, snapshotDir string, fsys fs.FS, now func() time.Time) (*Handle, error) {
 	if dbPath == "" || snapshotDir == "" {
 		return nil, apperror.New("DATABASE_OPEN_FAILED", "storage", false, "The local database could not be opened.", errors.New("missing database path"))
 	}
@@ -69,7 +89,7 @@ func open(ctx context.Context, dbPath, snapshotDir string, fsys fs.FS, now func(
 		_ = db.Close()
 		return &Handle{mode: ModeSafe, err: asAppError(err, "DATABASE_MIGRATION_FAILED", "The local database could not be updated."), snapshot: snapshot}, nil
 	}
-	return &Handle{mode: ModeReady, db: db, snapshot: snapshot}, nil
+	return &Handle{mode: ModeReady, db: db, snapshot: snapshot, databasePath: dbPath}, nil
 }
 
 // Mode reports whether the handle is writable or in safe mode.
@@ -94,6 +114,18 @@ func (h *Handle) Err() *apperror.Error {
 		return nil
 	}
 	return h.err
+}
+
+// DatabasePath is the live database file a promotion replaces.
+//
+// It is exposed because a restore's atomic swap has to name the file it moves, and the
+// driver does not report the path it opened in a form a rename can use. The value is what
+// `Open` was given, so a caller cannot be handed a path other than the one in use.
+func (h *Handle) DatabasePath() string {
+	if h == nil {
+		return ""
+	}
+	return h.databasePath
 }
 
 // SnapshotPath is the pre-migration copy, if one was created.

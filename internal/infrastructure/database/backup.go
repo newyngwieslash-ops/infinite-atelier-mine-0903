@@ -26,11 +26,26 @@ type BackupStore struct {
 	snapshotDir string
 	// appVersion labels an archive.
 	appVersion string
+	// databasePath is the LIVE database file, which a restore replaces. It is the one
+	// path here that is not a directory, and it is carried because a promotion has to
+	// move it: `AC-BACKUP-002` requires the restore to be atomic, and an atomic swap
+	// needs both halves named before either moves.
+	//
+	// It is passed rather than derived from a connection, because the driver does not
+	// report the file it opened in a form a rename can use.
+	databasePath string
 }
 
 // NewBackupStore builds the store.
-func NewBackupStore(db *sql.DB, filesDir, tempDir, snapshotDir, appVersion string) *BackupStore {
-	return &BackupStore{db: db, filesDir: filesDir, tempDir: tempDir, snapshotDir: snapshotDir, appVersion: appVersion}
+//
+// `databasePath` is the live database file and `filesDir` is the live object store; the
+// two a restore replaces together. Both are the application's own resolved paths rather
+// than anything a caller supplies per request, because a promotion writes to them.
+func NewBackupStore(db *sql.DB, databasePath, filesDir, tempDir, snapshotDir, appVersion string) *BackupStore {
+	return &BackupStore{
+		db: db, databasePath: databasePath, filesDir: filesDir,
+		tempDir: tempDir, snapshotDir: snapshotDir, appVersion: appVersion,
+	}
 }
 
 // SnapshotDatabase writes a consistent copy through VACUUM INTO.
