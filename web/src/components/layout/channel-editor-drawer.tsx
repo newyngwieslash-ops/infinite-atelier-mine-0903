@@ -7,17 +7,39 @@ import { isSecureProviderMode, saveProviderConfig } from "@/services/desktop/pro
 import { toProviderConfigInput } from "@/services/desktop/provider-sync";
 import { defaultBaseUrlForApiFormat, guessCapability, normalizeChannelModels, type ApiCallFormat, type ChannelModel, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
 import { SecureSecretField, toProviderId } from "./secure-secret-field";
-import { ModelScriptEditor } from "./model-script-editor";
 import { ModelSelectModal } from "./model-select-modal";
 
-type ScriptTarget = { name: string; capability: ModelCapability; value: string };
-
+/**
+ * The channel editor, with the per-model script control REMOVED rather than
+ * hidden.
+ *
+ * A model could previously carry a user-authored JavaScript "call script" that
+ * the frontend executed with `new Function`. PRD section 18 makes "仍存在任意模型
+ * JavaScript 执行路径" a release blocker and `docs/SECURITY.md` section 5 forbids
+ * the mechanism outright, so the runner and its editor are gone.
+ *
+ * # The gap this leaves, stated rather than papered over
+ *
+ * A model whose stored `script` was what made it work against a provider shape
+ * the built-in adapters do not speak (a relay's custom polled video API, for
+ * instance) now falls through to the standard OpenAI-compatible or Gemini call,
+ * which may not serve it. There is NO replacement: the Go core has no
+ * model-script runner, and adding one would be the same arbitrary-execution
+ * surface under a different owner. The supported resolution is a provider that
+ * speaks one of the two built-in formats. The editor therefore does not merely
+ * lose a button — for such a model it loses the route to that provider, and
+ * that is a capability loss this change accepts deliberately.
+ *
+ * The stored `script` value itself is NOT deleted: it is a field the user
+ * authored, and silently dropping rows of their configuration during an upgrade
+ * is the data loss AGENTS section 3 forbids. It is inert — nothing reads it —
+ * and `normalizeChannelModels` still round-trips it.
+ */
 export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: boolean; channel: ModelChannel | null; onSave: (channel: ModelChannel) => void; onClose: () => void }) {
     const { t } = useTranslation();
     const secureMode = isSecureProviderMode();
     const [draft, setDraft] = useState<ModelChannel | null>(channel);
     const [selectOpen, setSelectOpen] = useState(false);
-    const [scriptTarget, setScriptTarget] = useState<ScriptTarget | null>(null);
     const apiFormatOptions: Array<{ label: string; value: ApiCallFormat }> = [
         { label: "OpenAI", value: "openai" },
         { label: "Gemini", value: "gemini" },
@@ -44,7 +66,6 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
     };
 
     const setCapability = (name: string, capability: ModelCapability) => setModels(draft.models.map((model) => (model.name === name ? { ...model, capability } : model)));
-    const setScript = (name: string, script: string) => setModels(draft.models.map((model) => (model.name === name ? { ...model, script: script || undefined } : model)));
     const removeModel = (name: string) => setModels(draft.models.filter((model) => model.name !== name));
 
     const save = () => {
@@ -122,9 +143,6 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
                             </span>
                             <div className="flex shrink-0 items-center gap-2">
                                 <Segmented size="small" value={model.capability} options={capabilityOptions} onChange={(value) => setCapability(model.name, value as ModelCapability)} />
-                                <Button size="small" type={model.script ? "primary" : "default"} ghost={Boolean(model.script)} onClick={() => setScriptTarget({ name: model.name, capability: model.capability, value: model.script || "" })}>
-                                    {t(model.script ? "config.channelEditor.scriptReady" : "config.channelEditor.script")}
-                                </Button>
                                 <Button size="small" danger type="text" icon={<Trash2 className="size-3.5" />} onClick={() => removeModel(model.name)} />
                             </div>
                         </div>
@@ -135,15 +153,6 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
             </div>
 
             <ModelSelectModal open={selectOpen} channel={draft} selectedNames={draft.models.map((model) => model.name)} onConfirm={applySelection} onClose={() => setSelectOpen(false)} />
-
-            <ModelScriptEditor
-                open={Boolean(scriptTarget)}
-                capability={scriptTarget?.capability || "text"}
-                modelName={scriptTarget?.name || ""}
-                value={scriptTarget?.value || ""}
-                onSave={(script) => scriptTarget && setScript(scriptTarget.name, script)}
-                onClose={() => setScriptTarget(null)}
-            />
         </Drawer>
     );
 }

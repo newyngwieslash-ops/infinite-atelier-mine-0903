@@ -45,13 +45,13 @@ const DYNAMIC_RULES = [
 // Each entry is exact: file + rule + owner + reason. No wildcards. An entry
 // that no longer matches a real finding is itself a failure, so stale
 // exceptions cannot silently accumulate.
+//
+// There is no entry for the model-script runner: WP-12 deleted
+// `web/src/services/api/model-plugin.ts`, which was the only `new Function` in
+// the frontend. Its removal is what closes PRD section 18's "仍存在任意模型
+// JavaScript 执行路径" release blocker, so a reintroduction must fail this scan
+// rather than inherit an exception.
 const DYNAMIC_ALLOWLIST = [
-    {
-        file: "web/src/services/api/model-plugin.ts",
-        rule: "new-function",
-        owner: "WP-12",
-        reason: "Legacy browser model-script path; unreachable in secure desktop mode (guarded in runModelPlugin) and scheduled for removal in WP-12 clean-up.",
-    },
     {
         file: "internal/infrastructure/media/ffmpeg.go",
         rule: "os-exec",
@@ -63,13 +63,21 @@ const DYNAMIC_ALLOWLIST = [
 
 // --- Rule 1b: browser-direct provider calls -------------------------------
 //
-// WP-03 migrated image generation to the Go job manager. Video and audio still
-// call providers from the webview, which means the API key crosses into the
-// frontend for those paths. WP-03's scope is to forbid NEW direct calls and
-// name the existing ones; the media work package removes them.
+// WP-03 migrated image generation to the Go job manager. WP-12 made the video
+// and audio canvas paths refuse in secure desktop mode instead of calling a
+// provider from the webview, because the Go media jobs are keyed to a
+// storyboard shot and a dialogue line and a free canvas node is neither (see
+// `web/src/services/video-generation.ts` and `audio-generation.ts`). No direct
+// call is reachable in secure mode any more.
+//
+// The three files below survive for BROWSER DEVELOPMENT MODE only, where there
+// is no Go core to route to and the dev server's proxy is the only transport.
+// They are not scheduled for removal any more: WP-12 is the last work package
+// in ROADMAP, and a browser build has no other path for these capabilities.
 //
 // The rule flags direct network calls in the frontend service layer. The
-// allowlist names each surviving legacy caller with its owner work package.
+// allowlist names each surviving legacy caller with its owner and the reason it
+// is still here.
 const DIRECT_CALL_RULE = "browser-direct-provider-call";
 
 // A network call from the frontend to a provider, and the credential header
@@ -79,10 +87,24 @@ const DIRECT_NETWORK_CALL_PATTERN = /\baxios\.(get|post|put|patch|request)(<[^>]
 const CREDENTIAL_HEADER_PATTERN = /Authorization|apiKey|x-goog-api-key/;
 
 const DIRECT_CALL_ALLOWLIST = [
-    { file: "web/src/services/api/image.ts", owner: "WP-13 (legacy media removal)", reason: "Legacy image/text calls retained for browser dev mode; secure mode routes through the Go job manager instead." },
-    { file: "web/src/services/api/video.ts", owner: "WP-13 (legacy media removal)", reason: "Video provider calls are not yet migrated; the real adapter belongs to the media work package." },
-    { file: "web/src/services/api/audio.ts", owner: "WP-13 (legacy media removal)", reason: "Audio provider calls are not yet migrated; the real adapter belongs to the media work package." },
-    { file: "web/src/services/api/model-plugin.ts", owner: "WP-12 (legacy removal)", reason: "Legacy script runner; already unreachable in secure mode and scheduled for removal." },
+    {
+        file: "web/src/services/api/image.ts",
+        owner: "WP-12 (legacy removal)",
+        reason:
+            "Kept for browser development mode: image-generation.ts routes through the Go job manager whenever isSecureProviderMode() is true, so this file runs only in a browser build with no Go core. It also holds requestImageQuestion and fetchChannelModels, which are not job-backed.",
+    },
+    {
+        file: "web/src/services/api/video.ts",
+        owner: "WP-12 (legacy removal)",
+        reason:
+            "Kept for browser development mode: video-generation.ts throws in secure desktop mode because SubmitVideoJob requires an episodeId and shotId that a free canvas node does not have, and reaches this file only when isSecureProviderMode() is false. A secure build therefore never sends a video request from the webview.",
+    },
+    {
+        file: "web/src/services/api/audio.ts",
+        owner: "WP-12 (legacy removal)",
+        reason:
+            "Kept for browser development mode: audio-generation.ts throws in secure desktop mode because SubmitAudioJob requires an episodeId and dialogueLineId that a free canvas node does not have, and reaches this file only when isSecureProviderMode() is false. A secure build therefore never sends a TTS request from the webview.",
+    },
 ];
 
 function scanDirectCalls(files) {

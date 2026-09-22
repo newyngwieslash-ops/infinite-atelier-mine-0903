@@ -2,7 +2,91 @@
 
 > Last updated: 2026-09-23
 > Product: Infinite Atelier Core + Drama Production Pack
-> Current work package: **WP-11 — 视频、音频、字幕、时间线与导出**
+> Current work package: **WP-12 — 硬化、性能、打包与 Release Candidate, scope item 16 (删除或不可达危险 legacy path)**
+>
+> # 0m. WP-12 item 16: the dangerous legacy paths are gone or fail closed (2026-09-23)
+>
+> ## What this closes
+>
+> - **PRD section 18's "仍存在任意模型 JavaScript 执行路径" is CLOSED.** `web/src/services/api/model-plugin.ts`
+>   was the repository's only frontend `new Function`, and it is deleted, with its editor
+>   (`model-script-editor.tsx`) and the accessor that fed it (`resolveModelScript`). The
+>   scanner's `DYNAMIC_ALLOWLIST` no longer carries an entry for it, so a reintroduction
+>   FAILS `node scripts/security-scan.mjs` rather than inheriting an exception.
+> - **The stale `WP-13 (legacy media removal)` owner strings are gone.** WP-13 does not exist —
+>   WP-12 is the last work package in ROADMAP — so those entries were corrected to
+>   `WP-12 (legacy removal)` with reasons that state the CURRENT truth.
+> - **No direct provider call is reachable in secure desktop mode.** `video-generation.ts` and
+>   `audio-generation.ts` were added, mirroring `image-generation.ts`, and they THROW in secure
+>   mode rather than falling back to a browser call. The three legacy files survive for browser
+>   development mode only.
+>
+> ## The blocking finding, stated rather than worked around
+>
+> **The Go media job path cannot serve a free canvas node, so the canvas loses video and audio
+> generation in secure desktop mode.** This is a capability loss and it is recorded here as one.
+>
+> `SubmitVideoJobRequest` requires `projectId`, `episodeId` and `shotId`, and
+> `SubmitAudioJobRequest` requires `projectId`, `episodeId` and `dialogueLineId`;
+> `internal/desktop/media_jobs.go` returns `bindingInvalidInput()` when any is blank. The canvas
+> page addresses a PROJECT (`web/src/pages/canvas/project.tsx` reads `useParams<{id: string}>`),
+> `CanvasNodeType` has no shot member, and a free-canvas node carries no `entityType`/`entityId`,
+> so there is no honest value for `episodeId`, `shotId` or `dialogueLineId`. Inventing one would
+> record a job against a shot or a line that does not exist, which is a fabricated domain fact
+> rather than a failed request. Separately, the Go video and audio adapters are mocks reachable
+> only through `mock_media`, which `IsUserConfigurableKind` refuses to persist and no UI offers,
+> so a secure submission would not have reached a real provider either.
+>
+> **The alternative that was NOT taken, and why:** adding `episodeId`/`shotId` fields to the
+> canvas node, or a canvas-scoped media submission, is a domain and binding design change that
+> belongs to a work package with that scope. WP-12 item 16 is "remove or make unreachable", and
+> expanding it into new binding surface would be the scope creep AGENTS section 4.1 forbids.
+>
+> **What a user can still do, and the part that does not work either:** the studio's video and
+> audio sections (`web/src/components/studio/video-view.tsx`, `audio-view.tsx`) are the
+> structurally correct route — they submit against a real shot and a real dialogue line through
+> `submitVideoJob`/`submitAudioJob`, so they can fill every required field. **But this build has no
+> real video or audio adapter.** `Registry.VideoPortFor` and `AudioPortFor` resolve an adapter only
+> for `mock_media`, which `IsUserConfigurableKind` refuses to persist and no UI offers, and return
+> "unsupported" for `openai_compatible` and `gemini_compatible`. A studio submission therefore
+> reaches the queue and fails at provider resolution. WP-11's own section 0l already records this
+> ("No real video provider", listed among what that package does not cover).
+>
+> **So the honest statement is: secure desktop mode has no working video or audio generation today,
+> on the canvas or in the studio.** The canvas refusal arrives earlier and with a clearer message
+> than the studio's job failure, which is all this scope item can improve. Closing it requires a
+> real adapter, which is adapter work rather than a routing change, and it is left as an open item
+> rather than hidden behind a notice that implies the studio route succeeds.
+>
+> ## Verification
+>
+> | Command | Result |
+> |---|---|
+> | `node scripts/security-scan.mjs` | **PASS** — `PASS: security scans clean (602 files scanned; 1 audited dynamic-execution exception, 3 audited legacy direct-call files with named owners).` |
+> | `web`: `npm run typecheck` | **PASS** |
+> | `web`: `npm run test` | **PASS** — 67 tests, 67 pass, 0 fail |
+> | `web`: `npx playwright test` | **PASS** — 25 passed, 1 pre-existing skipped (26 total) |
+> | `web`: `npm run build` | **PASS** — with the pre-existing >500 kB chunk warning |
+>
+> No test was weakened, skipped or deleted to reach these results. No test asserted the
+> model-script editor or a legacy transport, so none needed changing.
+>
+> ## Known limits
+>
+> - The legacy files (`api/image.ts`, `api/video.ts`, `api/audio.ts`) still exist and still
+>   build; they are unreachable in secure mode because their routers check
+>   `isSecureProviderMode()` first. A future regression that calls them directly would put a key
+>   back in the webview, which is why they remain named in the scanner allowlist rather than
+>   deleted: a browser build has no other transport for these capabilities.
+> - A model whose stored `script` was the only thing that made it work now falls through to the
+>   standard OpenAI-compatible path and may fail at the provider. This is a deliberate capability
+>   loss; there is no replacement, because a Go-side script runner would be the same
+>   arbitrary-execution surface. The stored `script` field is left inert rather than deleted, so
+>   no user configuration is destroyed during an upgrade.
+>
+> ---
+>
+> Previous: **WP-11 — 视频、音频、字幕、时间线与导出**
 > Status: **COMPLETE for all 14 ROADMAP items, with two PARTIAL items named in section 0l.** The media half of the product is built: the one audited subprocess and its ffmpeg adapter, migration 000020's three tables, the media domain's timecodes and cue/manifest rules, the subtitle service with drafts that cite dialogue lines and an editor that reads back, the timeline as an ordered join over the board's own rows, the export service that composes a real playable MP4 from approved panel frames with audio and subtitles muxed in, the `SaveFile` path that writes to where a user points — the first such path this application has ever had — the video and audio job submissions with their reference-asset pipeline, the two `final_episode` agents and the deterministic Final Ruleset that precedes the supervisor, and the video, audio and timeline sections. Section 0l states what this package delivered, the defects TWO INDEPENDENT REVIEWS found (321 mutations, 149 killed; four blockers), the items closed after the first report, and — plainly — what remains PARTIAL. WP-01 through WP-10 remain COMPLETE for their recorded scopes.
 
 WP-03 start baseline (2026-09-15): branch `codex/wp-01-desktop-foundation`, HEAD `a243891455ec17687dd54b5ac90d3bd64478a1a1`, empty index. Freshly re-run baseline: `go test ./... -count=1` PASS (15 packages at start), `go vet ./...` PASS, `web` `npm run typecheck` PASS, `npm test` PASS (15 tests), `npm run build` PASS. Go commands require `GOTOOLCHAIN=go1.25.0 GOSUMDB=sum.golang.org` on this host because the user-level `go env` sets `GOSUMDB=off`, which blocks toolchain verification. The working tree already contained the WP-01/WP-02 tracked and untracked work plus the user's brand rename; none of it was modified outside the WP-03 scope.

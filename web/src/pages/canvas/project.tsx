@@ -9,8 +9,14 @@ import { requestImageQuestion } from "@/services/api/image";
 // Image generation routes through the Go job manager in secure desktop mode;
 // the module falls back to the legacy direct call only in browser dev mode.
 import { requestEdit, requestGeneration } from "@/services/image-generation";
-import { requestAudioGeneration, storeGeneratedAudio } from "@/services/api/audio";
-import { requestVideoGeneration, storeGeneratedVideo } from "@/services/api/video";
+// Video and audio have no secure route for a FREE CANVAS NODE: the Go media jobs
+// name a storyboard shot and a dialogue line respectively, and a free node is
+// neither. These modules therefore refuse in secure mode rather than falling back
+// to a browser call that would carry the API key in the webview. Their headers
+// carry the full reason, and the studio's video/audio sections are the route that
+// works today.
+import { requestAudioGeneration, storeGeneratedAudio } from "@/services/audio-generation";
+import { requestVideoGeneration, storeGeneratedVideo } from "@/services/video-generation";
 import { isSecureProviderMode } from "@/services/desktop/providers";
 import { streamSecureText, toSecureMessages } from "@/services/desktop/text";
 import { defaultConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";

@@ -1,13 +1,11 @@
 import axios from "axios";
-import { nanoid } from "nanoid";
 
 import i18n from "@/i18n";
 import { dataUrlToFile } from "@/lib/image-utils";
 import { uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { imageToDataUrl } from "@/services/image-storage";
-import { boolConfig, buildApiUrl, modelOptionName, resolveModelRequestConfig, resolveModelScript, type AiConfig } from "@/stores/use-config-store";
+import { buildApiUrl, modelOptionName, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 import { proxyApiUrl } from "@/lib/api-proxy";
-import { runModelPlugin } from "./model-plugin";
 import type { ReferenceImage } from "@/types/image";
 
 type VideoResponse = { id: string; status?: string; error?: { message?: string }; url?: string; result_url?: string; video_url?: string; content?: { video_url?: string; url?: string } | null };
@@ -17,11 +15,17 @@ type RequestOptions = { signal?: AbortSignal };
 const apiText = (key: string, options?: Record<string, unknown>) => i18n.t(`apiErrors.${key}`, options);
 
 export type VideoGenerationResult = { blob?: Blob; url?: string; mimeType?: string };
-export type VideoGenerationTask = { id: string; provider: "openai" | "plugin"; model: string };
+/**
+ * A video task's provider.
+ *
+ * The "plugin" member is gone with the model-script runner: a task was scripted
+ * when its model carried a user-authored JavaScript body, and that whole path
+ * was removed for PRD section 18. The union keeps one member rather than staying
+ * open so that a reader cannot reintroduce a second transport by widening it
+ * silently.
+ */
+export type VideoGenerationTask = { id: string; provider: "openai"; model: string };
 export type VideoGenerationTaskState = { status: "pending" } | { status: "completed"; result: VideoGenerationResult } | { status: "failed"; error: string };
-
-/** Results for scripted (plugin) video models, which run their own create+poll in one shot at task creation. */
-const pluginVideoResults = new Map<string, VideoGenerationResult>();
 
 function aiApiUrl(config: AiConfig, path: string) {
     return proxyApiUrl(buildApiUrl(config.baseUrl, path));
@@ -47,62 +51,27 @@ export async function requestVideoGeneration(config: AiConfig, prompt: string, r
     throw new Error(apiText("videoTimeout", { provider: "" }));
 }
 
+/**
+ * Creates and polls a video task against an OpenAI-compatible provider.
+ *
+ * A model that carried a user-authored call script used to be dispatched to the
+ * script runner here. That runner executed the script with `new Function`, which
+ * PRD section 18 blocks releases over, so it is gone: every model now takes the
+ * standard OpenAI-compatible path below. A model that only worked through a
+ * script will therefore fail at the provider, which is a real capability loss
+ * and is reported rather than hidden behind a fallback.
+ */
 export async function createVideoGenerationTask(config: AiConfig, prompt: string, references: ReferenceImage[] = [], options?: RequestOptions): Promise<VideoGenerationTask> {
     const selectedModel = (config.model || config.videoModel).trim();
     const requestConfig = resolveModelRequestConfig(config, selectedModel);
-    const script = resolveModelScript(config, selectedModel);
-    if (script) return createPluginVideoTask(requestConfig, selectedModel, script, prompt, references, options);
     assertVideoConfig(requestConfig, requestConfig.model);
     return createOpenAIVideoTask(requestConfig, selectedModel, prompt, references, options);
 }
 
 export async function pollVideoGenerationTask(config: AiConfig, task: VideoGenerationTask, options?: RequestOptions): Promise<VideoGenerationTaskState> {
-    if (task.provider === "plugin") {
-        const result = pluginVideoResults.get(task.id);
-        return result ? { status: "completed", result } : { status: "failed", error: apiText("pluginVideoExpired") };
-    }
     const requestConfig = resolveModelRequestConfig(config, task.model);
     assertVideoConfig(requestConfig, requestConfig.model);
     return pollOpenAIVideoTask(requestConfig, task, options);
-}
-
-async function createPluginVideoTask(config: AiConfig, model: string, script: string, prompt: string, references: ReferenceImage[], options?: RequestOptions): Promise<VideoGenerationTask> {
-    if (!config.baseUrl.trim()) throw new Error(apiText("baseUrlRequired"));
-    if (!config.apiKey.trim()) throw new Error(apiText("apiKeyRequired"));
-    const refs = await Promise.all(references.map((image) => imageToDataUrl(image)));
-    const result = videoPluginResult(
-        await runModelPlugin({
-            capability: "video",
-            script,
-            config,
-            prompt,
-            images: refs,
-            params: {
-                seconds: normalizeVideoSeconds(config.videoSeconds),
-                size: normalizeVideoSize(config.size),
-                resolution: normalizeVideoResolution(config.vquality),
-                ratio: config.size,
-                generateAudio: boolConfig(config.videoGenerateAudio, true),
-                watermark: boolConfig(config.videoWatermark, false),
-            },
-            signal: options?.signal,
-        }),
-    );
-    const id = nanoid();
-    pluginVideoResults.set(id, result);
-    return { id, provider: "plugin", model };
-}
-
-function videoPluginResult(result: unknown): VideoGenerationResult {
-    if (result instanceof Blob) return { blob: result };
-    if (typeof result === "string") return { url: result, mimeType: "video/mp4" };
-    if (result && typeof result === "object") {
-        const record = result as Record<string, unknown>;
-        if (record.blob instanceof Blob) return { blob: record.blob };
-        const url = [record.url, record.video_url, record.result_url].find((value) => typeof value === "string" && value) as string | undefined;
-        if (url) return { url, mimeType: "video/mp4" };
-    }
-    throw new Error(apiText("scriptNoVideo"));
 }
 
 export async function storeGeneratedVideo(result: VideoGenerationResult): Promise<UploadedFile> {

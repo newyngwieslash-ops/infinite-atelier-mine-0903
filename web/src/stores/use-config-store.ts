@@ -163,10 +163,12 @@ export function selectableModelsByCapability(config: AiConfig, capability?: Mode
     return config.channels.flatMap((channel) => channel.models.filter((model) => model.capability === capability).map((model) => encodeChannelModel(channel.id, model.name)));
 }
 
-/** The user script (if any) attached to a model; empty string means use the system default call. */
-export function resolveModelScript(config: AiConfig, value: string) {
-    return findChannelModel(config, value)?.model.script?.trim() || "";
-}
+// `resolveModelScript` lived here and returned a model's user-authored call
+// script for the runner that executed it. Both are gone: the runner used
+// `new Function`, which PRD section 18 makes a release blocker, so WP-12 deleted
+// it and this accessor with it. It is removed rather than left unused because an
+// exported reader of the script field is the first thing a reimplementation
+// would reach for.
 
 function isAiConfigReady(config: AiConfig, model: string) {
     const channel = resolveModelChannel(config, model);

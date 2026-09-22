@@ -5,19 +5,25 @@ import { onJobChanged, submitImageJob, type JobEventPayload, type JobStatus } fr
 import { toProviderId } from "./provider-id";
 
 /**
- * Reports whether this build still exposes legacy browser-direct provider
- * calls.
+ * Reports whether the legacy browser-direct provider files are still compiled
+ * into this build.
  *
- * WP-03 migrated image generation to the Go job manager but left the video and
- * audio calls on the direct browser path until the media work package provides
- * real adapters. The authoritative list of those files lives in the security
- * scanner (scripts/security-scan.mjs), which refuses NEW direct calls; this
- * flag only drives the user-facing migration notice, so it must not grow a
- * second copy of the list that could drift from the scanner's.
+ * They are, and the reason has changed since WP-03 wrote this: they are no
+ * longer a pending migration. WP-12 made the secure video and audio paths refuse
+ * rather than fall back to them, so in a secure desktop build they are
+ * UNREACHABLE, and they remain only for browser development mode, where there is
+ * no Go core and the dev-server proxy is the only transport. WP-12 is the last
+ * work package, so nothing removes them later.
+ *
+ * The authoritative list of those files lives in the security scanner
+ * (scripts/security-scan.mjs), which refuses NEW direct calls; this flag only
+ * drives the user-facing notice, so it must not grow a second copy of the list
+ * that could drift from the scanner's.
  */
 export function hasLegacyDirectCalls(): boolean {
-    // Still compiled in for compatibility. Removing them is the media work
-    // package's job, so this reports the honest current state.
+    // True because the files are compiled in. The answer a caller wants in
+    // secure mode — "can a request reach a provider from the webview?" — is no,
+    // and the notice's message says so.
     return true;
 }
 

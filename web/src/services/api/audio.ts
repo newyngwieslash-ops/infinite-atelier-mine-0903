@@ -3,9 +3,8 @@ import axios from "axios";
 import i18n from "@/i18n";
 import { audioMimeType, normalizeAudioFormatValue, normalizeAudioSpeedValue, normalizeAudioVoiceValue } from "@/lib/audio-generation";
 import { uploadMediaFile, type UploadedFile } from "@/services/file-storage";
-import { buildApiUrl, resolveModelRequestConfig, resolveModelScript, type AiConfig } from "@/stores/use-config-store";
+import { buildApiUrl, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 import { proxyApiUrl } from "@/lib/api-proxy";
-import { runModelPlugin } from "./model-plugin";
 
 type RequestOptions = { signal?: AbortSignal };
 const apiText = (key: string, options?: Record<string, unknown>) => i18n.t(`apiErrors.${key}`, options);
@@ -21,29 +20,20 @@ function aiHeaders(config: AiConfig) {
     };
 }
 
+/**
+ * Requests speech for `prompt` from an OpenAI-compatible audio endpoint.
+ *
+ * A model that carried a user-authored call script used to be dispatched to the
+ * script runner here. That runner executed the script with `new Function`, which
+ * PRD section 18 blocks releases over, so it is gone: every model now takes the
+ * standard `/audio/speech` path below. A model that only worked through a script
+ * will therefore fail at the provider, which is a real capability loss and is
+ * reported rather than hidden behind a fallback.
+ */
 export async function requestAudioGeneration(config: AiConfig, prompt: string, options?: RequestOptions): Promise<Blob> {
     const requestConfig = resolveModelRequestConfig(config, config.model || config.audioModel);
     const model = requestConfig.model.trim();
     const format = normalizeAudioFormatValue(config.audioFormat);
-    const script = resolveModelScript(config, config.model || config.audioModel);
-    if (script) {
-        if (!model) throw new Error(apiText("audioModelRequired"));
-        if (!requestConfig.baseUrl.trim()) throw new Error(apiText("baseUrlRequired"));
-        if (!requestConfig.apiKey.trim()) throw new Error(apiText("apiKeyRequired"));
-        try {
-            const result = await runModelPlugin({
-                capability: "audio",
-                script,
-                config: requestConfig,
-                prompt,
-                params: { voice: normalizeAudioVoiceValue(config.audioVoice), format, speed: normalizeAudioSpeedValue(config.audioSpeed), instructions: config.audioInstructions.trim() },
-                signal: options?.signal,
-            });
-            return await audioPluginBlob(result, format);
-        } catch (error) {
-            throw new Error(readAxiosError(error, apiText("audioGenerationFailed")));
-        }
-    }
     assertAudioConfig(requestConfig, model);
     const instructions = config.audioInstructions.trim();
 
@@ -65,20 +55,6 @@ export async function requestAudioGeneration(config: AiConfig, prompt: string, o
     } catch (error) {
         throw new Error(readAxiosError(error, apiText("audioGenerationFailed")));
     }
-}
-
-async function audioPluginBlob(result: unknown, format: string): Promise<Blob> {
-    if (result instanceof Blob) return result.type.startsWith("audio/") ? result : new Blob([result], { type: audioMimeType(format) });
-    let source = "";
-    if (typeof result === "string") source = result;
-    else if (result && typeof result === "object") {
-        const record = result as Record<string, unknown>;
-        source = typeof record.b64_json === "string" ? record.b64_json : typeof record.data === "string" ? record.data : typeof record.url === "string" ? record.url : "";
-    }
-    if (!source) throw new Error(apiText("scriptNoAudio"));
-    const url = source.startsWith("data:") || /^https?:/i.test(source) ? source : `data:${audioMimeType(format)};base64,${source}`;
-    const blob = await (await fetch(url)).blob();
-    return blob.type.startsWith("audio/") ? blob : new Blob([blob], { type: audioMimeType(format) });
 }
 
 export async function storeGeneratedAudio(blob: Blob, format = "mp3"): Promise<UploadedFile> {
