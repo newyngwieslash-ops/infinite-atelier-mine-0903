@@ -189,6 +189,18 @@ func (a *app) startup(ctx context.Context) {
 				}
 				projectStack.attach(ctx)
 				a.projectWiring = projectStack
+			} else if a.backupBinding != nil {
+				// THE PROJECT STACK DID NOT COMPOSE, which in this application means the
+				// database could not be opened or could not be migrated — and that is
+				// precisely the state a user wants to restore a backup from. The restore
+				// half needs no pool (it reads an archive and renames files), so it is
+				// composed on its own here. See `composeBackupOnly` for what is and is not
+				// available in this mode.
+				if backupOnly := composeBackupOnly(dirs, a.backupBinding); backupOnly != nil {
+					backupOnly.cleanStaging()
+					backupOnly.attach(ctx)
+					a.projectWiring = backupOnly
+				}
 			}
 
 			// The WP-05 drama stack shares the same database. It is composed

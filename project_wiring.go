@@ -102,6 +102,47 @@ func composeProjects(handle *database.Handle, dirs appdirs.Dirs, store *filestor
 	}
 }
 
+// composeBackupOnly builds the RESTORE half for a build whose database could not be
+// opened, and it exists because that is exactly when a user needs it.
+//
+// # The gap this closes
+//
+// `composeProjects` returns nil when `handle.SQL()` is nil, and every safe-mode handle has
+// no pool: the database could not be opened or could not be migrated, so there is nothing to
+// query. That is correct for the project and import services, which are queries.
+//
+// It was wrong for the backup, and the consequence was the worst version of the problem:
+// a user whose database is broken is a user whose next step is to RESTORE the backup that
+// would fix it, and in that state the restore was unavailable. Safe mode existed to make
+// recovery possible and then refused the recovery.
+//
+// # What can and cannot be built without a pool
+//
+// The restore needs three things and none of them is the live database: it reads the
+// archive, it verifies the archived database by opening THAT file, and it promotes by
+// renaming files. The live pool is used by the EXPORT — to snapshot and to count — and an
+// export from a database that would not open is not a useful operation, so `export` is left
+// nil here and the binding's export method fails closed with a reason.
+//
+// `databasePath` is empty in this construction rather than guessed: `Handle.DatabasePath`
+// carries it, and this function is given the resolved directories instead so it does not
+// depend on a handle that may be a safe-mode one. `Promote` refuses without it, which is the
+// fail-closed direction.
+func composeBackupOnly(dirs appdirs.Dirs, backupBinding *desktop.BackupBinding) *projectWiring {
+	if backupBinding == nil || dirs.Database == "" || dirs.Files == "" {
+		return nil
+	}
+	// No generator and no clock: the restore that CAN run here drafts no identifier and
+	// stamps no timestamp — it reads an archive and renames files. The export is the half
+	// that needs them, and it is absent.
+	backupStore := database.NewBackupStore(nil, dirs.Database, dirs.Files, dirs.Temp, dirs.Snapshots, buildinfo.Version)
+	return &projectWiring{
+		restore:     appbackup.NewRestoreService(backupStore),
+		backup:      backupBinding,
+		backupStore: backupStore,
+	}
+}
+
 // attach wires the composed stack into the bindings.
 func (w *projectWiring) attach(ctx context.Context) {
 	if w == nil {
@@ -115,12 +156,15 @@ func (w *projectWiring) attach(ctx context.Context) {
 		desktop.AttachLegacyUpload(w.upload, ctx)
 	}
 	if w.backup != nil {
-		// The store is both the export source and the restore sink: the export
-		// reads through it and a restore stages into its private temp area.
 		// The store is both ports: the sink a restore stages into, and the promoter that
 		// puts the result in force. One object because the two share the staging layout and
 		// the application's directories, and two compositions could disagree about where
 		// that is.
+		//
+		// `w.export` may be nil — the database could not be opened and this is the
+		// restore-only composition — and the binding reports that as an unavailable export
+		// while its restore methods work. Losing the export in safe mode costs nothing: an
+		// archive taken from a database that would not open is not worth having.
 		desktop.AttachBackup(w.backup, ctx, w.export, w.restore, w.backupStore, w.backupStore)
 	}
 }

@@ -12,10 +12,18 @@ import (
 
 // Promote implements the port over the application's real directories.
 func (s *BackupStore) Promote(ctx context.Context, request appbackup.PromoteRequest) (appbackup.PromoteResult, error) {
-	if s == nil || s.db == nil {
+	if s == nil {
 		return appbackup.PromoteResult{}, apperror.New("BACKUP_UNAVAILABLE", "storage", false,
 			"The backup service is unavailable.", nil)
 	}
+	// THE CONFIRMATION GATE RUNS FIRST, and its ORDER is the point rather than a detail: a
+	// caller that forgot to ask the user must hear THAT, not "the service is unavailable".
+	// An earlier version checked the pool first, which in safe mode — where the pool is
+	// deliberately absent and the restore is exactly what a user needs — answered
+	// BACKUP_UNAVAILABLE for a request whose real problem was that nobody had been asked.
+	//
+	// The pool is checked at the point it is USED (the close before the swap), not here,
+	// because a safe-mode build has no pool and its promotion is still valid.
 	if !request.Confirmed {
 		// Refused BEFORE anything moves. The message names the consequence, because a
 		// caller that omitted the flag needs to know why it matters rather than that a
@@ -88,9 +96,14 @@ func (s *BackupStore) Promote(ctx context.Context, request appbackup.PromoteRequ
 	// belonging to the old database beside the restored one, which SQLite would replay
 	// against the new file: silent corruption of the very data the user is trying to
 	// recover. So the whole FILE SET moves, and `moveFileSet` is what does it.
-	if err := s.db.Close(); err != nil {
-		return appbackup.PromoteResult{}, apperror.New("BACKUP_RESTORE_FAILED", "storage", false,
-			"The application's database could not be closed, so the restore was stopped.", err)
+	// A nil pool is the SAFE-MODE shape rather than an oversight: there was no connection to
+	// begin with, so there is nothing to close and nothing to checkpoint. The staged database
+	// was written whole by the archiver, so it has no write-ahead log to fold in.
+	if s.db != nil {
+		if err := s.db.Close(); err != nil {
+			return appbackup.PromoteResult{}, apperror.New("BACKUP_RESTORE_FAILED", "storage", false,
+				"The application's database could not be closed, so the restore was stopped.", err)
+		}
 	}
 	if err := moveFileSet(s.databasePath, filepath.Join(held, "database")); err != nil {
 		return appbackup.PromoteResult{}, apperror.New("BACKUP_RESTORE_FAILED", "storage", false,
