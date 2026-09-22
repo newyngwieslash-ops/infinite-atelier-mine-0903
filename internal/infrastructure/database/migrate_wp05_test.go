@@ -49,15 +49,16 @@ func wp05Migrations(t *testing.T) fstest.MapFS {
 		"000016_agent_response_model.sql":        {Data: wp05SQL(t, "000016_agent_response_model.sql")},
 		"000017_script_field_locks.sql":          {Data: wp05SQL(t, "000017_script_field_locks.sql")},
 		"000018_production.sql":                  {Data: wp05SQL(t, "000018_production.sql")},
+		"000019_memory_and_consistency.sql":      {Data: wp05SQL(t, "000019_memory_and_consistency.sql")},
 	}
 }
 
 // wp05HeadVersion is the user_version the shared migration set reaches.
 //
 // The helper keeps its wp05 name because every test calls it by that name and
-// the set is the same set; only its head moves as migrations are added. It is 18
-// since WP-09 added the three storyboard descriptions and the asset gap report.
-const wp05HeadVersion = 18
+// the set is the same set; only its head moves as migrations are added. It is 19
+// since WP-10 added the memory tables and the review issue's source mark.
+const wp05HeadVersion = 19
 
 // applyMigrationFileSplits runs one migration file the way the runner does:
 // splitSQL on the raw text, then execute each fragment in order. It returns the
