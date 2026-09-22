@@ -22,6 +22,10 @@ export function ApproveAdaptationStrategyVersion(arg1) {
   return window['go']['desktop']['DramaBinding']['ApproveAdaptationStrategyVersion'](arg1);
 }
 
+export function ApproveDirectorPlanVersion(arg1) {
+  return window['go']['desktop']['DramaBinding']['ApproveDirectorPlanVersion'](arg1);
+}
+
 export function ApprovePanelImage(arg1) {
   return window['go']['desktop']['DramaBinding']['ApprovePanelImage'](arg1);
 }
@@ -32,6 +36,14 @@ export function ApproveScriptVersion(arg1) {
 
 export function ApproveStorySkeletonVersion(arg1) {
   return window['go']['desktop']['DramaBinding']['ApproveStorySkeletonVersion'](arg1);
+}
+
+export function ApproveStoryboardVersion(arg1) {
+  return window['go']['desktop']['DramaBinding']['ApproveStoryboardVersion'](arg1);
+}
+
+export function ApprovedStoryboardVersionID(arg1) {
+  return window['go']['desktop']['DramaBinding']['ApprovedStoryboardVersionID'](arg1);
 }
 
 export function ClearStaleMark(arg1) {
@@ -122,6 +134,10 @@ export function EnsureStoryboard(arg1) {
   return window['go']['desktop']['DramaBinding']['EnsureStoryboard'](arg1);
 }
 
+export function GetDirectorPlanVersion(arg1) {
+  return window['go']['desktop']['DramaBinding']['GetDirectorPlanVersion'](arg1);
+}
+
 export function GetReviewReport(arg1) {
   return window['go']['desktop']['DramaBinding']['GetReviewReport'](arg1);
 }
@@ -130,12 +146,20 @@ export function GetScriptStructure(arg1) {
   return window['go']['desktop']['DramaBinding']['GetScriptStructure'](arg1);
 }
 
+export function GetStoryboardVersion(arg1) {
+  return window['go']['desktop']['DramaBinding']['GetStoryboardVersion'](arg1);
+}
+
 export function ListAdaptationStrategyVersions(arg1) {
   return window['go']['desktop']['DramaBinding']['ListAdaptationStrategyVersions'](arg1);
 }
 
 export function ListChapters(arg1) {
   return window['go']['desktop']['DramaBinding']['ListChapters'](arg1);
+}
+
+export function ListDirectorPlanVersions(arg1) {
+  return window['go']['desktop']['DramaBinding']['ListDirectorPlanVersions'](arg1);
 }
 
 export function ListDomainEvents(arg1) {
@@ -148,6 +172,10 @@ export function ListEpisodes(arg1) {
 
 export function ListOpenStaleMarks(arg1) {
   return window['go']['desktop']['DramaBinding']['ListOpenStaleMarks'](arg1);
+}
+
+export function ListPanelVersions(arg1) {
+  return window['go']['desktop']['DramaBinding']['ListPanelVersions'](arg1);
 }
 
 export function ListPanels(arg1) {
@@ -212,6 +240,10 @@ export function ListStorySkeletonVersions(arg1) {
 
 export function ListStoryboardItems(arg1) {
   return window['go']['desktop']['DramaBinding']['ListStoryboardItems'](arg1);
+}
+
+export function ListStoryboardVersions(arg1) {
+  return window['go']['desktop']['DramaBinding']['ListStoryboardVersions'](arg1);
 }
 
 export function ListWorkflowEvents(arg1) {
@@ -328,6 +360,10 @@ export function UnlockStoryEvent(arg1) {
 
 export function UpdateEpisodeStatus(arg1) {
   return window['go']['desktop']['DramaBinding']['UpdateEpisodeStatus'](arg1);
+}
+
+export function UpdateStoryboardItem(arg1) {
+  return window['go']['desktop']['DramaBinding']['UpdateStoryboardItem'](arg1);
 }
 
 export function WaiveStaleMark(arg1) {

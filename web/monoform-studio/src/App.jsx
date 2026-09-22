@@ -7,6 +7,7 @@ import {
   Unlock,
 } from 'lucide-react'
 import { MainViewport, CameraPreview } from './Viewport.jsx'
+import { cameraFromOverride, isEmbedded, sendExport, sendShotUpdated, subscribeToHost } from './bridge.js'
 import { ShotsPanel } from './ShotsPanel.jsx'
 import { JOINT_DEFINITIONS, JOINT_GROUPS, RIG_PRESET_GROUPS, RIG_PRESET_OPTIONS, cloneJointPose, interpolateJointPose, normalizePoseId, poseCanLoop, poseForObject, presetJoints, presetPhase, presetRoot } from './rig.js'
 
@@ -1230,6 +1231,11 @@ function ReferenceOverlay({ reference, onChange, onToast, cameraMode = false, ca
 
 export default function App() {
   const startupProject = useMemo(() => readCachedProject(), [])
+  // The MONOFORM bridge: the nonce the host minted for this mount, and the shot it asked
+  // this panel to open. Both are set by the host's own message — the studio never invents a
+  // nonce, because a value the receiver made up is not a protection for the receiver.
+  const [bridgeNonce, setBridgeNonce] = useState('')
+  const [openedShot, setOpenedShot] = useState(null)
   const [settings, setSettings] = useState(() => normalizeProjectSettings(startupProject?.settings))
   const [shots, setShots] = useState(() => startupProject?.shots || [{
     id: 'shot-01', name: '镜头 01', thumbnail: '', fps: DEFAULT_PROJECT_SETTINGS.fps, durationSeconds: DEFAULT_PROJECT_SETTINGS.durationSeconds, loopPlayback: false,
@@ -1334,6 +1340,72 @@ export default function App() {
   useEffect(() => {
     currentFrameRef.current = currentFrame
   }, [currentFrame])
+
+  // The host's messages: `open_shot` is what this studio does with them.
+  //
+  // `subscribeToHost` validates the envelope, the version and the origin before calling back,
+  // so this handler only ever sees a message from the embedding host. When this studio is not
+  // embedded the subscription is a no-op, which is what makes the standalone build work.
+  useEffect(() => {
+    if (!isEmbedded()) return undefined
+    return subscribeToHost(({ nonce, shot }) => {
+      setBridgeNonce(nonce)
+      setOpenedShot(shot)
+    })
+  }, [])
+
+  // The opened shot becomes a SHOT in this studio, named after the one the board holds.
+  //
+  // It is added rather than loaded over the user's work: a director panel opened from shot 6
+  // must not silently discard the scene the user was already building. The camera is applied
+  // when the plan recorded one, and left at the studio's default when it did not — a camera
+  // nobody chose is worse than none.
+  const appliedShotIdsRef = useRef(new Set())
+  useEffect(() => {
+    if (!openedShot || !openedShot.shotId) return
+    if (appliedShotIdsRef.current.has(openedShot.shotId)) return
+    appliedShotIdsRef.current.add(openedShot.shotId)
+    const camera = cameraFromOverride(openedShot.overridesJson)
+    const id = `shot-${openedShot.shotId}`
+    setShots(prev => {
+      if (prev.some(shot => shot.id === id)) return prev
+      const label = openedShot.shotNumber ? `镜头 ${openedShot.shotNumber}` : `镜头 ${openedShot.shotId}`
+      return [
+        ...prev,
+        {
+          id,
+          name: label,
+          thumbnail: '',
+          fps: DEFAULT_PROJECT_SETTINGS.fps,
+          durationSeconds: openedShot.durationSeconds > 0 ? openedShot.durationSeconds : DEFAULT_PROJECT_SETTINGS.durationSeconds,
+          loopPlayback: false,
+          objects: cloneProjectValue(initialObjects),
+          camera: camera ? { ...cloneProjectValue(initialCamera), ...camera } : cloneProjectValue(initialCamera),
+          lighting: cloneProjectValue(DEFAULT_LIGHTING),
+          reference: cloneProjectValue(DEFAULT_REFERENCE),
+          keyframes: [],
+          objectKeyframes: {},
+        },
+      ]
+    })
+    setActiveShotId(id)
+    setToast(`已从分镜打开 · ${openedShot.shotNumber || openedShot.shotId}`)
+    // The host's context is applied once per shot, and `appliedShotIdsRef` is what keeps a
+    // re-render from adding it again.
+  }, [openedShot])
+
+  // The camera is reported to the host when the user saves, which is FR-060's "保存后可在
+  // Shot 中看到摄像机参数". The report carries the ACTIVE shot when it came from the host, so a
+  // camera edited on any other shot is not written to the board's row.
+  const reportCameraToHost = useCallback(() => {
+    if (!bridgeNonce || !openedShot?.shotId) return false
+    return sendShotUpdated(bridgeNonce, openedShot.shotId, {
+      position: [...camera.position],
+      rotation: [...camera.rotation],
+      focalLength: camera.focalLength,
+      aspectRatio: camera.aspectRatio,
+    })
+  }, [bridgeNonce, openedShot, camera])
 
   useEffect(() => {
     let active = true
@@ -1939,7 +2011,13 @@ export default function App() {
       link.click()
       URL.revokeObjectURL(link.href)
     }
+    // A SAVE ALSO REPORTS THE CAMERA to the host, which is FR-060's "保存后可在 Shot 中看到摄像机
+    // 参数". It is tied to the save rather than to every camera edit because the user's act of
+    // saving is what says "this is the shot I composed" — reporting on every pointer move would
+    // write a camera nobody chose.
+    const reported = reportCameraToHost()
     if (download) setToast(cached ? '工程 JSON 已导出' : '工程已导出，但浏览器自动保存空间不足')
+    else if (reported) setToast('已保存，并已回写到分镜')
     else setToast(cached ? '工程已保存到浏览器' : '浏览器保存空间不足，请使用“导出工程”备份')
   }
   const handleCaptureImage = async () => {
@@ -1962,8 +2040,16 @@ export default function App() {
       await nextPaint()
       const blob = await new Promise((resolve, reject) => canvas.toBlob(result => result ? resolve(result) : reject(new Error('PNG 生成失败')), 'image/png'))
       // Notify the embedding canvas host so the frame can be inserted directly as a canvas image node.
-      if (window.parent && window.parent !== window) {
-        window.parent.postMessage({ source: 'monoform', type: 'export', kind: 'image', blob, width, height }, '*')
+      //
+      // The message goes through the bridge, which carries the envelope the host validates and
+      // names the parent as its TARGET rather than posting to '*'. A message to '*' reaches
+      // whatever document holds this frame, which is the defect SECURITY §12 names.
+      const delivered = sendExport(bridgeNonce, 'image', blob)
+      if (!delivered && isEmbedded()) {
+        // Embedded but undeliverable: the host never sent an `open_shot`, so this studio has
+        // no nonce and the host would refuse the message anyway. Saying so is better than a
+        // silent download the user did not ask for.
+        setToast('已导出到本地：本次预演未从分镜打开，因此没有卡' + '片接收这个画面')
       }
       const link = document.createElement('a')
       const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')
@@ -2041,10 +2127,9 @@ export default function App() {
       const buffer = output.target.buffer
       if (!buffer) throw new Error('MP4 文件生成失败')
       const blob = new Blob([buffer], { type: 'video/mp4' })
-      // Notify the embedding canvas host so the video can be inserted directly as a canvas video node.
-      if (window.parent && window.parent !== window) {
-        window.parent.postMessage({ source: 'monoform', type: 'export', kind: 'video', blob }, '*')
-      }
+      // Notify the embedding canvas host so the video can be inserted directly as a canvas video node,
+      // through the same validated envelope the still uses.
+      sendExport(bridgeNonce, 'video', blob)
       const link = document.createElement('a')
       const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')
       link.href = URL.createObjectURL(blob)

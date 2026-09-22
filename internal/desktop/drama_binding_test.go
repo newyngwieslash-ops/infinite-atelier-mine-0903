@@ -6,6 +6,7 @@ import (
 	"errors"
 	eventsapp "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/events"
 	"reflect"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -2500,6 +2501,47 @@ func (s *dramaStore) ApproveStoryboardVersion(_ context.Context, versionID, stor
 	target.Status = versioning.StatusApproved
 	s.boardVers[versionID] = target
 	s.recorded = append(s.recorded, record)
+	return nil
+}
+
+func (s *dramaStore) ListDirectorPlanVersions(_ context.Context, episodeID string) ([]storyboard.DirectorPlanVersion, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	versions := []storyboard.DirectorPlanVersion{}
+	for _, version := range s.plans {
+		if version.EpisodeID == episodeID {
+			versions = append(versions, version)
+		}
+	}
+	sort.Slice(versions, func(i, j int) bool { return versions[i].VersionNumber > versions[j].VersionNumber })
+	return versions, nil
+}
+
+func (s *dramaStore) ListStoryboardVersions(_ context.Context, storyboardID string) ([]storyboard.StoryboardVersion, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	versions := []storyboard.StoryboardVersion{}
+	for _, version := range s.boardVers {
+		if version.StoryboardID == storyboardID {
+			versions = append(versions, version)
+		}
+	}
+	sort.Slice(versions, func(i, j int) bool { return versions[i].VersionNumber > versions[j].VersionNumber })
+	return versions, nil
+}
+
+func (s *dramaStore) UpdateStoryboardItem(_ context.Context, item storyboard.StoryboardItem, expectedRevision int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	stored, ok := s.items[item.ID]
+	if !ok {
+		return storyboard.NotFoundError()
+	}
+	if stored.Revision != expectedRevision {
+		return storyboard.ConflictError("This storyboard row changed in another window. Reload it and try again.")
+	}
+	item.Revision = expectedRevision + 1
+	s.items[item.ID] = item
 	return nil
 }
 

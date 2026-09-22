@@ -1,16 +1,16 @@
 export namespace agentruntime {
-
+	
 	export class MessageView {
 	    id: string;
 	    role: string;
 	    content: string;
 	    createdAt: string;
 	    scopeKey: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new MessageView(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -34,11 +34,11 @@ export namespace agentruntime {
 	    errorCode: string;
 	    startedAt: string;
 	    finishedAt: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new RunSummary(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -66,11 +66,11 @@ export namespace agentruntime {
 	    outputJson: string;
 	    startedAt: string;
 	    finishedAt: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ToolCallView(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -89,11 +89,11 @@ export namespace agentruntime {
 	    messages: MessageView[];
 	    toolCalls: ToolCallView[];
 	    output: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new RunTrace(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.run = this.convertValues(source["run"], RunSummary);
@@ -101,7 +101,7 @@ export namespace agentruntime {
 	        this.toolCalls = this.convertValues(source["toolCalls"], ToolCallView);
 	        this.output = source["output"];
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -124,16 +124,16 @@ export namespace agentruntime {
 }
 
 export namespace desktop {
-
+	
 	export class StrategyEventLinkDTO {
 	    storyEventId: string;
 	    treatment: string;
 	    ordinal: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new StrategyEventLinkDTO(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.storyEventId = source["storyEventId"];
@@ -159,11 +159,11 @@ export namespace desktop {
 	    createdById?: string;
 	    changeReason?: string;
 	    createdAt: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new AdaptationStrategyVersionDTO(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.versionId = source["versionId"];
@@ -184,7 +184,7 @@ export namespace desktop {
 	        this.changeReason = source["changeReason"];
 	        this.createdAt = source["createdAt"];
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -203,6 +203,22 @@ export namespace desktop {
 		    return a;
 		}
 	}
+	export class AddRelationRequest {
+	    sourceAssetVersionId: string;
+	    targetAssetVersionId: string;
+	    type: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new AddRelationRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.sourceAssetVersionId = source["sourceAssetVersionId"];
+	        this.targetAssetVersionId = source["targetAssetVersionId"];
+	        this.type = source["type"];
+	    }
+	}
 	export class AddSourceDocumentVersionRequest {
 	    sourceDocumentId: string;
 	    physicalFileId?: string;
@@ -213,11 +229,11 @@ export namespace desktop {
 	    charCount?: number;
 	    importMetadataJson?: string;
 	    createdByType?: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new AddSourceDocumentVersionRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.sourceDocumentId = source["sourceDocumentId"];
@@ -229,6 +245,26 @@ export namespace desktop {
 	        this.charCount = source["charCount"];
 	        this.importMetadataJson = source["importMetadataJson"];
 	        this.createdByType = source["createdByType"];
+	    }
+	}
+	export class AddUsageRequest {
+	    assetVersionId: string;
+	    consumerType: string;
+	    consumerId: string;
+	    usageRole?: string;
+	    required?: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new AddUsageRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.assetVersionId = source["assetVersionId"];
+	        this.consumerType = source["consumerType"];
+	        this.consumerId = source["consumerId"];
+	        this.usageRole = source["usageRole"];
+	        this.required = source["required"];
 	    }
 	}
 	export class AddVersionRequest {
@@ -243,11 +279,11 @@ export namespace desktop {
 	    metadata?: string;
 	    createdByType?: string;
 	    legacyMetadata?: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new AddVersionRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.assetId = source["assetId"];
@@ -271,11 +307,11 @@ export namespace desktop {
 	    maxToolCalls: number;
 	    maxDurationSeconds: number;
 	    policyLayer: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new AgentSpecDTO(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.key = source["key"];
@@ -289,16 +325,16 @@ export namespace desktop {
 	}
 	export class AgentInventoryDTO {
 	    agents: AgentSpecDTO[];
-
+	
 	    static createFrom(source: any = {}) {
 	        return new AgentInventoryDTO(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.agents = this.convertValues(source["agents"], AgentSpecDTO);
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -317,15 +353,15 @@ export namespace desktop {
 		    return a;
 		}
 	}
-
+	
 	export class AppendImportUploadChunkRequest {
 	    uploadId: string;
 	    chunk: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new AppendImportUploadChunkRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.uploadId = source["uploadId"];
@@ -341,11 +377,11 @@ export namespace desktop {
 	    instruction?: string;
 	    reason?: string;
 	    createdById?: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ApplyScriptGateRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.stageRunId = source["stageRunId"];
@@ -358,16 +394,88 @@ export namespace desktop {
 	        this.createdById = source["createdById"];
 	    }
 	}
+	export class AssetUsageDTO {
+	    assetVersionId: string;
+	    consumerType: string;
+	    consumerId: string;
+	    usageRole: string;
+	    required: boolean;
+	    createdAt: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new AssetUsageDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.assetVersionId = source["assetVersionId"];
+	        this.consumerType = source["consumerType"];
+	        this.consumerId = source["consumerId"];
+	        this.usageRole = source["usageRole"];
+	        this.required = source["required"];
+	        this.createdAt = source["createdAt"];
+	    }
+	}
+	export class ApprovalImpactDTO {
+	    versionId: string;
+	    replaces?: string;
+	    consumers: AssetUsageDTO[];
+	    requiredConsumers: AssetUsageDTO[];
+	
+	    static createFrom(source: any = {}) {
+	        return new ApprovalImpactDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.versionId = source["versionId"];
+	        this.replaces = source["replaces"];
+	        this.consumers = this.convertValues(source["consumers"], AssetUsageDTO);
+	        this.requiredConsumers = this.convertValues(source["requiredConsumers"], AssetUsageDTO);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class ApproveDirectorPlanVersionRequest {
+	    versionId: string;
+	    traceId?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ApproveDirectorPlanVersionRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.versionId = source["versionId"];
+	        this.traceId = source["traceId"];
+	    }
+	}
 	export class ApprovePanelImageRequest {
 	    panelVersionId: string;
 	    approvedImageAssetVersionId: string;
 	    candidateVersionIds?: string[];
 	    expectedRevision: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ApprovePanelImageRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.panelVersionId = source["panelVersionId"];
@@ -378,24 +486,38 @@ export namespace desktop {
 	}
 	export class ApproveScriptVersionRequest {
 	    scriptVersionId: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ApproveScriptVersionRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.scriptVersionId = source["scriptVersionId"];
 	    }
 	}
+	export class ApproveStoryboardVersionRequest {
+	    versionId: string;
+	    traceId?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ApproveStoryboardVersionRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.versionId = source["versionId"];
+	        this.traceId = source["traceId"];
+	    }
+	}
 	export class ApproveVersionRequest {
 	    versionId: string;
 	    impactAcknowledged: boolean;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ApproveVersionRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.versionId = source["versionId"];
@@ -416,11 +538,11 @@ export namespace desktop {
 	    createdAt: string;
 	    updatedAt: string;
 	    revision: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new AssetDTO(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -444,11 +566,11 @@ export namespace desktop {
 	    role: string;
 	    ordinal: number;
 	    createdAt: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new AssetFileDTO(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.versionId = source["versionId"];
@@ -458,27 +580,53 @@ export namespace desktop {
 	        this.createdAt = source["createdAt"];
 	    }
 	}
+	export class AssetRelationDTO {
+	    id: string;
+	    sourceAssetVersionId: string;
+	    targetAssetVersionId: string;
+	    type: string;
+	    createdAt: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new AssetRelationDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.sourceAssetVersionId = source["sourceAssetVersionId"];
+	        this.targetAssetVersionId = source["targetAssetVersionId"];
+	        this.type = source["type"];
+	        this.createdAt = source["createdAt"];
+	    }
+	}
+	
 	export class AssetVersionDTO {
 	    id: string;
 	    assetId: string;
 	    versionNumber: number;
 	    status: string;
 	    basedOnVersionId?: string;
+	    parentAssetVersionId?: string;
+	    variantType?: string;
 	    prompt?: string;
 	    negativePrompt?: string;
 	    providerConfigId?: string;
 	    modelConfigId?: string;
 	    modelParameters?: string;
+	    seed?: string;
 	    generationJobId?: string;
+	    sourceAgentRunId?: string;
 	    metadata?: string;
 	    createdByType: string;
+	    createdById?: string;
 	    legacyMetadata?: string;
 	    createdAt: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new AssetVersionDTO(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -486,14 +634,19 @@ export namespace desktop {
 	        this.versionNumber = source["versionNumber"];
 	        this.status = source["status"];
 	        this.basedOnVersionId = source["basedOnVersionId"];
+	        this.parentAssetVersionId = source["parentAssetVersionId"];
+	        this.variantType = source["variantType"];
 	        this.prompt = source["prompt"];
 	        this.negativePrompt = source["negativePrompt"];
 	        this.providerConfigId = source["providerConfigId"];
 	        this.modelConfigId = source["modelConfigId"];
 	        this.modelParameters = source["modelParameters"];
+	        this.seed = source["seed"];
 	        this.generationJobId = source["generationJobId"];
+	        this.sourceAgentRunId = source["sourceAgentRunId"];
 	        this.metadata = source["metadata"];
 	        this.createdByType = source["createdByType"];
+	        this.createdById = source["createdById"];
 	        this.legacyMetadata = source["legacyMetadata"];
 	        this.createdAt = source["createdAt"];
 	    }
@@ -502,17 +655,89 @@ export namespace desktop {
 	    versionId: string;
 	    fileHash: string;
 	    role?: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new AttachFileRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.versionId = source["versionId"];
 	        this.fileHash = source["fileHash"];
 	        this.role = source["role"];
 	    }
+	}
+	export class AttachJobResultFile {
+	    fileHash: string;
+	    role?: string;
+	    ordinal?: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new AttachJobResultFile(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.fileHash = source["fileHash"];
+	        this.role = source["role"];
+	        this.ordinal = source["ordinal"];
+	    }
+	}
+	export class AttachJobResultRequest {
+	    assetId: string;
+	    jobId: string;
+	    files: AttachJobResultFile[];
+	    prompt?: string;
+	    providerConfigId?: string;
+	    modelConfigId?: string;
+	    modelParameters?: string;
+	    seed?: string;
+	    basedOnVersionId?: string;
+	    parentAssetVersionId?: string;
+	    variantType?: string;
+	    sourceAgentRunId?: string;
+	    createdById?: string;
+	    metadata?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new AttachJobResultRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.assetId = source["assetId"];
+	        this.jobId = source["jobId"];
+	        this.files = this.convertValues(source["files"], AttachJobResultFile);
+	        this.prompt = source["prompt"];
+	        this.providerConfigId = source["providerConfigId"];
+	        this.modelConfigId = source["modelConfigId"];
+	        this.modelParameters = source["modelParameters"];
+	        this.seed = source["seed"];
+	        this.basedOnVersionId = source["basedOnVersionId"];
+	        this.parentAssetVersionId = source["parentAssetVersionId"];
+	        this.variantType = source["variantType"];
+	        this.sourceAgentRunId = source["sourceAgentRunId"];
+	        this.createdById = source["createdById"];
+	        this.metadata = source["metadata"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class BackupPreview {
 	    manifestVersion: number;
@@ -526,11 +751,11 @@ export namespace desktop {
 	    fileBytes: number;
 	    stagedFiles: number;
 	    stagedDatabase: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new BackupPreview(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.manifestVersion = source["manifestVersion"];
@@ -554,11 +779,11 @@ export namespace desktop {
 	    documentId?: string;
 	    documentType?: string;
 	    confirmDuplicate?: boolean;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new BeginImportUploadRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.projectId = source["projectId"];
@@ -573,11 +798,11 @@ export namespace desktop {
 	export class BeginImportUploadResult {
 	    uploadId: string;
 	    chunkBytes: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new BeginImportUploadResult(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.uploadId = source["uploadId"];
@@ -591,11 +816,11 @@ export namespace desktop {
 	    createdAt: string;
 	    updatedAt: string;
 	    revision: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new CanvasChatSessionDTO(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -618,11 +843,11 @@ export namespace desktop {
 	    metadata?: string;
 	    legacyMetadata?: string;
 	    revision: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new CanvasEdgeDTO(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -652,11 +877,11 @@ export namespace desktop {
 	    uiState?: string;
 	    legacyMetadata?: string;
 	    revision: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new CanvasNodeDTO(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -678,11 +903,11 @@ export namespace desktop {
 	    x: number;
 	    y: number;
 	    k: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ViewportDTO(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.x = source["x"];
@@ -701,11 +926,11 @@ export namespace desktop {
 	    createdAt: string;
 	    updatedAt: string;
 	    revision: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ProjectDTO(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -729,11 +954,11 @@ export namespace desktop {
 	    nodes: CanvasNodeDTO[];
 	    edges: CanvasEdgeDTO[];
 	    chatSessions: CanvasChatSessionDTO[];
-
+	
 	    static createFrom(source: any = {}) {
 	        return new CanvasSnapshotDTO(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.project = this.convertValues(source["project"], ProjectDTO);
@@ -745,7 +970,7 @@ export namespace desktop {
 	        this.edges = this.convertValues(source["edges"], CanvasEdgeDTO);
 	        this.chatSessions = this.convertValues(source["chatSessions"], CanvasChatSessionDTO);
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -771,11 +996,11 @@ export namespace desktop {
 	    titleEndOffset: number;
 	    endOffset: number;
 	    source: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ChapterBoundaryDTO(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.ordinal = source["ordinal"];
@@ -798,11 +1023,11 @@ export namespace desktop {
 	    createdAt: string;
 	    updatedAt: string;
 	    revision: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ChapterDTO(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -821,11 +1046,11 @@ export namespace desktop {
 	export class ClearStaleMarkRequest {
 	    artifactType: string;
 	    artifactId: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ClearStaleMarkRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.artifactType = source["artifactType"];
@@ -835,11 +1060,11 @@ export namespace desktop {
 	export class ConfirmChaptersRequestDTO {
 	    sourceDocumentVersionId: string;
 	    traceId?: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ConfirmChaptersRequestDTO(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.sourceDocumentVersionId = source["sourceDocumentVersionId"];
@@ -857,11 +1082,11 @@ export namespace desktop {
 	    risks?: string;
 	    eventLinks?: StrategyEventLinkDTO[];
 	    changeReason?: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new CreateAdaptationStrategyVersionRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.episodeId = source["episodeId"];
@@ -875,7 +1100,7 @@ export namespace desktop {
 	        this.eventLinks = this.convertValues(source["eventLinks"], StrategyEventLinkDTO);
 	        this.changeReason = source["changeReason"];
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -900,11 +1125,11 @@ export namespace desktop {
 	    name: string;
 	    description?: string;
 	    legacyMetadata?: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new CreateAssetRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.projectId = source["projectId"];
@@ -922,11 +1147,11 @@ export namespace desktop {
 	    endOffset: number;
 	    contentHash?: string;
 	    status?: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new CreateChapterRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.sourceDocumentVersionId = source["sourceDocumentVersionId"];
@@ -954,11 +1179,11 @@ export namespace desktop {
 	    createdById?: string;
 	    changeReason?: string;
 	    legacyMetadata?: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new CreateDirectorPlanVersionRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.episodeId = source["episodeId"];
@@ -987,11 +1212,11 @@ export namespace desktop {
 	    toPort?: string;
 	    required?: boolean;
 	    metadata?: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new CreateEdgeRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.documentId = source["documentId"];
@@ -1010,11 +1235,11 @@ export namespace desktop {
 	    episodeNumber: number;
 	    title?: string;
 	    targetDurationSeconds?: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new CreateEpisodeRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.projectId = source["projectId"];
@@ -1035,11 +1260,11 @@ export namespace desktop {
 	    createdById?: string;
 	    changeReason?: string;
 	    legacyMetadata?: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new CreatePanelVersionRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.storyboardItemId = source["storyboardItemId"];
@@ -1067,11 +1292,11 @@ export namespace desktop {
 	    audience?: string;
 	    contentRating?: string;
 	    adaptationMode?: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new CreateProjectRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];
@@ -1101,11 +1326,11 @@ export namespace desktop {
 	    estimatedDurationSeconds?: number;
 	    sourceStoryEventId?: string;
 	    isOriginalAdaptation?: boolean;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new CreateSceneRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.scriptVersionId = source["scriptVersionId"];
@@ -1134,11 +1359,11 @@ export namespace desktop {
 	    createdById?: string;
 	    changeReason?: string;
 	    legacyMetadata?: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new CreateScriptVersionRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.scriptId = source["scriptId"];
@@ -1166,11 +1391,11 @@ export namespace desktop {
 	    actionDescription?: string;
 	    audioIntent?: string;
 	    continuityNotes?: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new CreateShotRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.sceneId = source["sceneId"];
@@ -1190,11 +1415,11 @@ export namespace desktop {
 	    projectId: string;
 	    type: string;
 	    name: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new CreateSourceDocumentRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.projectId = source["projectId"];
@@ -1210,11 +1435,11 @@ export namespace desktop {
 	    inputJson?: string;
 	    actorType?: string;
 	    actorId?: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new CreateStageRunRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.workflowRunId = source["workflowRunId"];
@@ -1231,11 +1456,11 @@ export namespace desktop {
 	    type: string;
 	    canonicalName: string;
 	    sourceScope?: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new CreateStoryEntityRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.projectId = source["projectId"];
@@ -1260,11 +1485,11 @@ export namespace desktop {
 	    confidence?: number;
 	    sourceScope?: string;
 	    createdByAgentRunId?: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new CreateStoryEventRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.projectId = source["projectId"];
@@ -1295,11 +1520,11 @@ export namespace desktop {
 	    validToEventId?: string;
 	    confidence?: number;
 	    sourceScope?: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new CreateStoryRelationRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.projectId = source["projectId"];
@@ -1325,11 +1550,11 @@ export namespace desktop {
 	    estimatedDurationSeconds?: number;
 	    selectedEventIds?: string[];
 	    changeReason?: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new CreateStorySkeletonVersionRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.episodeId = source["episodeId"];
@@ -1356,11 +1581,11 @@ export namespace desktop {
 	    actionDescription?: string;
 	    dialogueAudioSummary?: string;
 	    continuityNotes?: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new CreateStoryboardItemRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.storyboardVersionId = source["storyboardVersionId"];
@@ -1386,11 +1611,11 @@ export namespace desktop {
 	    createdById?: string;
 	    changeReason?: string;
 	    legacyMetadata?: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new CreateStoryboardVersionRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.storyboardId = source["storyboardId"];
@@ -1411,11 +1636,11 @@ export namespace desktop {
 	    configurationJson?: string;
 	    actorType?: string;
 	    actorId?: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new CreateWorkflowRunRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.projectId = source["projectId"];
@@ -1429,11 +1654,11 @@ export namespace desktop {
 	export class DecideStoryEntityRequest {
 	    id: string;
 	    revision: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new DecideStoryEntityRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -1443,11 +1668,11 @@ export namespace desktop {
 	export class DecideStoryEventRequest {
 	    id: string;
 	    revision: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new DecideStoryEventRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -1465,11 +1690,11 @@ export namespace desktop {
 	    performanceNote?: string;
 	    sourceStoryEventId?: string;
 	    locked: boolean;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new DialogueLineDTO(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.lineId = source["lineId"];
@@ -1504,11 +1729,11 @@ export namespace desktop {
 	    changeReason?: string;
 	    legacyMetadata?: string;
 	    createdAt: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new DirectorPlanVersionDTO(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -1537,11 +1762,11 @@ export namespace desktop {
 	    startRune: number;
 	    endRune: number;
 	    totalRunes: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new DocumentRangeDTO(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.text = source["text"];
@@ -1560,11 +1785,11 @@ export namespace desktop {
 	    occurredAt: string;
 	    traceId: string;
 	    payload: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new DomainEventDTO(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.eventId = source["eventId"];
@@ -1586,11 +1811,11 @@ export namespace desktop {
 	    endingHook?: string;
 	    estimatedDurationSeconds?: number;
 	    selectedEventIds?: string[];
-
+	
 	    static createFrom(source: any = {}) {
 	        return new EditSkeletonInput(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.openingHook = source["openingHook"];
@@ -1610,11 +1835,11 @@ export namespace desktop {
 	    rationale?: string;
 	    risks?: string;
 	    eventLinks?: StrategyEventLinkDTO[];
-
+	
 	    static createFrom(source: any = {}) {
 	        return new EditStrategyInput(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.strategySummary = source["strategySummary"];
@@ -1625,7 +1850,7 @@ export namespace desktop {
 	        this.risks = source["risks"];
 	        this.eventLinks = this.convertValues(source["eventLinks"], StrategyEventLinkDTO);
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -1662,11 +1887,11 @@ export namespace desktop {
 	    createdAt: string;
 	    updatedAt: string;
 	    revision: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new EpisodeDTO(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -1690,11 +1915,11 @@ export namespace desktop {
 	}
 	export class ExtractChapterRequest {
 	    chapterId: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ExtractChapterRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.chapterId = source["chapterId"];
@@ -1710,11 +1935,11 @@ export namespace desktop {
 	    participants: number;
 	    evidence: number;
 	    summary?: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ExtractionResultDTO(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.chapterId = source["chapterId"];
@@ -1732,11 +1957,11 @@ export namespace desktop {
 	    field: string;
 	    before: string;
 	    after: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new FieldChangeDTO(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.field = source["field"];
@@ -1750,11 +1975,11 @@ export namespace desktop {
 	    field: string;
 	    lockedBy?: string;
 	    createdAt?: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new FieldLockDTO(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.versionId = source["versionId"];
@@ -1766,11 +1991,11 @@ export namespace desktop {
 	}
 	export class FinishImportUploadRequest {
 	    uploadId: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new FinishImportUploadRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.uploadId = source["uploadId"];
@@ -1784,11 +2009,11 @@ export namespace desktop {
 	    format?: string;
 	    content: number[];
 	    confirmDuplicate?: boolean;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ImportDocumentRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.projectId = source["projectId"];
@@ -1813,11 +2038,11 @@ export namespace desktop {
 	    importMetadataJson?: string;
 	    createdByType: string;
 	    createdAt: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new SourceDocumentVersionDTO(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -1845,11 +2070,11 @@ export namespace desktop {
 	    createdAt: string;
 	    updatedAt: string;
 	    revision: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new SourceDocumentDTO(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -1871,11 +2096,11 @@ export namespace desktop {
 	    charCount: number;
 	    encoding: string;
 	    format: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ImportDocumentResult(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.document = this.convertValues(source["document"], SourceDocumentDTO);
@@ -1885,7 +2110,7 @@ export namespace desktop {
 	        this.encoding = source["encoding"];
 	        this.format = source["format"];
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -1909,11 +2134,11 @@ export namespace desktop {
 	    mode?: string;
 	    sourceCase?: string;
 	    legacyRoot?: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ImportProjectsRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.snapshotJson = source["snapshotJson"];
@@ -1928,11 +2153,11 @@ export namespace desktop {
 	    itemId?: string;
 	    fields?: FieldChangeDTO[];
 	    locked: boolean;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ItemChangeDTO(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.kind = source["kind"];
@@ -1941,7 +2166,7 @@ export namespace desktop {
 	        this.fields = this.convertValues(source["fields"], FieldChangeDTO);
 	        this.locked = source["locked"];
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -1967,11 +2192,11 @@ export namespace desktop {
 	    errorCode?: string;
 	    startedAt: string;
 	    finishedAt?: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new JobAttemptDTO(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -1986,11 +2211,11 @@ export namespace desktop {
 	    storageKey: string;
 	    mime: string;
 	    size: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new JobResultFileDTO(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.storageKey = source["storageKey"];
@@ -2017,11 +2242,11 @@ export namespace desktop {
 	    resultFiles?: JobResultFileDTO[];
 	    resultRemoteOnly?: boolean;
 	    cancelledRemoteUnconfirmed?: boolean;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new JobDTO(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -2043,7 +2268,7 @@ export namespace desktop {
 	        this.resultRemoteOnly = source["resultRemoteOnly"];
 	        this.cancelledRemoteUnconfirmed = source["cancelledRemoteUnconfirmed"];
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -2066,11 +2291,11 @@ export namespace desktop {
 	    mime: string;
 	    dataUrl: string;
 	    size: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new JobResultFileContent(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.mime = source["mime"];
@@ -2078,18 +2303,50 @@ export namespace desktop {
 	        this.size = source["size"];
 	    }
 	}
-
+	
+	export class LineageDTO {
+	    from: AssetRelationDTO[];
+	    to: AssetRelationDTO[];
+	
+	    static createFrom(source: any = {}) {
+	        return new LineageDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.from = this.convertValues(source["from"], AssetRelationDTO);
+	        this.to = this.convertValues(source["to"], AssetRelationDTO);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class ListAssetsRequest {
 	    projectId?: string;
 	    types?: string[];
 	    includeDeleted?: boolean;
 	    limit?: number;
 	    offset?: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ListAssetsRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.projectId = source["projectId"];
@@ -2106,11 +2363,11 @@ export namespace desktop {
 	    eventType?: string;
 	    traceId?: string;
 	    limit?: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ListDomainEventsRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.projectId = source["projectId"];
@@ -2126,11 +2383,11 @@ export namespace desktop {
 	    activeOnly?: boolean;
 	    limit?: number;
 	    offset?: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ListJobsRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.statuses = source["statuses"];
@@ -2142,11 +2399,11 @@ export namespace desktop {
 	export class ListProjectRulesRequest {
 	    projectId: string;
 	    includeDeleted?: boolean;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ListProjectRulesRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.projectId = source["projectId"];
@@ -2158,11 +2415,11 @@ export namespace desktop {
 	    limit?: number;
 	    offset?: number;
 	    includeTrashed?: boolean;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ListProjectsRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.statuses = source["statuses"];
@@ -2174,11 +2431,11 @@ export namespace desktop {
 	export class LockStoryEntityRequest {
 	    id: string;
 	    revision: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new LockStoryEntityRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -2188,11 +2445,11 @@ export namespace desktop {
 	export class LockableFieldDTO {
 	    family: string;
 	    field: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new LockableFieldDTO(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.family = source["family"];
@@ -2209,11 +2466,11 @@ export namespace desktop {
 	    actionDescription?: string;
 	    audioIntent?: string;
 	    continuityNotes?: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ScriptStructureShotInput(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.shotNumber = source["shotNumber"];
@@ -2234,11 +2491,11 @@ export namespace desktop {
 	    emotion?: string;
 	    performanceNote?: string;
 	    sourceStoryEventId?: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ScriptStructureLineInput(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.type = source["type"];
@@ -2262,11 +2519,11 @@ export namespace desktop {
 	    isOriginalAdaptation?: boolean;
 	    dialogueLines?: ScriptStructureLineInput[];
 	    shots?: ScriptStructureShotInput[];
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ScriptStructureSceneInput(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.sceneNumber = source["sceneNumber"];
@@ -2282,7 +2539,7 @@ export namespace desktop {
 	        this.dialogueLines = this.convertValues(source["dialogueLines"], ScriptStructureLineInput);
 	        this.shots = this.convertValues(source["shots"], ScriptStructureShotInput);
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -2315,11 +2572,11 @@ export namespace desktop {
 	    summary?: string;
 	    changeReason?: string;
 	    createdById?: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ManualEditScriptRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.stageRunId = source["stageRunId"];
@@ -2336,7 +2593,7 @@ export namespace desktop {
 	        this.changeReason = source["changeReason"];
 	        this.createdById = source["createdById"];
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -2363,11 +2620,11 @@ export namespace desktop {
 	    reason?: string;
 	    upstreamType?: string;
 	    upstreamId?: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new MarkStaleRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.artifactType = source["artifactType"];
@@ -2383,11 +2640,11 @@ export namespace desktop {
 	    firstChapterId: string;
 	    secondChapterId: string;
 	    revision: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new MergeChapterRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.firstChapterId = source["firstChapterId"];
@@ -2401,11 +2658,11 @@ export namespace desktop {
 	    y: number;
 	    zIndex?: number;
 	    revision: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new NodePositionDTO(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -2418,17 +2675,17 @@ export namespace desktop {
 	export class MoveNodesRequest {
 	    documentId: string;
 	    positions: NodePositionDTO[];
-
+	
 	    static createFrom(source: any = {}) {
 	        return new MoveNodesRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.documentId = source["documentId"];
 	        this.positions = this.convertValues(source["positions"], NodePositionDTO);
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -2447,7 +2704,7 @@ export namespace desktop {
 		    return a;
 		}
 	}
-
+	
 	export class OpenStoryConflictRequest {
 	    projectId: string;
 	    leftFactType: string;
@@ -2455,11 +2712,11 @@ export namespace desktop {
 	    rightFactType: string;
 	    rightFactId: string;
 	    conflictType?: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new OpenStoryConflictRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.projectId = source["projectId"];
@@ -2475,11 +2732,11 @@ export namespace desktop {
 	    format?: string;
 	    name?: string;
 	    content: number[];
-
+	
 	    static createFrom(source: any = {}) {
 	        return new PrecheckImportRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.projectId = source["projectId"];
@@ -2498,11 +2755,11 @@ export namespace desktop {
 	    duplicateDocumentId?: string;
 	    duplicateDocumentName?: string;
 	    warnings: string[];
-
+	
 	    static createFrom(source: any = {}) {
 	        return new PrecheckImportResult(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.format = source["format"];
@@ -2515,7 +2772,7 @@ export namespace desktop {
 	        this.duplicateDocumentName = source["duplicateDocumentName"];
 	        this.warnings = source["warnings"];
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -2534,7 +2791,7 @@ export namespace desktop {
 		    return a;
 		}
 	}
-
+	
 	export class ProjectRuleDTO {
 	    id: string;
 	    projectId: string;
@@ -2547,11 +2804,11 @@ export namespace desktop {
 	    sourceId: string;
 	    lockedByUser: boolean;
 	    revision: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ProjectRuleDTO(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -2570,11 +2827,11 @@ export namespace desktop {
 	export class ProjectScriptVersionRequest {
 	    projectId: string;
 	    scriptVersionId: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ProjectScriptVersionRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.projectId = source["projectId"];
@@ -2583,11 +2840,11 @@ export namespace desktop {
 	}
 	export class ProjectScriptVersionResult {
 	    sceneNodeIds: string[];
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ProjectScriptVersionResult(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.sceneNodeIds = source["sceneNodeIds"];
@@ -2606,11 +2863,11 @@ export namespace desktop {
 	    language: string;
 	    timezone: string;
 	    revision: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ProjectSettingsDTO(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.projectId = source["projectId"];
@@ -2634,11 +2891,11 @@ export namespace desktop {
 	    baseUrl: string;
 	    localApprove: boolean;
 	    enabled: boolean;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ProviderConfigRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -2658,11 +2915,11 @@ export namespace desktop {
 	    cancelled: number;
 	    activeTotal: number;
 	    paused: boolean;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new QueueSummaryDTO(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.queued = source["queued"];
@@ -2681,11 +2938,11 @@ export namespace desktop {
 	    endRune: number;
 	    direction?: string;
 	    totalRunes?: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ReadDocumentRangeRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.sourceDocumentVersionId = source["sourceDocumentVersionId"];
@@ -2706,11 +2963,11 @@ export namespace desktop {
 	    suggestion?: string;
 	    evidenceJson?: string;
 	    autoFixable?: boolean;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ReviewIssueInputRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.rule = source["rule"];
@@ -2736,11 +2993,11 @@ export namespace desktop {
 	    recommendedAction?: string;
 	    summary?: string;
 	    issues?: ReviewIssueInputRequest[];
-
+	
 	    static createFrom(source: any = {}) {
 	        return new RecordReviewRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.stageRunId = source["stageRunId"];
@@ -2754,7 +3011,7 @@ export namespace desktop {
 	        this.summary = source["summary"];
 	        this.issues = this.convertValues(source["issues"], ReviewIssueInputRequest);
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -2777,11 +3034,11 @@ export namespace desktop {
 	    id: string;
 	    name: string;
 	    revision: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new RenameProjectRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -2793,11 +3050,11 @@ export namespace desktop {
 	    conflictId: string;
 	    resolution: string;
 	    resolvedBy: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ResolveStoryConflictRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.conflictId = source["conflictId"];
@@ -2822,11 +3079,11 @@ export namespace desktop {
 	    resolvedBy?: string;
 	    resolvedAt?: string;
 	    createdAt: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ReviewIssueDTO(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -2847,7 +3104,7 @@ export namespace desktop {
 	        this.createdAt = source["createdAt"];
 	    }
 	}
-
+	
 	export class ReviewReportDTO {
 	    id: string;
 	    stageRunId: string;
@@ -2861,11 +3118,11 @@ export namespace desktop {
 	    summary?: string;
 	    createdAt: string;
 	    issues: ReviewIssueDTO[];
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ReviewReportDTO(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -2881,7 +3138,7 @@ export namespace desktop {
 	        this.createdAt = source["createdAt"];
 	        this.issues = this.convertValues(source["issues"], ReviewIssueDTO);
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -2908,11 +3165,11 @@ export namespace desktop {
 	    contentHash?: string;
 	    status?: string;
 	    revision: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ReviseChapterRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.chapterId = source["chapterId"];
@@ -2939,11 +3196,11 @@ export namespace desktop {
 	    selectedEventIds?: string[];
 	    modelId?: string;
 	    providerId?: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new RunScriptStageRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.workflowRunId = source["workflowRunId"];
@@ -2969,11 +3226,11 @@ export namespace desktop {
 	    artifactVersionId?: string;
 	    modelId?: string;
 	    providerId?: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new RunScriptSupervisionRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.stageRunId = source["stageRunId"];
@@ -2990,11 +3247,11 @@ export namespace desktop {
 	    title: string;
 	    messagesJson: string;
 	    revision?: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new SaveChatSessionRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -3010,11 +3267,11 @@ export namespace desktop {
 	    scenes: ScriptStructureSceneInput[];
 	    summary?: string;
 	    changeReason?: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new SaveScriptStructureRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.scriptVersionId = source["scriptVersionId"];
@@ -3023,7 +3280,7 @@ export namespace desktop {
 	        this.summary = source["summary"];
 	        this.changeReason = source["changeReason"];
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -3059,11 +3316,11 @@ export namespace desktop {
 	    createdAt: string;
 	    updatedAt: string;
 	    revision: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new SceneDTO(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -3098,11 +3355,11 @@ export namespace desktop {
 	    audioIntent?: string;
 	    continuityNotes?: string;
 	    status: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new SceneStructureShotDTO(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.shotId = source["shotId"];
@@ -3136,11 +3393,11 @@ export namespace desktop {
 	    isOriginalAdaptation: boolean;
 	    dialogueLines: DialogueLineDTO[];
 	    shots: SceneStructureShotDTO[];
-
+	
 	    static createFrom(source: any = {}) {
 	        return new SceneStructureDTO(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.sceneId = source["sceneId"];
@@ -3159,7 +3416,7 @@ export namespace desktop {
 	        this.dialogueLines = this.convertValues(source["dialogueLines"], DialogueLineDTO);
 	        this.shots = this.convertValues(source["shots"], SceneStructureShotDTO);
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -3178,7 +3435,7 @@ export namespace desktop {
 		    return a;
 		}
 	}
-
+	
 	export class ScriptDTO {
 	    id: string;
 	    episodeId: string;
@@ -3186,11 +3443,11 @@ export namespace desktop {
 	    createdAt: string;
 	    updatedAt: string;
 	    revision: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ScriptDTO(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -3209,11 +3466,11 @@ export namespace desktop {
 	    artifactIds: string[];
 	    repaired: boolean;
 	    summary?: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ScriptStageResultDTO(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.stageRunId = source["stageRunId"];
@@ -3229,18 +3486,18 @@ export namespace desktop {
 	    scriptVersionId: string;
 	    scenes: SceneStructureDTO[];
 	    estimatedDurationSeconds: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ScriptStructureDTO(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.scriptVersionId = source["scriptVersionId"];
 	        this.scenes = this.convertValues(source["scenes"], SceneStructureDTO);
 	        this.estimatedDurationSeconds = source["estimatedDurationSeconds"];
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -3259,9 +3516,9 @@ export namespace desktop {
 		    return a;
 		}
 	}
-
-
-
+	
+	
+	
 	export class ScriptVersionDTO {
 	    id: string;
 	    scriptId: string;
@@ -3278,11 +3535,11 @@ export namespace desktop {
 	    changeReason?: string;
 	    legacyMetadata?: string;
 	    createdAt: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ScriptVersionDTO(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -3306,11 +3563,11 @@ export namespace desktop {
 	    lineId: string;
 	    locked: boolean;
 	    revision: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new SetDialogueLineLockedRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.lineId = source["lineId"];
@@ -3322,11 +3579,11 @@ export namespace desktop {
 	    id: string;
 	    status: string;
 	    revision: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new SetProjectStatusRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -3337,11 +3594,11 @@ export namespace desktop {
 	export class SetSecretRequest {
 	    providerId: string;
 	    value: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new SetSecretRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.providerId = source["providerId"];
@@ -3365,11 +3622,11 @@ export namespace desktop {
 	    createdAt: string;
 	    updatedAt: string;
 	    revision: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ShotDTO(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -3390,18 +3647,18 @@ export namespace desktop {
 	        this.revision = source["revision"];
 	    }
 	}
-
-
+	
+	
 	export class SplitChapterRequest {
 	    chapterId: string;
 	    splitAtOffset: number;
 	    secondTitle?: string;
 	    revision: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new SplitChapterRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.chapterId = source["chapterId"];
@@ -3426,11 +3683,11 @@ export namespace desktop {
 	    startedAt?: string;
 	    finishedAt?: string;
 	    revision: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new StageRunDTO(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -3462,11 +3719,11 @@ export namespace desktop {
 	    waivedByDecisionId?: string;
 	    waivedReason?: string;
 	    clearedAt?: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new StaleMarkDTO(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.artifactType = source["artifactType"];
@@ -3490,11 +3747,11 @@ export namespace desktop {
 	    sourceStart?: number;
 	    sourceEnd?: number;
 	    createdAt: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new StoryEntityAliasDTO(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -3518,11 +3775,11 @@ export namespace desktop {
 	    createdAt: string;
 	    updatedAt: string;
 	    revision: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new StoryEntityDTO(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -3560,11 +3817,11 @@ export namespace desktop {
 	    createdAt: string;
 	    updatedAt: string;
 	    revision: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new StoryEventDTO(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -3597,11 +3854,11 @@ export namespace desktop {
 	    stateBefore?: string;
 	    stateAfter?: string;
 	    createdAt: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new StoryEventParticipantDTO(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.storyEventId = source["storyEventId"];
@@ -3625,11 +3882,11 @@ export namespace desktop {
 	    resolvedBy?: string;
 	    createdAt: string;
 	    resolvedAt?: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new StoryFactConflictDTO(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -3657,11 +3914,11 @@ export namespace desktop {
 	    quoteHash?: string;
 	    sourceKind: string;
 	    createdAt: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new StoryFactSourceDTO(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -3692,11 +3949,11 @@ export namespace desktop {
 	    createdAt: string;
 	    updatedAt: string;
 	    revision: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new StoryRelationDTO(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -3734,11 +3991,11 @@ export namespace desktop {
 	    createdById?: string;
 	    changeReason?: string;
 	    createdAt: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new StorySkeletonVersionDTO(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.versionId = source["versionId"];
@@ -3767,11 +4024,11 @@ export namespace desktop {
 	    createdAt: string;
 	    updatedAt: string;
 	    revision: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new StoryboardDTO(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -3799,11 +4056,11 @@ export namespace desktop {
 	    createdAt: string;
 	    updatedAt: string;
 	    revision: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new StoryboardItemDTO(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -3840,11 +4097,11 @@ export namespace desktop {
 	    changeReason?: string;
 	    legacyMetadata?: string;
 	    createdAt: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new StoryboardPanelVersionDTO(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -3878,11 +4135,11 @@ export namespace desktop {
 	    changeReason?: string;
 	    legacyMetadata?: string;
 	    createdAt: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new StoryboardVersionDTO(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -3900,7 +4157,7 @@ export namespace desktop {
 	        this.createdAt = source["createdAt"];
 	    }
 	}
-
+	
 	export class SubmitGateDecisionRequest {
 	    workflowRunId: string;
 	    stageRunId?: string;
@@ -3911,11 +4168,11 @@ export namespace desktop {
 	    lockedEntityRefsJson?: string;
 	    createdByType?: string;
 	    createdById?: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new SubmitGateDecisionRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.workflowRunId = source["workflowRunId"];
@@ -3944,11 +4201,11 @@ export namespace desktop {
 	    mask?: string;
 	    maskMime?: string;
 	    priority?: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new SubmitImageJobRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.projectId = source["projectId"];
@@ -3971,18 +4228,18 @@ export namespace desktop {
 	    providerId: string;
 	    model: string;
 	    messages: providers.TextMessage[];
-
+	
 	    static createFrom(source: any = {}) {
 	        return new TextRequestDTO(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.providerId = source["providerId"];
 	        this.model = source["model"];
 	        this.messages = this.convertValues(source["messages"], providers.TextMessage);
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -4007,11 +4264,11 @@ export namespace desktop {
 	    revision: number;
 	    actorType?: string;
 	    actorId?: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new TransitionStageRunRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.stageRunId = source["stageRunId"];
@@ -4027,11 +4284,11 @@ export namespace desktop {
 	    revision: number;
 	    actorType?: string;
 	    actorId?: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new TransitionWorkflowRunRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.runId = source["runId"];
@@ -4045,11 +4302,11 @@ export namespace desktop {
 	    episodeId: string;
 	    status: string;
 	    revision: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new UpdateEpisodeStatusRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.episodeId = source["episodeId"];
@@ -4068,11 +4325,11 @@ export namespace desktop {
 	    contentRating: string;
 	    adaptationMode: string;
 	    revision: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new UpdateProjectSettingsRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.projectId = source["projectId"];
@@ -4087,22 +4344,60 @@ export namespace desktop {
 	        this.revision = source["revision"];
 	    }
 	}
+	export class UpdateStoryboardItemRequest {
+	    itemId: string;
+	    expectedRevision: number;
+	    shotSize?: string;
+	    cameraAngle?: string;
+	    cameraMovement?: string;
+	    durationSeconds?: number;
+	    visualDescription?: string;
+	    actionDescription?: string;
+	    dialogueAudioSummary?: string;
+	    continuityNotes?: string;
+	    firstFrameDescription?: string;
+	    lastFrameDescription?: string;
+	    videoMotionDescription?: string;
+	    status?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new UpdateStoryboardItemRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.itemId = source["itemId"];
+	        this.expectedRevision = source["expectedRevision"];
+	        this.shotSize = source["shotSize"];
+	        this.cameraAngle = source["cameraAngle"];
+	        this.cameraMovement = source["cameraMovement"];
+	        this.durationSeconds = source["durationSeconds"];
+	        this.visualDescription = source["visualDescription"];
+	        this.actionDescription = source["actionDescription"];
+	        this.dialogueAudioSummary = source["dialogueAudioSummary"];
+	        this.continuityNotes = source["continuityNotes"];
+	        this.firstFrameDescription = source["firstFrameDescription"];
+	        this.lastFrameDescription = source["lastFrameDescription"];
+	        this.videoMotionDescription = source["videoMotionDescription"];
+	        this.status = source["status"];
+	    }
+	}
 	export class UpdateViewportRequest {
 	    documentId: string;
 	    viewport: ViewportDTO;
 	    revision: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new UpdateViewportRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.documentId = source["documentId"];
 	        this.viewport = this.convertValues(source["viewport"], ViewportDTO);
 	        this.revision = source["revision"];
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -4136,11 +4431,11 @@ export namespace desktop {
 	    uiState?: string;
 	    legacyMetadata?: string;
 	    revision?: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new UpsertNodeRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -4171,11 +4466,11 @@ export namespace desktop {
 	    createdByType: string;
 	    createdById?: string;
 	    createdAt: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new UserGateDecisionDTO(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -4201,11 +4496,11 @@ export namespace desktop {
 	    removed: number;
 	    modified: number;
 	    unchanged: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new VersionDiffDTO(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.family = source["family"];
@@ -4218,7 +4513,7 @@ export namespace desktop {
 	        this.modified = source["modified"];
 	        this.unchanged = source["unchanged"];
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -4237,17 +4532,17 @@ export namespace desktop {
 		    return a;
 		}
 	}
-
+	
 	export class WaiveStaleMarkRequest {
 	    artifactType: string;
 	    artifactId: string;
 	    decisionId: string;
 	    reason: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new WaiveStaleMarkRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.artifactType = source["artifactType"];
@@ -4267,11 +4562,11 @@ export namespace desktop {
 	    actorType: string;
 	    actorId?: string;
 	    createdAt: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new WorkflowEventDTO(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -4300,11 +4595,11 @@ export namespace desktop {
 	    updatedAt: string;
 	    completedAt?: string;
 	    revision: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new WorkflowRunDTO(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -4326,18 +4621,18 @@ export namespace desktop {
 }
 
 export namespace health {
-
+	
 	export class Snapshot {
 	    version: string;
 	    database: string;
 	    dataDirectory: string;
 	    safeMode: boolean;
 	    diagnostic?: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new Snapshot(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.version = source["version"];
@@ -4351,18 +4646,18 @@ export namespace health {
 }
 
 export namespace provider {
-
+	
 	export class HealthState {
 	    ProviderID: string;
 	    Healthy: boolean;
 	    // Go type: time
 	    CheckedAt: any;
 	    Detail: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new HealthState(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.ProviderID = source["ProviderID"];
@@ -4370,7 +4665,7 @@ export namespace provider {
 	        this.CheckedAt = this.convertValues(source["CheckedAt"], null);
 	        this.Detail = source["Detail"];
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -4393,7 +4688,7 @@ export namespace provider {
 }
 
 export namespace providers {
-
+	
 	export class ConfigDTO {
 	    id: string;
 	    kind: string;
@@ -4404,11 +4699,11 @@ export namespace providers {
 	    enabled: boolean;
 	    revision: number;
 	    updatedAt?: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ConfigDTO(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -4425,11 +4720,11 @@ export namespace providers {
 	export class TextMessage {
 	    role: string;
 	    content: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new TextMessage(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.role = source["role"];
@@ -4439,11 +4734,11 @@ export namespace providers {
 	export class TextToolCall {
 	    key: string;
 	    arguments?: number[];
-
+	
 	    static createFrom(source: any = {}) {
 	        return new TextToolCall(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.key = source["key"];
@@ -4455,11 +4750,11 @@ export namespace providers {
 	    finishReason?: string;
 	    model?: string;
 	    toolCalls?: TextToolCall[];
-
+	
 	    static createFrom(source: any = {}) {
 	        return new TextResult(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.content = source["content"];
@@ -4467,7 +4762,7 @@ export namespace providers {
 	        this.model = source["model"];
 	        this.toolCalls = this.convertValues(source["toolCalls"], TextToolCall);
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -4490,18 +4785,18 @@ export namespace providers {
 }
 
 export namespace secrets {
-
+	
 	export class Status {
 	    providerId: string;
 	    configured: boolean;
 	    displayHint: string;
 	    updatedAt?: string;
 	    available: boolean;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new Status(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.providerId = source["providerId"];

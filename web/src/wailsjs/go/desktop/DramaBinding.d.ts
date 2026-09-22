@@ -12,11 +12,17 @@ export function ApplyScriptGate(arg1:desktop.ApplyScriptGateRequest):Promise<des
 
 export function ApproveAdaptationStrategyVersion(arg1:string):Promise<desktop.AdaptationStrategyVersionDTO>;
 
+export function ApproveDirectorPlanVersion(arg1:desktop.ApproveDirectorPlanVersionRequest):Promise<desktop.DirectorPlanVersionDTO>;
+
 export function ApprovePanelImage(arg1:desktop.ApprovePanelImageRequest):Promise<desktop.StoryboardPanelVersionDTO>;
 
 export function ApproveScriptVersion(arg1:desktop.ApproveScriptVersionRequest):Promise<desktop.ScriptVersionDTO>;
 
 export function ApproveStorySkeletonVersion(arg1:string):Promise<desktop.StorySkeletonVersionDTO>;
+
+export function ApproveStoryboardVersion(arg1:desktop.ApproveStoryboardVersionRequest):Promise<desktop.StoryboardVersionDTO>;
+
+export function ApprovedStoryboardVersionID(arg1:string):Promise<string>;
 
 export function ClearStaleMark(arg1:desktop.ClearStaleMarkRequest):Promise<boolean>;
 
@@ -62,19 +68,27 @@ export function EnsureScript(arg1:string):Promise<desktop.ScriptDTO>;
 
 export function EnsureStoryboard(arg1:string):Promise<desktop.StoryboardDTO>;
 
+export function GetDirectorPlanVersion(arg1:string):Promise<desktop.DirectorPlanVersionDTO>;
+
 export function GetReviewReport(arg1:string):Promise<desktop.ReviewReportDTO>;
 
 export function GetScriptStructure(arg1:string):Promise<desktop.ScriptStructureDTO>;
 
+export function GetStoryboardVersion(arg1:string):Promise<desktop.StoryboardVersionDTO>;
+
 export function ListAdaptationStrategyVersions(arg1:string):Promise<Array<desktop.AdaptationStrategyVersionDTO>>;
 
 export function ListChapters(arg1:string):Promise<Array<desktop.ChapterDTO>>;
+
+export function ListDirectorPlanVersions(arg1:string):Promise<Array<desktop.DirectorPlanVersionDTO>>;
 
 export function ListDomainEvents(arg1:desktop.ListDomainEventsRequest):Promise<Array<desktop.DomainEventDTO>>;
 
 export function ListEpisodes(arg1:string):Promise<Array<desktop.EpisodeDTO>>;
 
 export function ListOpenStaleMarks(arg1:string):Promise<Array<desktop.StaleMarkDTO>>;
+
+export function ListPanelVersions(arg1:string):Promise<Array<desktop.StoryboardPanelVersionDTO>>;
 
 export function ListPanels(arg1:string):Promise<Array<desktop.StoryboardPanelVersionDTO>>;
 
@@ -107,6 +121,8 @@ export function ListStoryRelations(arg1:string,arg2:string):Promise<Array<deskto
 export function ListStorySkeletonVersions(arg1:string):Promise<Array<desktop.StorySkeletonVersionDTO>>;
 
 export function ListStoryboardItems(arg1:string):Promise<Array<desktop.StoryboardItemDTO>>;
+
+export function ListStoryboardVersions(arg1:string):Promise<Array<desktop.StoryboardVersionDTO>>;
 
 export function ListWorkflowEvents(arg1:string):Promise<Array<desktop.WorkflowEventDTO>>;
 
@@ -165,5 +181,7 @@ export function UnlockStoryEntity(arg1:desktop.LockStoryEntityRequest):Promise<d
 export function UnlockStoryEvent(arg1:desktop.LockStoryEntityRequest):Promise<desktop.StoryEventDTO>;
 
 export function UpdateEpisodeStatus(arg1:desktop.UpdateEpisodeStatusRequest):Promise<desktop.EpisodeDTO>;
+
+export function UpdateStoryboardItem(arg1:desktop.UpdateStoryboardItemRequest):Promise<desktop.StoryboardItemDTO>;
 
 export function WaiveStaleMark(arg1:desktop.WaiveStaleMarkRequest):Promise<boolean>;
