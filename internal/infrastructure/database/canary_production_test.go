@@ -35,6 +35,9 @@ type productionCanary struct {
 	*canary
 	pipeline *appproduction.Service
 	gaps     *appassets.GapService
+	// boardPlanVersionID is the plan the last seeded board cites, so a supervisor's evidence
+	// can name it.
+	boardPlanVersionID string
 }
 
 // newProductionCanary composes the production pipeline over the canary's stack.
@@ -65,7 +68,10 @@ func TestCanaryProductionStagesToAnApprovedBoard(t *testing.T) {
 
 	// The script the board is built from, written through the SERVICE so the rows the
 	// board's citations are checked against are the ones the production path makes.
-	scriptVersionID, shotIDs := canary.seedScriptWithShots(t, 3)
+	// TWELVE shots, which is AC-BOARD-001's floor: a canary that boards three would pass a
+	// board the criterion rejects, and the row-count assertion would then live only in a
+	// fixture's JSON.
+	scriptVersionID, shotIDs := canary.seedScriptWithShots(t, 12)
 
 	// --- The director plan (FR-060) ---
 	plan := canary.runProductionStage(t, stagepipeline.StageRequest{
@@ -169,6 +175,9 @@ func TestCanaryProductionStagesToAnApprovedBoard(t *testing.T) {
 	}
 	if len(boardItems) != len(shotIDs) {
 		t.Fatalf("the board has %d rows for %d shots", len(boardItems), len(shotIDs))
+	}
+	if len(boardItems) < 12 {
+		t.Fatalf("the canary boards %d shots, and AC-BOARD-001 asks for at least twelve", len(boardItems))
 	}
 	for index, item := range boardItems {
 		if item.ShotID != shotIDs[index] {

@@ -812,6 +812,10 @@ type ProjectScriptVersionRequest struct {
 type ProjectScriptVersionResult struct {
 	// SceneNodeIDs are the canvas nodes written for the version's scenes, in ordinal order.
 	SceneNodeIDs []string
+	// ShotNodeIDs are the nodes written for the shots those scenes contain, in the script's
+	// order. ROADMAP item 11 names Shot projection, and a board's rows cite shots — so a
+	// canvas without them would show the scenes a row is inside and not the shot it is about.
+	ShotNodeIDs []string
 }
 
 // CanvasProjector writes a projection node for one entity.
@@ -854,7 +858,10 @@ func (s *Service) ProjectScriptVersion(ctx context.Context, request ProjectScrip
 	if len(structure.Scenes) == 0 {
 		return ProjectScriptVersionResult{}, scriptdomain.InvalidError("That version has no scenes to project.")
 	}
-	result := ProjectScriptVersionResult{SceneNodeIDs: make([]string, 0, len(structure.Scenes))}
+	result := ProjectScriptVersionResult{
+		SceneNodeIDs: make([]string, 0, len(structure.Scenes)),
+		ShotNodeIDs:  make([]string, 0, 16),
+	}
 	for _, scene := range structure.Scenes {
 		label := strings.TrimSpace(scene.Slugline)
 		if label == "" {
@@ -865,6 +872,25 @@ func (s *Service) ProjectScriptVersion(ctx context.Context, request ProjectScrip
 			return ProjectScriptVersionResult{}, err
 		}
 		result.SceneNodeIDs = append(result.SceneNodeIDs, nodeID)
+		// THE SHOTS ARE PROJECTED WITH THEIR SCENES, and that is ROADMAP item 11's "Shot
+		// projection": a board's rows cite shots, and a user looking at the canvas has to be
+		// able to see the shot a row is about. The projector is idempotent, so a re-run moves
+		// the existing nodes rather than piling up duplicates — which is what the canvas
+		// regression test asserts.
+		for _, shot := range scene.Shots {
+			shotLabel := strings.TrimSpace(shot.ShotNumber)
+			if shotLabel == "" {
+				shotLabel = strings.TrimSpace(shot.VisualDescription)
+			}
+			if shotLabel == "" {
+				shotLabel = "shot"
+			}
+			shotNodeID, err := s.projector.ProjectEntity(ctx, projectID, "shot", shot.ID, shotLabel)
+			if err != nil {
+				return ProjectScriptVersionResult{}, err
+			}
+			result.ShotNodeIDs = append(result.ShotNodeIDs, shotNodeID)
+		}
 	}
 	return result, nil
 }

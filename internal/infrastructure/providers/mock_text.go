@@ -883,12 +883,55 @@ func mockReviewReport(request providers.TextRequest, passed bool) string {
 	document["severity"] = "major"
 	document["recommendedAction"] = "fix"
 	document["summary"] = "The deterministic mock reports one finding."
-	document["issues"] = []any{map[string]any{
+	// THE FINDING NAMES A ROW when the state names one, and that is the difference between
+	// a review a user can act on and one they cannot. AC-BOARD-002's criterion is that a
+	// supervisor LOCATES the shot at fault and that a FIX revises that shot alone: a finding
+	// with no entity id is a statement about the board, and a FIX run against it has nothing
+	// to point the revision at.
+	//
+	// It also carries EVIDENCE pointing at what conflicts, because the criterion asks for
+	// two versions. The storyboard case points at the row and the plan's continuity rule; a
+	// general report points at nothing rather than at an invented reference, which is what
+	// the artifact verifier would refuse anyway.
+	finding := map[string]any{
 		"rule":     "MOCK_DETERMINISTIC_FINDING",
 		"severity": "major",
 		"problem":  "The deterministic mock reports a finding at a named location.",
 		"location": "mock/location",
-	}}
+	}
+	if stage == "storyboard_table" {
+		// THE FINDING NAMES A ROW when the state names one, and that is what separates a
+		// review a user can act on from a statement about the board: AC-BOARD-002's criterion
+		// is that a supervisor LOCATES the shot at fault and that a FIX revises that shot
+		// alone, and a finding with no entity id gives the revision nothing to point at.
+		//
+		// The EVIDENCE is the schema's array of references rather than a JSON blob: section
+		// 7.6 requires evidence to name what the run really loaded, and the runtime checks the
+		// references against the tool calls the run made — so this names the ROW as an entity
+		// reference and the plan's rule as a rule reference, which are two of the four kinds
+		// the schema admits.
+		state := mockWorkflowStateOf(request)
+		itemID := fieldOnLine(state, "storyboard_item=")
+		planVersionID := fieldOnLine(state, "director_plan_version=")
+		if itemID != "" {
+			finding["entityType"] = "storyboard_item"
+			finding["entityId"] = itemID
+			finding["field"] = "continuityNotes"
+			finding["problem"] = "The deterministic mock reports a continuity finding at this row."
+			// `location` is DROPPED when an entity pair is present: the domain's
+			// ReviewIssue.Validate requires one or the other, and stating both would be two
+			// answers to "where is this".
+			delete(finding, "location")
+			evidence := []any{map[string]any{"type": "entity_ref", "ref": itemID}}
+			if planVersionID != "" {
+				// The second reference is what the criterion means by "evidence 指向两个版本":
+				// the row and the plan whose continuity rule it breaks.
+				evidence = append(evidence, map[string]any{"type": "entity_ref", "ref": planVersionID})
+			}
+			finding["evidence"] = evidence
+		}
+	}
+	document["issues"] = []any{finding}
 	return mockJSON(document)
 }
 

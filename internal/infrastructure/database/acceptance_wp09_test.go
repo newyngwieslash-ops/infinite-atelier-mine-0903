@@ -337,6 +337,10 @@ func TestACAsset001TwoCandidatesThenAVersionSwitch(t *testing.T) {
 
 // seedBoardWithRows writes a board with one row per shot, and returns the version's id
 // AND its rows'. Both are needed: the fix test names rows, and the shape test lists them.
+//
+// The PLAN version is remembered on the canary, because a supervisor's evidence cites the
+// plan whose continuity rule a row breaks — AC-BOARD-002 asks for two references, and a state
+// that named none could only produce a finding with no evidence.
 func (c *productionCanary) seedBoardWithRows(t *testing.T, scriptVersionID string, shotIDs []string) (string, []string) {
 	t.Helper()
 	ctx := context.Background()
@@ -346,6 +350,7 @@ func (c *productionCanary) seedBoardWithRows(t *testing.T, scriptVersionID strin
 	if err != nil {
 		t.Fatalf("creating the plan: %v", err)
 	}
+	c.boardPlanVersionID = plan.ID
 	board, err := c.storyboard.EnsureStoryboard(ctx, c.ids.episode)
 	if err != nil {
 		t.Fatalf("ensuring the board: %v", err)

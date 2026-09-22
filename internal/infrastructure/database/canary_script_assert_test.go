@@ -305,6 +305,9 @@ func (c *scriptCanary) assertVersionDiff(t *testing.T, scriptVersionID string) {
 // WP-05 built the projection writer with tests and NO caller; WP-08 supplies one. The assertion is on the
 // NODES a projector was asked for, because that is what a canvas reads: a projection that reported
 // success and asked for nothing would satisfy a return value and show a user an empty board.
+// projectorCallRecord is one recorded projection call, under a name this file can collect.
+type projectorCallRecord = struct{ projectID, entityType, entityID, label string }
+
 func (c *scriptCanary) assertCanvasProjection(t *testing.T, scriptVersionID string) {
 	t.Helper()
 	ctx := context.Background()
@@ -330,28 +333,53 @@ func (c *scriptCanary) assertCanvasProjection(t *testing.T, scriptVersionID stri
 	if err != nil {
 		t.Fatalf("reading the structure: %v", err)
 	}
-	// One call per scene, in play order, each naming a SCENE rather than a version or a shot.
-	if len(projector.calls) != len(structure.Scenes) {
-		t.Fatalf("the projection asked for %d nodes for %d scenes", len(projector.calls), len(structure.Scenes))
-	}
-	for index, call := range projector.calls {
-		if call.entityType != "scene" {
-			t.Fatalf("call %d projects entity type %q", index, call.entityType)
+	// One call per scene AND one per shot, in the script's order: the scenes are projected
+	// with the shots they contain, because ROADMAP item 11 names Shot projection and a board's
+	// rows cite shots.
+	//
+	// WP-08 asserted "one call per scene, each naming a SCENE rather than a version or a shot",
+	// and that was right for WP-08 — the shot projection is WP-09's. The assertion is widened
+	// rather than deleted, so a regression that stopped projecting either is still caught.
+	sceneCalls := make([]projectorCallRecord, 0, len(structure.Scenes))
+	shotCalls := make([]projectorCallRecord, 0, 8)
+	for _, call := range projector.calls {
+		switch call.entityType {
+		case "scene":
+			sceneCalls = append(sceneCalls, call)
+		case "shot":
+			shotCalls = append(shotCalls, call)
+		default:
+			t.Fatalf("the projection names entity type %q", call.entityType)
 		}
+	}
+	if len(sceneCalls) != len(structure.Scenes) {
+		t.Fatalf("the projection asked for %d scene nodes for %d scenes", len(sceneCalls), len(structure.Scenes))
+	}
+	for index, call := range sceneCalls {
 		if call.entityID != structure.Scenes[index].ID {
-			t.Fatalf("call %d projects scene %q, want %q", index, call.entityID, structure.Scenes[index].ID)
+			t.Fatalf("scene call %d projects %q, want %q", index, call.entityID, structure.Scenes[index].ID)
 		}
 		if call.projectID != c.ids.project {
-			t.Fatalf("call %d names project %q", index, call.projectID)
+			t.Fatalf("scene call %d names project %q", index, call.projectID)
 		}
 		// The label is what a canvas node shows, and the slugline is the readable name a scene has.
 		if call.label != structure.Scenes[index].Slugline {
-			t.Fatalf("call %d labels the node %q, want the slugline %q",
+			t.Fatalf("scene call %d labels the node %q, want the slugline %q",
 				index, call.label, structure.Scenes[index].Slugline)
 		}
 	}
+	shotCount := 0
+	for _, scene := range structure.Scenes {
+		shotCount += len(scene.Shots)
+	}
+	if len(shotCalls) != shotCount {
+		t.Fatalf("the projection asked for %d shot nodes for %d shots", len(shotCalls), shotCount)
+	}
 	if len(result.SceneNodeIDs) != len(structure.Scenes) {
 		t.Fatalf("the projection returned %d node ids for %d scenes", len(result.SceneNodeIDs), len(structure.Scenes))
+	}
+	if len(result.ShotNodeIDs) != shotCount {
+		t.Fatalf("the projection returned %d shot node ids for %d shots", len(result.ShotNodeIDs), shotCount)
 	}
 	// A version with no content is refused rather than projected into nothing, which is the boundary the
 	// command's own comment states.

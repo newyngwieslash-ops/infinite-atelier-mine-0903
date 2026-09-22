@@ -509,14 +509,34 @@ func TestProjectScriptVersionCallsTheProjector(t *testing.T) {
 		t.Fatalf("ProjectScriptVersion: %v", err)
 	}
 	if len(result.SceneNodeIDs) != 2 {
-		t.Fatalf("the projection wrote %d nodes, want one per scene", len(result.SceneNodeIDs))
+		t.Fatalf("the projection wrote %d scene nodes, want one per scene", len(result.SceneNodeIDs))
 	}
-	if len(projector.calls) != 2 {
+	// THE SHOTS ARE PROJECTED WITH THEIR SCENES, which is ROADMAP item 11's Shot projection:
+	// a board's rows cite shots, so a canvas without them shows the scene a row is inside and
+	// not the shot it is about. The fixture has one shot in its second scene, so the node
+	// count is two scenes plus one shot.
+	if len(result.ShotNodeIDs) != 1 {
+		t.Fatalf("the projection wrote %d shot nodes for a one-shot fixture", len(result.ShotNodeIDs))
+	}
+	if len(projector.calls) != 3 {
 		t.Fatalf("the projector was called %d times", len(projector.calls))
 	}
 	// The label is the scene's slugline, which is what a canvas node shows.
 	if projector.calls[0].entityType != "scene" || projector.calls[0].label != "INT. 渡口 - 日" {
 		t.Fatalf("the first call is %+v", projector.calls[0])
+	}
+	// And the shot's own node names the shot, so a click on the canvas finds the row a
+	// storyboard cites. It is FOUND rather than asserted by position: the fixture's shot sits
+	// in its first scene, and a positional assertion would be a statement about the fixture's
+	// order rather than about the projection.
+	shotEntityID := ""
+	for _, call := range projector.calls {
+		if call.entityType == "shot" {
+			shotEntityID = call.entityID
+		}
+	}
+	if shotEntityID != "shot-"+version.ID+"-1" {
+		t.Fatalf("the shot's node is %q, want the shot the fixture holds", shotEntityID)
 	}
 	// An empty project is a bad request rather than a projection into nothing.
 	if _, err := withProjector.ProjectScriptVersion(ctx, ProjectScriptVersionRequest{

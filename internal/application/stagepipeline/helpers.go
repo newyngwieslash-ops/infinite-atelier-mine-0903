@@ -168,18 +168,31 @@ func ReviewFromOutcome(outcome agentruntime.Outcome, supervisorKey string) (work
 // write tools use, and for the same reason: an identifier a model supplies is one it can
 // get wrong.
 func IssuesFromOutcome(outcome agentruntime.Outcome) ([]appworkflow.ReviewIssueInput, error) {
+	// THE EVIDENCE FIELD IS `evidence`, AN ARRAY OF REFERENCES, and the first version of this
+	// reader looked for `evidenceJson` — a name the review-report schema does not define. So
+	// every finding's evidence was silently DROPPED on the way to the database: a supervisor
+	// could cite what it read, the schema validated it, and nothing stored it. The mistake is
+	// the kind a reader cannot see, because the struct decodes happily and the field is
+	// simply always empty.
+	//
+	// It is re-encoded as a JSON document on the issue row, which is what that column holds:
+	// the domain's `ReviewIssue.EvidenceJSON` is a TEXT column, and the schema's array is the
+	// shape that travels in it.
 	var document struct {
 		Issues []struct {
-			Rule         string `json:"rule"`
-			Severity     string `json:"severity"`
-			EntityType   string `json:"entityType"`
-			EntityID     string `json:"entityId"`
-			Location     string `json:"location"`
-			Field        string `json:"field"`
-			Problem      string `json:"problem"`
-			Suggestion   string `json:"suggestion"`
-			AutoFixable  bool   `json:"autoFixable"`
-			EvidenceJSON string `json:"evidenceJson"`
+			Rule        string `json:"rule"`
+			Severity    string `json:"severity"`
+			EntityType  string `json:"entityType"`
+			EntityID    string `json:"entityId"`
+			Location    string `json:"location"`
+			Field       string `json:"field"`
+			Problem     string `json:"problem"`
+			Suggestion  string `json:"suggestion"`
+			AutoFixable bool   `json:"autoFixable"`
+			Evidence    []struct {
+				Type string `json:"type"`
+				Ref  string `json:"ref"`
+			} `json:"evidence"`
 		} `json:"issues"`
 	}
 	if err := json.Unmarshal(outcome.Output, &document); err != nil {
@@ -203,11 +216,32 @@ func IssuesFromOutcome(outcome agentruntime.Outcome) ([]appworkflow.ReviewIssueI
 			Field:        strings.TrimSpace(issue.Field),
 			Problem:      issue.Problem,
 			Suggestion:   issue.Suggestion,
-			EvidenceJSON: issue.EvidenceJSON,
+			EvidenceJSON: encodeEvidence(issue.Evidence),
 			AutoFixable:  issue.AutoFixable,
 		})
 	}
 	return out, nil
+}
+
+// encodeEvidence renders a finding's evidence as the document its column holds.
+//
+// An empty list yields an empty string rather than "[]", which is the ordinary value of
+// that column: a finding that cited nothing is a finding with no evidence, and "[]" would
+// be a document a reader has to parse to learn the same thing.
+func encodeEvidence(evidence []struct {
+	Type string `json:"type"`
+	Ref  string `json:"ref"`
+}) string {
+	if len(evidence) == 0 {
+		return ""
+	}
+	encoded, err := json.Marshal(evidence)
+	if err != nil {
+		// Marshalling a slice of two-field structs cannot fail; an empty string is returned
+		// rather than a panic, so a bug here is a missing citation rather than a dead run.
+		return ""
+	}
+	return string(encoded)
 }
 
 // IsApprovingDecision reports whether a decision makes the artifact the one in force.
