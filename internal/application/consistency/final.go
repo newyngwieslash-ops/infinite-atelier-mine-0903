@@ -123,6 +123,11 @@ type FinalShot struct {
 	// It is a field rather than a rule because "which shots are required" is a production decision: a
 	// build that assumed every row is required would refuse an export over a deliberately skipped
 	// shot, and one that assumed none would pass an episode with no media at all.
+	//
+	// IN THIS BUILD THE ADAPTER ALWAYS SETS IT TRUE, because the schema has no per-shot "may be
+	// skipped" column and a shot a director left out is expressed by not boarding it. So the field is
+	// an extension point rather than a configured value here, and saying so is the difference between
+	// one that is constant and one that looks configurable and is not. See `FinalFactsReader.readShots`.
 	Required bool
 	// LicenseAssetIDs are the assets this shot's approved media derives from — the character, the
 	// location, the prop. They travel per shot rather than in one list for the episode because the
@@ -190,11 +195,34 @@ type FinalExport struct {
 	ManifestVersions map[string]string
 	// ManifestHashes are the content hashes the manifest claims, by role.
 	ManifestHashes map[string]string
+	// ManifestError is why the manifest could not be READ, empty when it could.
+	//
+	// It exists because "this export has no usable manifest" and "this export's manifest lists
+	// references that no longer match" are different faults, and an earlier version of the adapter
+	// collapsed them by decoding the document itself and discarding the error. A report that said
+	// nothing about either was the shape that hid it; the traceability rule reads this field and
+	// reports the refusal in the manifest's own words.
+	ManifestError string
 }
 
 // Rule identifiers for section 11.4, in the same `DOMAIN_CONCEPT_CHECK` form the other rulesets use.
 const (
-	// RuleShotMedia is 11.4's "所有必需 Shot 有批准视频".
+	// RuleShotMedia is 11.4's "所有必需 Shot 有批准视频" — APPROVED VIDEO.
+	//
+	// # The word this build does not implement literally, and why
+	//
+	// The clause says 视频. This rule checks that a shot has approved MEDIA, which in this build is
+	// usually a panel IMAGE: ADR-0015 section 2 rules that an export composes from approved panel
+	// frames rather than from shot videos, because the video provider is a mock whose payload is a
+	// container header. So a build that read the clause literally would report every shot of every
+	// episode as missing its video, and the report would be useless on the only output this build can
+	// actually produce.
+	//
+	// The divergence is DELIBERATE AND RECORDED rather than quietly re-scoped: STATUS section 0l lists
+	// it, and the condition under which it goes away is stated — a build with a real video adapter
+	// would tighten this rule to require `MediaKind == "video"` for the shots a director marked as
+	// needing motion. What the rule guarantees today is the property the clause is about: no shot
+	// reaches an export with nothing approved for it.
 	RuleShotMedia = "SHOT_APPROVED_MEDIA"
 	// RuleAudioComplete is 11.4's "音频和字幕完整", its audio clause.
 	RuleAudioComplete = "AUDIO_COMPLETE"
@@ -494,10 +522,19 @@ func (f *FinalRuleset) checkFilesPresent(facts FinalFacts) []consistency.Finding
 // a media type, and an audio track whose length is zero. Each is what a placeholder, a failed
 // download or an interrupted job produces.
 //
-// What this does NOT catch is stated in the finding vocabulary rather than hidden: a black frame
-// inside a well-formed video, and a silent passage inside a well-formed audio file, both pass. The
-// rule's severity is therefore major rather than critical for the size case — it is a strong signal
-// and not a proof — and the package comment records the gap.
+// What this does NOT catch is stated here rather than hidden: a black frame inside a well-formed
+// video, and a silent passage inside a well-formed audio file, both pass. Section 11.4's wording is
+// wider than this build's answer, and STATUS section 0l records the gap.
+//
+// # Why the size case is CRITICAL despite the paragraph above
+//
+// The paragraph is about what a probe cannot see, and the reader might expect a partial rule to
+// report a partial severity. It does not, and the reason is the case this rule exists for: the media
+// it catches is a placeholder — the mock adapter's twenty-four byte container header, a download that
+// stopped, a render that produced a header and no frames. None of those is a film with a suspicious
+// frame in it; each is a file that will either fail to compose or put a black frame on screen, and
+// both are blockers for an export. So a file below the floor is critical, and the gap above is
+// reported as what it is: something this build cannot check at all.
 func (f *FinalRuleset) checkEmptyMedia(facts FinalFacts) []consistency.Finding {
 	findings := []consistency.Finding{}
 	for _, shot := range facts.Shots {
@@ -858,6 +895,28 @@ func (f *FinalRuleset) checkTraceability(facts FinalFacts) []consistency.Finding
 		}}
 	}
 	findings := []consistency.Finding{}
+	// A manifest this build cannot READ is its own finding, and it comes first because it makes the
+	// comparisons below meaningless: a document that would not decode names no episode and no
+	// references, so a rule that only compared them would find nothing to complain about and report a
+	// CLEAN traceability check on an export nobody can trace. The adapter states the refusal's own
+	// sentence, quoted here rather than paraphrased.
+	if export.ManifestError != "" {
+		findings = append(findings, consistency.Finding{
+			Rule:       RuleExportTraceable,
+			Severity:   consistency.SeverityCritical,
+			EntityType: "episode_export",
+			EntityID:   export.ID,
+			Field:      "manifestJson",
+			Problem: "This export's manifest could not be read, so nothing about the film can be " +
+				"traced to the versions it was made from: " + export.ManifestError,
+			Suggestion: "Re-export the episode. A manifest this build cannot read was written by " +
+				"something else, or by a build whose document shape differs from this one's.",
+			Evidence: []consistency.Evidence{
+				{Type: "entity_ref", Ref: export.ID},
+			},
+			AutoFixable: false,
+		})
+	}
 	if export.ManifestEpisodeID != "" && export.ManifestEpisodeID != facts.EpisodeID {
 		findings = append(findings, consistency.Finding{
 			Rule:       RuleExportTraceable,

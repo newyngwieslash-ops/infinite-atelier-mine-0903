@@ -33,6 +33,16 @@ const badScriptPath = join(repoRoot, "testdata", "canary-drama", "bad-script.jso
 const badStoryboardPath = join(repoRoot, "testdata", "canary-drama", "bad-storyboard.json");
 const expectedStoryboardPath = join(repoRoot, "testdata", "canary-drama", "expected-storyboard.json");
 const memoryRecallPath = join(repoRoot, "testdata", "canary-drama", "memory-recall.json");
+// WP-11's fixture, which follows the storyboard one: the subtitle track the canary's spoken lines
+// must produce, and the export manifest for it. Generated for the same reason as the rest — the
+// canary's shots and their durations are this file's own numbers, and a hand-written expectation
+// would be a second copy that drifts from the first.
+//
+// It is DELIBERATELY INCOMPLETE in one place, which is the property its reader asserts: the sixth
+// line has no cue, so "missing line detected" runs against a fixture rather than only against a
+// synthetic list. One row also carries a clip that replaced an earlier one, which is the state
+// AC-MEDIA-003's "replace clip" leaves behind.
+const expectedMediaPath = join(repoRoot, "testdata", "canary-drama", "expected-media.json");
 
 // A deterministic 32-bit PRNG (mulberry32). Math.random would make the fixture
 // unreproducible, which is exactly what a fixture must not be.
@@ -394,6 +404,131 @@ function buildExpectedStoryboard() {
  * implicit cannot be checked, because a test that passes proves the fixture was read, not that the
  * claim about it was true. So a decoy here says what it is a decoy FOR.
  */
+
+/**
+ * buildExpectedMedia is WP-11's fixture: the subtitle track the canary's lines produce, and the
+ * manifest an export of the canary records.
+ *
+ * # Why the canary needs one at all
+ *
+ * `source.md` and `expected-storyboard.json` are the fixtures the earlier packages grade the import,
+ * the skeleton and the board against. Media is the next thing downstream of the board, and it had no
+ * fixture: the media tests build their own episodes from scratch, which is right for the rules and
+ * leaves the CANARY — the one document this repository publishes as the end-to-end scenario — with
+ * nothing to say about the film.
+ *
+ * # What makes it checkable rather than decorative
+ *
+ * Every number in it is DERIVED from the storyboard rows above rather than restated: the shot count,
+ * the per-shot duration, and each cue's start and end come from `storyboardRow`, so a change to the
+ * board's timing changes this document and a `--check` run reports the drift. Three faults are
+ * deliberate and named in `faults`, so a reader can assert each one rather than asserting that the
+ * file was read.
+ */
+function buildExpectedMedia() {
+    // The canary's spoken lines, which the STORYBOARD fixture does not carry: only its first row has
+    // a `dialogueAudioSummary`, because the board fixture's subject is the shot table rather than the
+    // script. So the lines are stated here, in the canary's own voice and in its own order, and the
+    // subtitle section is built from them — which is where a real track comes from anyway, since
+    // `SubtitleService.Draft` reads a script version's dialogue lines rather than a board's rows.
+    const spokenLines = [
+        { ordinal: 1, shotId: "shot-1", type: "dialogue", speaker: "沈砚", text: "灯还亮着。" },
+        { ordinal: 2, shotId: "shot-2", type: "narration", speaker: "", text: "渡口没有第二条船。" },
+        { ordinal: 3, shotId: "shot-3", type: "dialogue", speaker: "老周", text: "账本不在盐仓。" },
+        { ordinal: 4, shotId: "shot-4", type: "dialogue", speaker: "沈砚", text: "那就去灯巷。" },
+        { ordinal: 5, shotId: "shot-5", type: "dialogue", speaker: "老周", text: "刀鞘上的雨还没干。" },
+        { ordinal: 6, shotId: "shot-6", type: "dialogue", speaker: "沈砚", text: "谁的名字被划掉了？" },
+        // A direction rather than a spoken line, and it is here so the fixture can assert that the
+        // track does NOT carry it: an action line is a note to the production and nobody hears it.
+        { ordinal: 7, shotId: "shot-7", type: "action", speaker: "", text: "沈砚把铜牌放回灯下。" },
+        { ordinal: 8, shotId: "shot-8", type: "dialogue", speaker: "老周", text: "空船是昨夜走的。" },
+    ];
+    const shotDurationMs = storyboardRow(1, "冬装").durationSeconds * 1000;
+    // The cues are NOT computed here, and that is deliberate: the service distributes a scene's
+    // duration across its lines by TEXT LENGTH, and a fixture that re-implemented that arithmetic
+    // would be a second version of the algorithm — free to agree with the first by accident and to
+    // disagree with it silently after any change. What this fixture states is the INPUT (which lines
+    // exist, what they say, which one is a direction) and the INVARIANTS the output must satisfy,
+    // which the reader asserts. That is the same bargain `expected-storyboard.json` makes: it names
+    // the fields and the total rather than the whole rendering.
+    return {
+        note: "Generated by scripts/gen-canary-fixture.mjs. Do not edit by hand. WP-11's fixture: the canary's spoken lines, the invariants a subtitle track over them must satisfy, the act that produces the incomplete track AC-MEDIA-002 grades, and the export an episode records.",
+        subject: "the canary's spoken lines, a subtitle track over them, and the export of it",
+        spokenLines,
+        subtitleTrack: {
+            versionNumber: 1,
+            status: "approved",
+            // What the draft must contain, by the invariants rather than by re-rendered values: one cue
+            // per spoken line, in script order, carrying that line's text and its line id.
+            countMustEqualTheSpokenLines: true,
+            expectedCueCount: spokenLines.filter((line) => line.type === "dialogue" || line.type === "narration").length,
+            orderMustFollowTheScript: true,
+            mustStartAtZero: true,
+            // The cues must tile the duration with no gap and no overlap, because a cue the service
+            // gave no time to is a subtitle nobody can read.
+            mustCoverTheTotalDuration: true,
+        },
+        // The incomplete track AC-MEDIA-002's "missing line detected" is graded on: remove the cue
+        // whose ordinal this names, save the rest, and the service's Missing must find the line that
+        // then has no cue — and no other.
+        incompleteTrackScenario: {
+            removeCueOrdinal: 6,
+            // The SCRIPT ordinal of the line that then has no cue. An ordinal rather than a count
+            // because a track with the right NUMBER of cues and a different six would satisfy any
+            // assertion about length.
+            lineWithoutACueOrdinal: 6,
+            // The cue that then follows the gap, so a reader can tell the two apart: a rule that
+            // renumbered the surviving cues would show up here.
+            firstCueAfterTheGapOrdinal: 7,
+        },
+        // The direction line in the script: an `action`, which must get NO cue because nobody hears it.
+        // It is stated by ordinal so the reader asserts the RULE rather than a cue count.
+        directionLineOrdinals: [7],
+        faults: [
+            {
+                what: "one shot's approved clip was replaced after an earlier export",
+                detail: "the manifest records the version that was in force when it was written, which is no longer the approved one",
+                rule: "AC-MEDIA-003's 'replace clip' leaves this state behind, and the Final Ruleset reports it as stale rather than wrong",
+            },
+            {
+                what: "one shot's approved media is a 24-byte placeholder",
+                detail: "the mock video adapter's payload is a container header, so its size is the tell",
+                rule: "the Final Ruleset's 黑帧/空帧 clause reports it",
+            },
+        ],
+        shotCount: STORYBOARD_SHOT_COUNT,
+        shotDurationMs,
+        totalDurationMs: STORYBOARD_SHOT_COUNT * shotDurationMs,
+        export: {
+            versionNumber: 1,
+            quality: "preview",
+            width: 1920,
+            height: 1080,
+            fps: 24,
+            subtitleMode: "sidecar",
+            // The manifest's own shape, which is DOMAIN_MODEL section 15.3's: what it was made from
+            // rather than what it contains.
+            manifestReferenceKinds: [
+                "script_version",
+                "director_plan_version",
+                "storyboard_version",
+                "storyboard_panel_version",
+                "asset_version",
+                "subtitle_track",
+            ],
+            replacedClip: {
+                shotId: `shot-${STORYBOARD_BAD_SHOT}`,
+                reason: "this row's panel was approved again after the export was recorded",
+            },
+            placeholderMedia: {
+                shotId: `shot-${STORYBOARD_SHOT_COUNT}`,
+                sizeBytes: 24,
+                reason: "the mock video adapter's payload, which the 空帧 rule reports by size",
+            },
+        },
+    };
+}
+
 function buildMemoryRecall() {
     const buried = [];
     for (let index = 1; index <= 40; index += 1) {
@@ -474,6 +609,9 @@ function main() {
         [badStoryboardPath, JSON.stringify(buildBadStoryboard(), null, 2) + "\n", "deliberately wrong storyboard"],
         [expectedStoryboardPath, JSON.stringify(buildExpectedStoryboard(), null, 2) + "\n", "expected storyboard"],
         [memoryRecallPath, JSON.stringify(buildMemoryRecall(), null, 2) + "\n", "memory recall scenario"],
+        // WP-11's, listed last because it is the last stage of the canary's own pipeline: the board
+        // is what a subtitle is drafted from, so this fixture cannot be built before the board's.
+        [expectedMediaPath, JSON.stringify(buildExpectedMedia(), null, 2) + "\n", "expected media"],
     ];
     if (check) {
         const currentSource = existsSync(outPath) ? readFileSync(outPath, "utf8") : "";

@@ -152,22 +152,40 @@ newline"
 	if _, err := os.Stat("/tmp/shell-injection-marker"); err == nil {
 		t.Fatal("a shell interpreted the crafted value")
 	}
-	// And the escaping used for the ONE filtergraph path leaves no metacharacter the
-	// filtergraph parser would ACT on. The assertion is about UNESCAPED characters: the escaped
-	// forms are exactly what should be there, so a check looking for the bare character anywhere
-	// finds the escape it asked for and calls it a failure — which is what the first version
-	// of this test did.
-	escaped := escapeFilterPath(`C:\a b\c'd[e]:f.srt`)
-	for _, forbidden := range []string{":", "[", "]", "'", `\\`} {
-		if containsUnescaped(escaped, forbidden) {
-			t.Fatalf("the filtergraph escape left %q active in %q", forbidden, escaped)
-		}
+	// And the escaping used for the ONE filtergraph path produces a value the PARSER accepts.
+	//
+	// THIS ASSERTION USED TO CHECK THE STRING'S SHAPE, and that was the defect: it verified the colon
+	// was escaped and no bare metacharacter remained, which the BROKEN value satisfied too. Escaping
+	// the colon was necessary and not sufficient — the value also has to be QUOTED — and only running
+	// ffmpeg tells the two apart. `TestBurnedInSubtitlesComposeADecodableFilm` runs it; what follows
+	// is the cheap half, kept because it fails fast and names the property.
+	escaped, err := escapeFilterPath(`C:\a b\c[d]:f.srt`)
+	if err != nil {
+		t.Fatalf("a path with no single quote was refused: %v", err)
 	}
-	// The drive letter's colon is the reason this function exists on Windows: a filtergraph
-	// reads it as an option separator, so it has to arrive escaped.
+	// The drive letter's colon is the reason this function exists on Windows: a filtergraph reads it
+	// as an option separator, so it has to arrive escaped.
 	if !strings.Contains(escaped, `\:`) {
 		t.Fatalf("a drive letter was not escaped for the filtergraph: %q", escaped)
 	}
+	// And the whole value is QUOTED, which is the half the first version was missing. Without the
+	// quotes ffmpeg reads `C` as an option name and the rest of the path as its value, and the export
+	// fails with a message about a file that is right there.
+	if !strings.HasPrefix(escaped, "'") || !strings.HasSuffix(escaped, "'") {
+		t.Fatalf("the filter value is not quoted, so ffmpeg will read the drive letter as an option: %q", escaped)
+	}
+	// A single quote cannot be expressed in this grammar, so it is refused rather than escaped into a
+	// path that does not exist. A probed directory named `it's [odd]` failed to open however the quote
+	// was written; see the function's comment.
+	//
+	// The variable is its OWN name rather than a reuse of `err`, because an `if` with a short
+	// declaration would shadow it and the assertion below would then be reading the previous call's
+	// nil — which is exactly the shape of bug this repository's reviews keep finding.
+	refusal, refused := escapeFilterPath(`C:\it's\subs.srt`)
+	if refused == nil {
+		t.Fatalf("a path containing a single quote was accepted as %q, so it would produce a broken expression", refusal)
+	}
+	assertCategory(t, refused, appmedia.CategoryInvalidInput)
 }
 
 // TestACommandIsNeverAssembledFromAString is the structural half of the same rule.

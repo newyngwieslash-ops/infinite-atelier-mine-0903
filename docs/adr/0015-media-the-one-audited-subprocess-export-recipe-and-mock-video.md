@@ -122,8 +122,21 @@ rather than a silent absence.
 
 The FINAL stage is the opposite case: PRD FR-100 gives it `supervision: true`, AGENT_CONTRACTS
 section 11.4 gives it a ruleset, and its artifact — an export recipe — is a decision about
-quality and framing rather than a byte stream. So it is an agent, its write tool writes a
-recipe, and the deterministic half of section 11.4's ruleset lives in a checker.
+quality and framing rather than a byte stream. So it is an agent, and the deterministic half of
+section 11.4's ruleset lives in a checker.
+
+**CORRECTION, made after an independent review.** An earlier version of this paragraph said "its
+write tool writes a recipe". The agent has NO write tool: its five granted tools are all reads, and
+`schemas/agent/tools/KEYS.txt` carries no recipe-creating tool. What it produces is the model's own
+structured output — the recipe in `payload` of `execution-result.v1.json` — recorded on the run and
+read at the gate, not persisted as a version of its own family. That is the right shape (a recipe is
+a decision inside a run, not an artifact with a lifecycle), but this paragraph described a tool that
+does not exist, and a reader checking it would have found nothing.
+
+The same review found something worse in the paragraph below: the deterministic half contributed
+NOTHING in a real build, because `final_reader.go`'s statements were written against columns the
+schema does not have, so every read errored and the stage machine discarded the error. It is fixed,
+with storage-level tests this time — `internal/infrastructure/database/final_reader_test.go`.
 
 ### 6. The Final Ruleset's mechanical half is code, merged into the model's report
 
@@ -212,10 +225,39 @@ says so.
 - `internal/infrastructure/media/ffmpeg_test.go` — argv is structured; a metacharacter in a
   user string arrives as one argument; a `-` prefixed argument is refused; a missing ffmpeg
   disables the engine rather than failing a call.
+- `internal/infrastructure/media/compose_test.go` — the export is a real film: stills become a
+  playable MP4, audio becomes a second stream, a sidecar track becomes a third, and a BURNED-IN
+  track is drawn into the picture (equal stream count to the silent composition, which is what
+  says the filter ran rather than being skipped).
 - `internal/domain/media/*_test.go` — timecode round trips, cue validation, manifest shape.
-- `internal/infrastructure/database/acceptance_wp11_test.go` — AC-MEDIA-001/002/003.
+- `internal/infrastructure/database/acceptance_wp11_test.go` — AC-MEDIA-003, as one walk.
+  **AC-MEDIA-001's clauses** are graded by `internal/application/jobs` and
+  `internal/infrastructure/jobs` (WP-03's runner and its restart test); **AC-MEDIA-002's** by
+  `internal/infrastructure/database/subtitle_wp11_test.go` and `internal/domain/media/subtitle_test.go`.
+  An earlier version of this list attributed all three criteria to the acceptance file alone, which
+  was wrong in a way a reader would have discovered by looking.
+- `internal/infrastructure/database/final_reader_test.go` — the Final Ruleset's own adapter against
+  the real schema, which is the test whose absence let §11.4's eight clauses run against columns that
+  do not exist.
 - The export's playability is asserted with `ffprobe` when one is available, and the test
   reports a SKIP rather than a pass when it is not.
+
+## What an independent review corrected, and when
+
+Two defects in this work package were found by review rather than by its own tests, and both are
+worth recording because each was a case of a comment standing in for a proof:
+
+1. **The Final Ruleset was inert.** `final_reader.go` selected columns the schema does not have
+   (`storyboard_versions.episode_id`, `dialogue_lines.script_version_id`, `artifact_staleness.id`,
+   `script_versions.episode_id`), so every read errored, and `stagepipeline`'s `if err == nil`
+   discarded the error. Fixed; `final_reader_test.go` now drives the adapter over the real schema, and
+   the comment in `final_test.go` that claimed such a test existed has been corrected to say what is
+   true.
+2. **Burn-in subtitles failed on Windows.** `escapeFilterPath` escaped the drive letter's colon and
+   returned the value unquoted, which ffmpeg rejects — the filtergraph reads `C` as an option name.
+   The test that covered the function asserted on the string's SHAPE and never ran ffmpeg, and the
+   only subtitle compose test used sidecar mode, which takes a different branch.
+   `TestBurnedInSubtitlesComposeADecodableFilm` is the test that runs it.
 
 ## References
 

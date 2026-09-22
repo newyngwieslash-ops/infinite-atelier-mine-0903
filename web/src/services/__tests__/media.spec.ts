@@ -95,3 +95,115 @@ test("every media command throws when the core is absent", async () => {
         );
     }
 });
+
+/**
+ * The other direction: a window WITH a core.
+ *
+ * Every check above describes what happens when there is no binding, and an independent quality
+ * review found that was the ONLY direction: three mutations survived the suite, and two of them were
+ * the probe's own body — `isMediaBindingsAvailable` hardcoded to `false` (which would disable every
+ * media section forever) and `REQUIRED_MEDIA_METHODS` emptied (because `[].every(...)` is `true`, so a
+ * window with no binding at all would read as available). The probes are the sections' only gate, so
+ * both directions have to be asserted.
+ *
+ * The fake installs the same shape Wails generates: `window.go.desktop.<Binding>.<Method>`. It is
+ * installed and removed per test, and `globalThis` is restored afterwards so the absence tests above
+ * cannot be affected by one that ran before them.
+ */
+type FakeBindings = Record<string, Record<string, (...args: never[]) => unknown>>;
+
+/** withDesktopCore runs a body with a fake Wails binding surface installed. */
+async function withDesktopCore(bindings: FakeBindings, body: () => Promise<void> | void) {
+    const host = globalThis as { window?: unknown };
+    const previous = host.window;
+    host.window = { go: { desktop: bindings } };
+    try {
+        await body();
+    } finally {
+        if (previous === undefined) {
+            delete host.window;
+        } else {
+            host.window = previous;
+        }
+    }
+}
+
+test("a window with a core reports the capabilities its binding satisfies", async () => {
+    // The full surface, which is what a real build has.
+    const complete: FakeBindings = {
+        MediaBinding: {
+            MediaCapability: () => undefined,
+            ReadTimeline: () => undefined,
+            RunExport: () => undefined,
+            SaveExport: () => undefined,
+        },
+        JobsBinding: {
+            SubmitVideoJob: () => undefined,
+            SubmitAudioJob: () => undefined,
+        },
+    };
+    await withDesktopCore(complete, () => {
+        assert.equal(isMediaBindingsAvailable(), true, "a complete media binding must read as available");
+        assert.equal(isMediaExportAvailable(), true, "a complete export binding must read as available");
+        assert.equal(isMediaJobSubmissionAvailable(), true, "a complete job binding must read as available");
+    });
+
+    // A build whose media services exist but whose engine cannot compose: the two flags DIVERGE, and
+    // that is the property the split exists for. A single flag would hide it.
+    const noExport: FakeBindings = {
+        MediaBinding: { MediaCapability: () => undefined, ReadTimeline: () => undefined },
+        JobsBinding: {},
+    };
+    await withDesktopCore(noExport, () => {
+        assert.equal(isMediaBindingsAvailable(), true, "the reads are reachable without an export");
+        assert.equal(isMediaExportAvailable(), false, "a binding with no RunExport must not report export");
+        assert.equal(isMediaJobSubmissionAvailable(), false, "a binding with no job submissions must say so");
+    });
+
+    // And ONE missing method is enough. This is the assertion that kills the empty-array mutation:
+    // `[].every(...)` is true, so a probe whose required list was emptied would report a window with
+    // NOTHING installed as available.
+    await withDesktopCore({ MediaBinding: { MediaCapability: () => undefined } }, () => {
+        assert.equal(isMediaBindingsAvailable(), false, "a binding missing ReadTimeline must not read as available");
+    });
+    await withDesktopCore({}, () => {
+        assert.equal(isMediaBindingsAvailable(), false, "a window with no bindings must not read as available");
+        assert.equal(isMediaExportAvailable(), false, "a window with no bindings must not report export");
+    });
+});
+
+test("a reachable binding carries the call through rather than answering empty", async () => {
+    // The QUERY/COMMAND split is asserted from the other side here: with a core present, a read calls
+    // through and a command reaches the binding. A mutation that made `listSubtitleTracks` return `[]`
+    // unconditionally, or that made a command resolve instead of calling, would pass every absence test
+    // above and fail this one.
+    const calls: string[] = [];
+    const recording: FakeBindings = {
+        MediaBinding: {
+            MediaCapability: () => {
+                calls.push("MediaCapability");
+                return { exportAvailable: true, saveAvailable: true };
+            },
+            ReadTimeline: () => {
+                calls.push("ReadTimeline");
+                return { episodeId: "episode-9", shots: [], totalDurationMs: 0, missingMedia: 0 };
+            },
+            ListSubtitleTracks: () => {
+                calls.push("ListSubtitleTracks");
+                return [];
+            },
+            DraftSubtitles: () => {
+                calls.push("DraftSubtitles");
+                return { track: {}, cues: [] };
+            },
+        },
+    };
+    await withDesktopCore(recording, async () => {
+        const timeline = await readTimeline({ episodeId: "episode-9" });
+        assert.equal(timeline.episodeId, "episode-9", "the core's answer must be the one returned");
+        await listSubtitleTracks("episode-9");
+        await mediaCapability();
+        await draftSubtitles({ episodeId: "episode-9", scriptVersionId: "s" } as never);
+        assert.deepEqual(calls, ["ReadTimeline", "ListSubtitleTracks", "MediaCapability", "DraftSubtitles"]);
+    });
+});

@@ -3,7 +3,6 @@ package database
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"strings"
 
 	appconsistency "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/consistency"
@@ -135,10 +134,23 @@ func (r *FinalFactsReader) readEpisodeScript(ctx context.Context, episodeID stri
 }
 
 // readApprovedBoard returns the episode's approved board and the script version it renders.
+//
+// THE EPISODE IS REACHED THROUGH `storyboards`, and getting that wrong is why this file's first
+// version was inert. `storyboard_versions` has no `episode_id`: migration 000010 puts it on
+// `storyboards`, and a version names its board. The original statement selected `episode_id` from the
+// versions table, which fails to prepare — and because this read is UNCONDITIONAL, it failed for
+// every episode, `FinalFacts` returned an error every time, and the stage machine's `if err == nil`
+// discarded it. Every one of section 11.4's eight clauses contributed nothing in a real build while
+// the ruleset's own unit tests, which drive a double, stayed green.
+//
+// So this is the join the schema actually has, and `TestFinalFactsReaderReadsTheRealSchema` is the
+// test that would have caught the original.
 func (r *FinalFactsReader) readApprovedBoard(ctx context.Context, episodeID string) (id, scriptVersionID string, found bool, err error) {
 	row := r.db.QueryRowContext(ctx, `
-		SELECT id, script_version_id FROM storyboard_versions
-		WHERE episode_id = ? AND status = 'approved'`, episodeID)
+		SELECT v.id, v.script_version_id
+		FROM storyboard_versions v
+		JOIN storyboards s ON s.id = v.storyboard_id
+		WHERE s.episode_id = ? AND v.status = 'approved'`, episodeID)
 	if err := row.Scan(&id, &scriptVersionID); err != nil {
 		if err == sql.ErrNoRows {
 			return "", "", false, nil
@@ -206,10 +218,14 @@ func (r *FinalFactsReader) readShots(ctx context.Context, boardVersionID string,
 			return mediaStorageError(err)
 		}
 		shot.DurationMS = durationSecs * 1000
-		// EVERY BOARDED SHOT IS REQUIRED, and that is a statement rather than a default: this build's
-		// schema has no per-shot "may be skipped" flag, so a shot a director deliberately left out is
-		// expressed by not boarding it. The field exists for a build whose schema does have one, and
-		// setting it here is where that build would change its mind.
+		// EVERY BOARDED SHOT IS REQUIRED, and in THIS build that is a constant rather than a reading.
+		//
+		// The schema has no per-shot "may be skipped" column, so a shot a director left out is
+		// expressed by not boarding it, and `FinalShot.Required` is therefore always true here. The
+		// ruleset branches on the field rather than assuming, which is what keeps the decision in one
+		// place — but the field's own comment describes a build whose schema HAS such a column, and
+		// this one does not. Saying so here is the difference between a field that is constant and a
+		// field that looks configurable and is not.
 		shot.Required = true
 		facts.Shots = append(facts.Shots, shot)
 		facts.TotalDurationMS += shot.DurationMS
@@ -241,14 +257,21 @@ func (r *FinalFactsReader) readSubtitles(ctx context.Context, episodeID string, 
 	// The missing lines are the same join `SubtitleService.Missing` makes, run here so the rule has
 	// the lines rather than only a count: a finding that says WHICH line is uncovered is a finding a
 	// person can act on, and one that says "two lines are missing" is not.
+	//
+	// THE LINE REACHES ITS SCRIPT VERSION THROUGH ITS SCENE, and the first version of this statement
+	// selected `l.script_version_id`, a column `dialogue_lines` does not have — migration 000008 puts
+	// the version on `scenes` and the line names its scene. The statement therefore failed to prepare.
+	// `staleness.go`'s dependent queries make the same join, which is where the correct shape is
+	// written down.
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT l.id, l.line_type, l.text
 		FROM dialogue_lines l
-		WHERE l.script_version_id = ?
+		JOIN scenes sc ON sc.id = l.scene_id
+		WHERE sc.script_version_id = ?
 		  AND l.line_type IN ('dialogue', 'narration')
 		  AND l.id NOT IN (SELECT dialogue_line_id FROM subtitle_cues
 		                   WHERE track_id = ? AND dialogue_line_id <> '')
-		ORDER BY l.ordinal`, scriptVersionID, trackID)
+		ORDER BY sc.ordinal, l.ordinal`, scriptVersionID, trackID)
 	if err != nil {
 		return mediaStorageError(err)
 	}
@@ -277,18 +300,30 @@ func (r *FinalFactsReader) readSubtitles(ctx context.Context, episodeID string, 
 // its own field, which is what section 15.3's "最终导出显示 waiver" needs: a cleared mark was resolved,
 // a waived one was accepted, and only the second belongs in a report about the export.
 //
+// # There is no `id` COLUMN, and the first version selected one
+//
+// Migration 000012's primary key is the PAIR `(artifact_type, artifact_id)` — the same shape the four
+// version families use for their own identifiers. This statement selected `m.id`, which does not
+// exist, so it failed to prepare and every one of the eight clauses was dead before the adapter's
+// first read was even reached. The mark's identity is composed below from the two columns that are
+// its key.
+//
 // The scope is the episode and the artifacts that belong to it: the marks on the episode row itself,
 // on its board versions, on its script versions and on its subtitle tracks. It deliberately does NOT
 // walk `artifact_staleness.project_id`, because a project's other episodes' marks are not this
 // export's problem.
 func (r *FinalFactsReader) readStaleMarks(ctx context.Context, episodeID string, facts *appconsistency.FinalFacts) error {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT m.id, m.artifact_type, m.artifact_id, m.waived
+		SELECT m.artifact_type, m.artifact_id, m.waived
 		FROM artifact_staleness m
 		WHERE m.cleared_at = ''
 		  AND (m.artifact_id = ?
-		       OR m.artifact_id IN (SELECT id FROM storyboard_versions WHERE episode_id = ?)
-		       OR m.artifact_id IN (SELECT id FROM script_versions WHERE episode_id = ?)
+		       OR m.artifact_id IN (SELECT v.id FROM storyboard_versions v
+		                            JOIN storyboards s ON s.id = v.storyboard_id
+		                            WHERE s.episode_id = ?)
+		       OR m.artifact_id IN (SELECT sv2.id FROM script_versions sv2
+		                            JOIN scripts sc2 ON sc2.id = sv2.script_id
+		                            WHERE sc2.episode_id = ?)
 		       OR m.artifact_id IN (SELECT id FROM subtitle_tracks WHERE episode_id = ?))
 		ORDER BY m.artifact_type, m.artifact_id`, episodeID, episodeID, episodeID, episodeID)
 	if err != nil {
@@ -300,7 +335,7 @@ func (r *FinalFactsReader) readStaleMarks(ctx context.Context, episodeID string,
 		var mark appconsistency.FinalStaleMark
 		var artifactType string
 		var waived int
-		if err := rows.Scan(&mark.ID, &artifactType, &mark.EntityID, &waived); err != nil {
+		if err := rows.Scan(&artifactType, &mark.EntityID, &waived); err != nil {
 			return mediaStorageError(err)
 		}
 		// The identifier this row's primary key is made of is the pair, and the finding names both:
@@ -343,16 +378,27 @@ func (r *FinalFactsReader) readExport(ctx context.Context, episodeID string, fac
 	export.OutputHash, export.SubtitleTrack = outputHash, subtitleTrack
 	export.ManifestVersions = map[string]string{}
 	export.ManifestHashes = map[string]string{}
-	// The manifest is DECODED rather than compared as text, because the traceability rule compares
-	// individual references: a string compare would call a manifest wrong because a timestamp moved.
+	// The manifest is read through the DOMAIN'S OWN reader rather than a bare `json.Unmarshal`.
 	//
-	// A manifest that will not decode leaves the maps empty and the export in place, which the
-	// parameter rule still reads. It does NOT invent references, so the traceability rule sees an
-	// export whose shots the manifest does not name and reports nothing about them — which is the
-	// honest answer to a document this build cannot read.
+	// # Why that matters, and what was wrong before
+	//
+	// An earlier version decoded it here with `json.Unmarshal` and swallowed the error. The domain has
+	// `DecodeManifest`, written for exactly this caller and documented as such ("the caller is about to
+	// compare it against what is currently approved"), and it refuses the three documents a bare decode
+	// accepts silently: an empty string, `null` or `{}` — which unmarshal into a ZERO struct with no
+	// error — and a document whose schema version is absent, which is the field that distinguishes a
+	// real manifest from a zero one. Bypassing it meant every one of those guards was skipped and the
+	// traceability rule compared against nothing while looking like it had compared.
+	//
+	// A manifest that will not decode is still not an error for this READ: the export row exists and
+	// the parameter rule reads it. What changes is that the failure is now VISIBLE — `ManifestError`
+	// carries the refusal's own sentence, and the traceability rule reports it rather than quietly
+	// finding no references to check.
 	if strings.TrimSpace(manifestJSON) != "" {
-		var manifest domainmedia.Manifest
-		if err := json.Unmarshal([]byte(manifestJSON), &manifest); err == nil {
+		manifest, err := domainmedia.DecodeManifest(manifestJSON)
+		if err != nil {
+			export.ManifestError = err.Error()
+		} else {
 			export.ManifestEpisodeID = manifest.EpisodeID
 			export.Quality = chooseString(manifest.Quality, export.Quality)
 			export.SubtitleMode = manifest.SubtitleMode
@@ -363,29 +409,39 @@ func (r *FinalFactsReader) readExport(ctx context.Context, episodeID string, fac
 				export.Height = manifest.Height
 			}
 			export.FPS = manifest.FPS
-			export.ManifestVersions["script"] = manifestReferenceID(manifest, domainmedia.RefScript)
-			export.ManifestVersions["board"] = manifestReferenceID(manifest, domainmedia.RefStoryboard)
-			export.ManifestVersions["plan"] = manifestReferenceID(manifest, domainmedia.RefDirectorPlan)
-			for _, reference := range manifest.References {
-				if reference.Kind != domainmedia.RefAssetVersion && reference.Kind != domainmedia.RefPanel {
-					continue
-				}
+			// `ReferencesOf` is the domain's own accessor, so the kinds this reader looks for are the
+			// domain's list rather than a loop written here that could drift from it.
+			export.ManifestVersions["script"] = firstReferenceID(manifest.ReferencesOf(domainmedia.RefScript))
+			export.ManifestVersions["board"] = firstReferenceID(manifest.ReferencesOf(domainmedia.RefStoryboard))
+			export.ManifestVersions["plan"] = firstReferenceID(manifest.ReferencesOf(domainmedia.RefDirectorPlan))
+			// A shot's media travels as an ASSET VERSION or a PANEL reference, and both carry the
+			// shot's own identifier: the ruleset keys them by shot so it can compare each against what
+			// is approved now.
+			for _, reference := range append(
+				manifest.ReferencesOf(domainmedia.RefAssetVersion),
+				manifest.ReferencesOf(domainmedia.RefPanel)...,
+			) {
 				if reference.ShotID == "" {
 					continue
 				}
-				// A panel reference names the PANEL version and carries the asset version in its own
-				// hash, so a shot's media is keyed by the shot and its hash by the same key. The
-				// ruleset compares both against what is approved now.
 				export.ManifestVersions["shot:"+reference.ShotID] = reference.ID
 				export.ManifestHashes["shot:"+reference.ShotID] = reference.Hash
 			}
-			if trackID := manifestReferenceID(manifest, domainmedia.RefSubtitleTrack); trackID != "" {
+			if trackID := firstReferenceID(manifest.ReferencesOf(domainmedia.RefSubtitleTrack)); trackID != "" {
 				export.ManifestVersions["subtitle"] = trackID
 			}
 		}
 	}
 	facts.Export = &export
 	return nil
+}
+
+// firstReferenceID returns the first reference's identifier, or empty.
+func firstReferenceID(references []domainmedia.ManifestReference) string {
+	if len(references) == 0 {
+		return ""
+	}
+	return references[0].ID
 }
 
 // readFiles records whether each cited hash has a row, and what that row says.
@@ -437,16 +493,6 @@ func (r *FinalFactsReader) readFiles(ctx context.Context, facts *appconsistency.
 		return mediaStorageError(err)
 	}
 	return nil
-}
-
-// manifestReferenceID returns the first identifier of one kind in a manifest.
-func manifestReferenceID(manifest domainmedia.Manifest, kind domainmedia.ReferenceKind) string {
-	for _, reference := range manifest.References {
-		if reference.Kind == kind {
-			return reference.ID
-		}
-	}
-	return ""
 }
 
 // chooseString returns the first non-empty value.

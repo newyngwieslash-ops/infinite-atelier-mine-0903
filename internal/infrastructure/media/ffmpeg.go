@@ -388,12 +388,18 @@ func (e *FFmpegEngine) finishExport(ctx context.Context, joined string, request 
 		// A burned-in subtitle is drawn into the picture, which means re-encoding it.
 		//
 		// THE ONE PLACE A PATH ENTERS A FILTER EXPRESSION, and therefore the one place escaping
-		// matters: ffmpeg's filtergraph parser treats `:` as an option separator and `\` as its own
-		// escape, and a Windows drive letter contains a colon. escapeFilterPath is what makes this
-		// safe, and the file it names is one this application wrote.
+		// matters: the filtergraph parser treats `:` as an option separator and `'` as its quoting
+		// delimiter, and a Windows drive letter contains the first. `escapeFilterPath` is what makes
+		// this safe, and the file it names is one this application wrote — see its comment for the
+		// probe that showed escaping the colon alone is not enough, and for the one character it
+		// refuses.
+		filter, err := escapeFilterPath(request.SubtitlePath)
+		if err != nil {
+			return err
+		}
 		arguments = arguments[:len(arguments)-2] // drop the `-c:v copy`: the picture is re-encoded
 		arguments = append(arguments,
-			"-vf", "subtitles="+escapeFilterPath(request.SubtitlePath),
+			"-vf", "subtitles="+filter,
 			"-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p")
 	case sidecar:
 		arguments = append(arguments, "-c:s", "mov_text")
@@ -502,23 +508,48 @@ func checkPathArgument(path string) error {
 	return nil
 }
 
-// escapeFilterPath escapes a path for use inside an ffmpeg filtergraph expression.
+// escapeFilterPath escapes a path for use inside an ffmpeg SUBTITLES filter expression.
 //
-// The filtergraph parser is a second language with its own metacharacters, and a path that is a
-// perfectly good argv element can still be a broken or dangerous expression there. The rules this
-// applies are the parser's: a backslash is the escape character, a colon separates options, and a
-// single quote delimits a quoted section. The order matters — the backslash first, or the escapes
-// added after it would themselves be escaped.
+// # The two layers, and why escaping the colon is only half of it
 //
-// It exists because a Windows drive letter contains a colon, so the ONE path that reaches a
-// filtergraph in this adapter would break without it.
-func escapeFilterPath(path string) string {
-	replaced := strings.ReplaceAll(path, "\\", "/")
-	replaced = strings.ReplaceAll(replaced, ":", "\\:")
-	replaced = strings.ReplaceAll(replaced, "'", "\\'")
-	replaced = strings.ReplaceAll(replaced, "[", "\\[")
-	replaced = strings.ReplaceAll(replaced, "]", "\\]")
-	return replaced
+// A filter's arguments pass through two parsers. The filtergraph splits a chain on `,` and `;` and a
+// filter's own arguments on `:`, and then the subtitles filter's option parser reads the result. A
+// Windows drive letter contains the first parser's separator, so the colon must be escaped — which is
+// what this function's first version did, and it was NOT ENOUGH.
+//
+// The value must also be wrapped in single quotes, and a probe is what showed it: `subtitles=C\:/…`
+// fails with "Unable to parse option value … as image size", because the parser consumes the `C` as
+// an option name and everything after the colon as its value, while `subtitles='C\:/…'` composes.
+// The failure mode is worth stating because it is silent in the worst way: the escaped string LOOKS
+// correct in isolation, and only running ffmpeg tells the two apart.
+// `TestBurnedInSubtitlesComposeADecodableFilm` is the test that does, and
+// `TestAMetacharacterInAValueStaysOneArgument` is the one that cannot.
+//
+// # What is refused rather than escaped
+//
+// A single quote inside the path cannot be expressed in this grammar. Probed: a directory named
+// `it's [odd]` fails to open however the quote is written, because ffmpeg's quoting has no escape for
+// its own delimiter in this context and this filter's parser does not accept the shell's `'\”` form.
+// Escaping it produced a path that did not exist rather than an error, which is the dangerous outcome
+// — the export would fail later, complaining about a missing file that is actually there.
+//
+// So the quote is REFUSED here instead of producing a broken expression. It costs this build nothing:
+// the only path that reaches here is one the adapter generated under the application's own temp
+// directory (`os.MkdirTemp` with an `export-` prefix), so a quote in it means the configured temp root
+// contains one. The answer to that is a sentence naming the problem rather than a rewritten path to
+// somewhere else.
+//
+// The backslash is normalised to a forward slash because ffmpeg accepts either and `/` needs no
+// escaping — in the other order every separator would be double-escaped.
+func escapeFilterPath(path string) (string, error) {
+	if strings.ContainsRune(path, '\'') {
+		return "", appmedia.InvalidError(
+			"A path containing a single quote cannot be written into a subtitle filter, so this " +
+				"export was refused rather than composed from the wrong file. Rename that directory, " +
+				"or export with the subtitles as a sidecar file instead of burned in.")
+	}
+	normalised := strings.ReplaceAll(path, "\\", "/")
+	return "'" + strings.ReplaceAll(normalised, ":", "\\:") + "'", nil
 }
 
 // validateCompose checks a request before any process starts.

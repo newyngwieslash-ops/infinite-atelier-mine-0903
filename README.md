@@ -209,6 +209,19 @@ WP-10 实现持久记忆、跨阶段一致性与质量中心（**不接入任何
 - **Canary 与验收**：`testdata/canary-drama/memory-recall.json`（§18.1 要求的「Memory recall 问题」）含早期设定、掩埋它的大量消息、问题与**两个点名自己用途的诱饵**；AC-MEM-001/002/003/004/005 各有真实迁移库上的测试，AC-E2E-004 的五个分句在**装配好的 production 栈**上走通，AC-E2E-005 走完整链路；
 - 本包**不包含**：真实付费 Provider 调用、视频/音频/字幕/导出（WP-11）、本地 ONNX 与 `sqlite-vec`（V1）、模型驱动的语义摘要、按阶段（而非按层）的模型策略（用户已确认继续延后）、Event Graph 可视化（v1.0）。**两轮独立评审**（一轮对账规范、一轮 **167 个变异 / 52 击杀 / 81 存活**）发现并修掉的问题逐条记在 `docs/adr/0014-persistent-memory-store-summary-vector-embedding-and-deterministic-checks.md`；其中**四处 PARTIAL 验收**与**三处验证限制**、以及本包**明确不覆盖的九项**见 `docs/implementation/STATUS.md` §0k。
 
+## WP-11 范围：视频、音频、字幕、时间线与导出
+
+- **整仓唯一的 `os/exec`**（`internal/infrastructure/media/ffmpeg.go`）：结构化 `[]string` argv、不经 shell、拒绝 `-` 开头的路径、输出限长、超时、独立临时目录、缺 ffmpeg 时 fail-soft 并给出诊断。扫描器新增**精确**白名单条目（文件 + `os-exec` 规则 + ADR-0015），拒绝通配符且陈留条目即失败——所以删适配器而不删条目同样失败；
+- **迁移 `000020_media.sql`**：`subtitle_tracks`（版本化，每集唯一批准）、`subtitle_cues`（毫秒范围，`end_ms > start_ms`，`dialogue_line_id` 让「哪些台词没有字幕」成为一次 join）、`episode_exports`（清单、输出哈希、批准追溯）。仅前向，未改任何已发布迁移；
+- **字幕**：草稿从剧本的**可听台词**生成（对白与旁白；动作/转场/提示是给制作的指示，不该有字幕），编辑器一次事务替换全部 cue 并可读回，SRT/VTT 渲染，缺行检测与草稿共用**同一个** `IsSpoken` 规则，因而两者不可能不一致；
+- **时间线是只读模型**而不是新表：顺序本来就在 `storyboard_items.ordinal` 里，第二份拷贝迟早会和它对不上。它 join 的是「该镜头已批准的媒体 + 该场台词产生的音频 + 落在该镜头时间跨度里的 cue」；
+- **导出走真 ffmpeg，从已批准的分镜图合成**（ADR-0015 §2）：Mock 视频只产 24 字节容器头，concat 它必然失败，所以「按镜头时长串成 MP4」用的是**真 PNG**，产出的文件可播、含音频与字幕流——已用 ffprobe 回读验证。清单记录所用每个版本与哈希，AC-MEDIA-003 的「可追溯」是拿数据库逐条核对而不是装饰；
+- **`SaveExport` 是本应用第一条「把文件写到用户指定位置」的路径**：目标来自原生对话框，**绝不来自请求参数**——被攻破的前端无法指定写入目标；字节从 store 流式落到目标，不经过浏览器（`ReadResultFile` 的 64 MiB data-URL 上限会拒掉任何真实 MP4）；
+- **Final Ruleset**（`internal/application/consistency/final.go`）：AGENT_CONTRACTS §11.4 的八条子句拆成十条规则，与分镜规则**共用同一个 `Check` 派发**，所以一个构建要么两者都有、要么都没有。确定性这一半**先于**监督者运行，其发现进入模型的任务——§11.4 的分工是真的；
+- **两个 `final_episode` agent**：执行层给出导出配方，监督层读「已批准片段拼出的片子是不是这一集想要的片子」。§19 的初始清单没有它们，加进来的依据是 ROADMAP 第 12 项、FR-100 的阶段表与 §11.4 本身，逐条写在 `internal/application/agentassembly/assembly_test.go` 的注释里；
+- **三个分区做实**（video/audio/timeline），各自走 `media.ts` 客户端，沿用本仓每个桌面客户端的**查询返空、命令抛错**分工；
+- 本包**不包含**：真实的视频/音频 Provider（roadmap 允许「或完整 Mock」）、**脚本与分镜导出**（ROADMAP 第 11 项只做到一半）、单集 E2E（第 14 项）、带参考资产的 job 重启恢复（第 13 项只覆盖无参考资产路径）、写 `usage_role = 'video'` 的资产行（第 3 项模型已定未实现）、以及「资源许可证元数据」这条 §11.4 子句——本仓 schema **没有任何地方能读到许可证**，所以规则**报告这个缺口本身**而不是假装通过。**两轮独立评审**（一轮对账规范、一轮 **321 个变异 / 149 击杀**）发现的问题逐条记在 `docs/adr/0015-media-the-one-audited-subprocess-export-recipe-and-mock-video.md` 与 `docs/implementation/STATUS.md` §0l；其中两处最严重的——Final Ruleset 在生产构建里**从未真正运行**（adapter 的 SQL 写在 schema 里不存在的列上，错误被 stage 机器丢弃）、以及**烧录字幕在 Windows 上必然失败**（filtergraph 的路径少了一层引号）——都在那里写明了原委与如今锁住它们的测试。
+
 ## 使用说明
 
 1. 打开右上角配置，添加渠道的 API 地址与模型。

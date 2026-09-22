@@ -53,3 +53,4 @@
 | 0012 | The script pipeline: one payload, field locks, derived duration, and the stated stage map | Accepted |
 | 0013 | The production pipeline: stage vocabulary, a shared mechanism, the gap report, the batch, and the MONOFORM envelope | Accepted |
 | 0014 | Persistent memory: the store, the summary chain, the vector index, the embedding port, and the deterministic checks | Accepted |
+| 0015 | Media: the one audited subprocess, the export recipe, and the mock video adapter | Accepted |

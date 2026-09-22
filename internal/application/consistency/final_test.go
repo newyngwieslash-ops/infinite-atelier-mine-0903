@@ -19,12 +19,20 @@ import (
 // cases matter more here than in most rulesets: these rules run before a supervisor on every final
 // stage, so a rule that fired on a healthy episode would put a blocker in front of every export.
 //
-// # What they deliberately do not re-test
+// # What they deliberately do not re-test, and the correction that matters
 //
-// The STORAGE is not exercised: `FinalFactsReader` has its own tests over a real schema, and the
-// adapter's job is a join. These tests drive the RULES through a double, which is what lets a case
-// state one fault in isolation — the property a database-backed test cannot have, because an episode
-// built for real has a dozen other facts that a rule might react to.
+// The STORAGE is not exercised here. The first version of this comment claimed `FinalFactsReader "has
+// its own tests over a real schema"`, and it did not — which is the whole reason a critical defect
+// shipped: the adapter's SQL was written against columns that do not exist, so `FinalFacts` returned
+// an error on every call, the stage machine's `if err == nil` discarded it, and all eight of section
+// 11.4's clauses contributed nothing while these tests stayed green over facts no real build could
+// produce.
+//
+// The storage tests exist now: `internal/infrastructure/database/final_reader_test.go` drives the real
+// adapter over the real schema, and `TestTheFinalRulesetRunsOverTheAdapter` walks it into this ruleset.
+// What stays HERE is the double, because it is what lets a case state ONE fault in isolation — a
+// property a database-backed fixture cannot have, since a real episode has a dozen other facts a rule
+// might react to.
 
 // finalReader is the double every test here drives the ruleset through.
 type finalReader struct {
@@ -190,16 +198,44 @@ func TestAnEmptyBoardIsNotReportedAsMissingMedia(t *testing.T) {
 	}
 }
 
-// TestAShotFlaggedNotRequiredIsNotReported covers the field the rule branches on. A shot a director
+// TestAShotFlaggedNotRequiredIsNotReported covers the field the rules branch on. A shot a director
 // deliberately left out must not block the export, or the flag would have no purpose.
+//
+// BOTH RULES ARE CHECKED, and the audio half was the defect an independent quality review found: the
+// first version cleared shot 2's MEDIA and left its AUDIO approved, so the audio rule had no candidate
+// to suppress and a mutation that dropped its `Required` guard survived. A fixture for "this shot is
+// exempt" has to clear everything the exemption covers, or it only tests the rule it happened to
+// disturb.
 func TestAShotFlaggedNotRequiredIsNotReported(t *testing.T) {
 	facts := healthyEpisode()
+	// The shot is exempt from every completeness rule at once.
 	facts.Shots[1].MediaVersionID = ""
+	facts.Shots[1].MediaHash = ""
+	facts.Shots[1].VideoMIME = ""
+	facts.Shots[1].VideoBytes = 0
+	facts.Shots[1].AudioVersionID = ""
+	facts.Shots[1].AudioHash = ""
+	facts.Shots[1].AudioMIME = ""
+	facts.Shots[1].AudioBytes = 0
 	facts.Shots[1].Required = false
-	for _, finding := range runFinal(t, facts) {
+	findings := runFinal(t, facts)
+	for _, finding := range findings {
 		if finding.Rule == RuleShotMedia {
-			t.Fatalf("a shot marked not required produced a blocker: %+v", finding)
+			t.Fatalf("a shot marked not required produced a media blocker: %+v", finding)
 		}
+		if finding.Rule == RuleAudioComplete {
+			t.Fatalf("a shot marked not required produced an audio blocker: %+v", finding)
+		}
+	}
+	// And the SAME fixture with the flag flipped reports both, which is what says the two rules were
+	// in a position to fire rather than being unreachable for some other reason.
+	facts.Shots[1].Required = true
+	required := runFinal(t, facts)
+	if _, ok := findFinding(required, RuleShotMedia); !ok {
+		t.Fatalf("the same shot, required, produced no media finding: %+v", required)
+	}
+	if _, ok := findFinding(required, RuleAudioComplete); !ok {
+		t.Fatalf("the same shot, required, produced no audio finding: %+v", required)
 	}
 }
 
@@ -216,8 +252,18 @@ func TestAMajorFindingForAShotWithNoAudio(t *testing.T) {
 	if finding.EntityID != "item-1" {
 		t.Fatalf("the finding names %q, want the first row", finding.EntityID)
 	}
-	if len(findings) != len(blockersOf(findings)) {
-		t.Fatalf("a finding of major severity is not a blocker: %+v", findings)
+	// The SEVERITY is asserted directly, because the assertion this replaced could not fail: it
+	// compared the finding count against the count of `blockersOf` — a filter using `Blocker()`, which
+	// is `Severity == Critical || Severity == Major` — over a list in which every element was already
+	// one of those. The two lengths were equal by construction, so the claim "a finding of major
+	// severity is not a blocker" was never tested, and a mutation that changed this severity to
+	// `major` would have passed it. An independent quality review found it.
+	if finding.Severity != consistency.SeverityMajor {
+		t.Fatalf("the audio finding is %s, want major: missing audio is a defect a person must fix, "+
+			"but the episode is not unexportable while they decide", finding.Severity)
+	}
+	if !finding.Blocker() {
+		t.Fatal("a major finding does not block, so an episode with silent dialogue would pass review")
 	}
 }
 
@@ -333,8 +379,39 @@ func TestACriticalFindingForPlaceholderMedia(t *testing.T) {
 	if !finding.Blocker() {
 		t.Fatal("placeholder media is not a blocker, so an export could carry it")
 	}
+	if finding.Severity != consistency.SeverityCritical {
+		t.Fatalf("placeholder media is %s, want critical: the file cannot be composed at all", finding.Severity)
+	}
 	if !strings.Contains(finding.Problem, "24") {
 		t.Fatalf("the finding does not state the size: %q", finding.Problem)
+	}
+	// The AUDIO branch is the one an independent quality review found had no firing case: the same
+	// fixture mutated the video size only, so a broken comparison on the audio side survived the whole
+	// suite. A container header with no recording in it is what a failed text-to-speech job leaves.
+	audio := healthyEpisode()
+	audio.Shots[0].AudioBytes = 24
+	audio.Shots[0].AudioDurationMS = 0
+	audio.Files["hash-b"] = FinalFile{Hash: "hash-b", MIME: "audio/mpeg", Size: 24, Present: true}
+	audioFinding, ok := findFinding(runFinal(t, audio), RuleMediaEmpty)
+	if !ok {
+		t.Fatal("a 24-byte audio file produced no finding")
+	}
+	if audioFinding.Field != "audio" {
+		t.Fatalf("the finding names the %s field, want audio", audioFinding.Field)
+	}
+	if audioFinding.Severity != consistency.SeverityMajor {
+		t.Fatalf("placeholder audio is %s, want major", audioFinding.Severity)
+	}
+	// A recording that merely has no duration recorded is NOT reported: the fixture above states zero
+	// duration because a header has none, and the rule must fire on the SIZE rather than on the missing
+	// metadata. A real recording whose length was never read back is a different situation.
+	recorded := healthyEpisode()
+	recorded.Shots[0].AudioDurationMS = 0
+	recorded.Shots[0].AudioBytes = 20000
+	for _, other := range runFinal(t, recorded) {
+		if other.Rule == RuleMediaEmpty && other.Field == "audio" {
+			t.Fatalf("a real recording with no duration read back was reported as empty: %+v", other)
+		}
 	}
 }
 
@@ -350,15 +427,63 @@ func TestANonMediaTypeIsReported(t *testing.T) {
 
 // TestHealthyMediaSizesAreNotReported is the silent direction of clause five, and the threshold is
 // the thing under test: a rule whose floor was a megabyte would fire on a legitimate small PNG.
+//
+// THE NUMBERS ARE WRITTEN OUT rather than read from the constants. An independent quality review
+// found this test, `TestAValidExportIsNotReported` and the bound table all spelled their fixtures with
+// `DefaultMinMediaBytes` and `DefaultMaxWidth` — so a mutation that changed the constant moved the
+// test WITH it and survived, and the test would have passed for any floor at all. A value asserted
+// against itself is not a test; the literals below are the same numbers the constants use, and
+// `TestTheDefaultsAreTheNumbersTheTestsPin` is what keeps the two from drifting apart silently.
 func TestHealthyMediaSizesAreNotReported(t *testing.T) {
 	facts := healthyEpisode()
-	// Just at the floor.
-	facts.Shots[0].VideoBytes = DefaultMinMediaBytes
-	facts.Files["hash-a"] = FinalFile{Hash: "hash-a", MIME: "image/png", Size: DefaultMinMediaBytes, Present: true}
+	// Just at the floor: 1024 bytes.
+	facts.Shots[0].VideoBytes = 1024
+	facts.Files["hash-a"] = FinalFile{Hash: "hash-a", MIME: "image/png", Size: 1024, Present: true}
 	for _, finding := range runFinal(t, facts) {
 		if finding.Rule == RuleMediaEmpty {
 			t.Fatalf("a file at the size floor was reported as empty: %+v", finding)
 		}
+	}
+	// And a tiny but real PNG above the floor is not a placeholder either: the rule's subject is a
+	// file that cannot be a picture, not one that is merely small.
+	facts.Shots[0].VideoBytes = 2048
+	facts.Files["hash-a"] = FinalFile{Hash: "hash-a", MIME: "image/png", Size: 2048, Present: true}
+	for _, finding := range runFinal(t, facts) {
+		if finding.Rule == RuleMediaEmpty {
+			t.Fatalf("a two-kilobyte PNG was reported as a placeholder: %+v", finding)
+		}
+	}
+}
+
+// TestTheDefaultsAreTheNumbersTheTestsPin is the drift guard the tests above need.
+//
+// The literals in this file are deliberately NOT the constants, so that a changed constant fails a
+// test instead of moving it. That property only holds while something states what the constants
+// currently ARE — otherwise the two would drift and a reader would not know which was intended. This
+// is that statement, and it is expected to fail (and be updated deliberately) when a bound changes.
+func TestTheDefaultsAreTheNumbersTheTestsPin(t *testing.T) {
+	cases := []struct {
+		name     string
+		actual   int
+		expected int
+	}{
+		{"DefaultMinMediaBytes", DefaultMinMediaBytes, 1024},
+		{"DefaultMaxWidth", DefaultMaxWidth, 3840},
+		{"DefaultMaxHeight", DefaultMaxHeight, 2160},
+		{"DefaultMaxFPS", DefaultMaxFPS, 60},
+	}
+	for _, testCase := range cases {
+		if testCase.actual != testCase.expected {
+			t.Fatalf("%s is %d and the tests in this file pin %d; changing a bound is a decision, so "+
+				"update both", testCase.name, testCase.actual, testCase.expected)
+		}
+	}
+	// A zero or negative bound would make the option's "unset" branch unreachable, which is how the
+	// defaults would silently stop applying.
+	ruleset := NewFinalRuleset(FinalOptions{})
+	if ruleset.minMediaBytes != DefaultMinMediaBytes || ruleset.maxWidth != DefaultMaxWidth ||
+		ruleset.maxHeight != DefaultMaxHeight || ruleset.maxFPS != DefaultMaxFPS {
+		t.Fatal("NewFinalRuleset with no options did not apply the defaults")
 	}
 }
 
@@ -577,17 +702,28 @@ func TestExportParametersAreBounded(t *testing.T) {
 }
 
 // TestAValidExportIsNotReported is the silent direction of clause eight.
+//
+// The numbers are LITERALS for the reason the media-size test states: a bound asserted against itself
+// moves with the constant and pins nothing. `TestTheDefaultsAreTheNumbersTheTestsPin` is what says the
+// literals and the constants still agree.
 func TestAValidExportIsNotReported(t *testing.T) {
 	facts := healthyEpisode()
-	// The largest legal export, which is the boundary a bound must include.
+	// The largest legal export, which is the boundary a bound must INCLUDE: 4K at 60fps.
 	facts.Export.Quality = "final"
-	facts.Export.Width = DefaultMaxWidth
-	facts.Export.Height = DefaultMaxHeight
-	facts.Export.FPS = DefaultMaxFPS
+	facts.Export.Width = 3840
+	facts.Export.Height = 2160
+	facts.Export.FPS = 60
 	for _, finding := range runFinal(t, facts) {
 		if finding.Rule == RuleExportParameters {
 			t.Fatalf("the largest legal export was refused: %+v", finding)
 		}
+	}
+	// One pixel wider is refused, which is what says the bound is a bound rather than a ceiling with
+	// slack. The pair is the assertion: without the second half, a rule that accepted anything would
+	// pass the first.
+	facts.Export.Width = 3842
+	if _, ok := findFinding(runFinal(t, facts), RuleExportParameters); !ok {
+		t.Fatal("a frame one step above the width bound was accepted")
 	}
 }
 

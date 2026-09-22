@@ -2,8 +2,8 @@
 
 > Last updated: 2026-09-23
 > Product: Infinite Atelier Core + Drama Production Pack
-> Current work package: **WP-10 — Persistent Memory、Consistency 与 Quality Center**
-> Status: **COMPLETE for the 17 ROADMAP items, with four PARTIAL acceptance clauses and three verification limits named in section 0k.** The memory half of the product is built: migration 000019's three tables and the `review_issues.source` column, the memory aggregate with DOMAIN_MODEL section 14.5's invariants as functions, the float32 BLOB vector index with the scope filter in SQL, the scored recall with section 12.2's four channels and its fusion weights, the extractive summary chain with provable provenance, the deep recall that walks a summary back to its messages, FR-120's five user commands and their Memory Center section, the embedding capability with a real adapter and a deterministic one, the six deterministic consistency rules merged into the supervisor's own report with the `source` mark, and the Quality Center's findings pane — the first caller the review read path has ever had. Section 0k states what this package delivered, the defects TWO INDEPENDENT REVIEWS found in it (167 mutations, 52 killed; six blockers across two rounds), and — plainly — the four criteria that are PARTIAL and why. WP-01 through WP-09 remain COMPLETE for their recorded scopes.
+> Current work package: **WP-11 — 视频、音频、字幕、时间线与导出**
+> Status: **COMPLETE for the 14 ROADMAP items, with five PARTIAL items and one NOT-BUILT item named in section 0l.** The media half of the product is built: the one audited subprocess and its ffmpeg adapter, migration 000020's three tables, the media domain's timecodes and cue/manifest rules, the subtitle service with drafts that cite dialogue lines and an editor that reads back, the timeline as an ordered join over the board's own rows, the export service that composes a real playable MP4 from approved panel frames with audio and subtitles muxed in, the `SaveFile` path that writes to where a user points — the first such path this application has ever had — the video and audio job submissions with their reference-asset pipeline, the two `final_episode` agents and the deterministic Final Ruleset that precedes the supervisor, and the video, audio and timeline sections. Section 0l states what this package delivered, the defects TWO INDEPENDENT REVIEWS found (321 mutations, 149 killed; four blockers), and — plainly — the items that are PARTIAL and the one that is NOT BUILT. WP-01 through WP-10 remain COMPLETE for their recorded scopes.
 
 WP-03 start baseline (2026-09-15): branch `codex/wp-01-desktop-foundation`, HEAD `a243891455ec17687dd54b5ac90d3bd64478a1a1`, empty index. Freshly re-run baseline: `go test ./... -count=1` PASS (15 packages at start), `go vet ./...` PASS, `web` `npm run typecheck` PASS, `npm test` PASS (15 tests), `npm run build` PASS. Go commands require `GOTOOLCHAIN=go1.25.0 GOSUMDB=sum.golang.org` on this host because the user-level `go env` sets `GOSUMDB=off`, which blocks toolchain verification. The working tree already contained the WP-01/WP-02 tracked and untracked work plus the user's brand rename; none of it was modified outside the WP-03 scope.
 
@@ -250,6 +250,287 @@ unusable** (uncompilable or equivalent). The survivors are reported in three cla
 - Migrations/backups: `000019` is forward only, `000001` through `000018` were not modified, and
   no user database was touched.
 - Real Provider calls: **none**.
+
+# 0l. WP-11 result: video, audio, subtitles, timeline and export (2026-09-23)
+
+## Scope completed
+
+- **Status: COMPLETE for the 14 ROADMAP items, with five PARTIAL and one NOT BUILT.** Each is
+  stated below rather than glossed. Two independent reviews ran against the package — a spec
+  review and a mutation/quality review — and the defects they found are listed with what was done
+  about each.
+
+- **The one audited subprocess** (`internal/infrastructure/media/ffmpeg.go`): `os/exec` in exactly
+  one file, structured `[]string` argv with no shell, `-`-prefixed paths refused, bounded output,
+  timeouts, isolated scratch directories, and fail-soft when the machine has no ffmpeg. The
+  repository's scanner gained a precise allowlist entry naming the file, the `os-exec` rule and
+  ADR-0015; it refuses wildcards and fails on a stale entry, so removing the adapter without
+  removing the entry is also a failure.
+
+- **Migration `000020_media.sql`**: `subtitle_tracks` (versioned, eight statuses, one approved per
+  episode), `subtitle_cues` (millisecond ranges with `end_ms > start_ms`, a `dialogue_line_id` that
+  makes "which lines have no cue" a join, and a `status` column distinguishing a generated cue from
+  an edited one), and `episode_exports` (the manifest, the output hash, the approval trace).
+  Forward only; no published migration was modified.
+
+- **The media domain** (`internal/domain/media/`): `Timecode` with SRT and VTT formatting and a
+  parser, `Cue`/`Track` with `ValidateTrack` and `MissingLines`, and `Manifest` with the two
+  completeness rules AC-MEDIA-003's traceability depends on.
+
+- **The subtitle service** (`internal/application/media/subtitle_service.go`): drafts from a script
+  version's SPOKEN lines (dialogue and narration; an action line is a direction to the production
+  and gets no subtitle), an editor that replaces cues in one transaction, SRT/VTT rendering, and
+  `Missing` as the same join the draft's filter uses so the two agree by construction.
+
+- **The timeline** (`internal/application/media/timeline.go`): the ordered read model, joining the
+  board's own rows to the media approved for each, the audio a line produced, and the cues that
+  fall inside each shot's running span. A read model rather than a table, because the order already
+  exists in `storyboard_items.ordinal` and a second copy would eventually disagree.
+
+- **The export service** (`internal/application/media/export_service.go`): the manifest assembly,
+  the three-pass compose through the engine, the output through the real content-addressed store,
+  and the record. It composes from approved PANEL FRAMES rather than shot videos, which ADR-0015
+  section 2 rules on and section 0l returns to below.
+
+- **The save path** (`save_dialog.go`, `MediaBinding.SaveExport`): the first way this application
+  has ever had to write a file to where a USER pointed. The destination comes from a native dialog
+  and NEVER from a request parameter — a compromised frontend cannot name a write target — and the
+  bytes stream from the store to the destination without passing through the browser, because
+  `ReadResultFile`'s 64 MiB data-URL cap would reject any real episode.
+
+- **The video and audio job submissions** (`internal/desktop/media_jobs.go`): `SubmitVideoJob` with
+  first-frame, last-frame and reference assets (bounded at eight), `SubmitAudioJob` with the
+  dialogue line as the job's entity, and both bounded by confirmation-shaped limits (60 seconds,
+  2000 characters).
+
+- **The Final Ruleset** (`internal/application/consistency/final.go`): AGENT_CONTRACTS section
+  11.4's eight clauses as ten rules, dispatched from the same `StoryboardConsistencyChecker.Check`
+  switch the storyboard rules use, so a build has both or neither.
+
+- **The two `final_episode` agents** (`production.execution.final_episode` and
+  `production.supervision.final_episode`): the execution agent states an export recipe and the
+  supervisor reads whether the film the approved pieces assemble is the film the episode intended.
+  Section 11.4's division is real: the deterministic pass runs FIRST and its findings travel into
+  the supervisor's task, so a model is told what a join found rather than asked to notice it.
+
+- **The three sections** (`web/src/components/studio/{video,audio,timeline}-view.tsx`) and their
+  client (`web/src/services/desktop/media.ts`), with the query-empty/command-throws split every
+  desktop client in this repository keeps. All three were `available: false` before this package.
+
+## Acceptance criteria
+
+| Criterion | Result | Evidence |
+|---|---|---|
+| AC-MEDIA-001 (9 clauses) | PASS, with clause 7 PARTIAL | `internal/application/jobs` and `internal/infrastructure/jobs` cover submit, remote ID, poll, restart, fetch, validate, duplicate and cancel. **Clause 7, "asset version", is PARTIAL**: no test wires a video job's result to an `asset_version` row. The job's result is stored and referenced; the asset aggregate is not what holds it. |
+| AC-MEDIA-002 (5 clauses) | PASS, with clauses 1 and 2 PARTIAL | Editable subtitles, valid SRT/VTT round-tripped through the parser, and missing-line detection are covered by `subtitle_wp11_test.go` and `domain/media/subtitle_test.go`. **Clause 1** (`dialogue line → voice job`) is implemented by `SubmitAudioJob` and asserted nowhere; **clause 2** (`audio linked to character/line`) has no read that enumerates a script version's dialogue lines, so the character half is carried by the subtitle cue's speaker rather than by the audio asset. |
+| AC-MEDIA-003 (7 clauses) | PASS, with clause 2 PARTIAL | `acceptance_wp11_test.go` walks ordered shots, clip replacement, export, playability (ffprobe read-back) and manifest traceability over the real schema. **Clause 2, "audio/subtitle"**: the subtitle stream is asserted in that walk and the AUDIO composition is covered separately in `compose_test.go`, not in the same composition. |
+| Final Review | PASS | The two agents and the deterministic ruleset are composed and dispatched; `final_reader_test.go` drives the adapter over the real schema and `TestTheCheckerDispatchesTheFinalStageToTheFinalRuleset` asserts the routing. |
+| output playable | PASS | ffprobe read-back with stream count, duration and dimensions, in two suites. ffmpeg is present on this host, so these ran rather than skipped. |
+| 无 Shell 注入 | PASS | Structured argv, no shell, `-`-prefixed paths refused, and a real composition with a crafted value. |
+| 导出清单可追溯 | PASS | The manifest is decoded, each cited reference is read back from the database, and the traceability rule compares it against what is currently approved. |
+
+## What is PARTIAL, and what is NOT BUILT
+
+1. **ROADMAP item 11, "Script/Storyboard/Subtitle/Manifest Export", is NOT BUILT beyond half.**
+   The subtitle and manifest halves exist. There is **no script export and no storyboard export**:
+   `grep -rni "ExportScript\|ExportStoryboard"` returns nothing, and no binding writes a manifest to
+   disk. `save_dialog.go`'s `.json` filter is therefore reachable only if a caller asks for a name
+   ending in `.json`, which nothing does today.
+2. **ROADMAP item 3, "Shot Video Version", is PARTIAL.** ADR-0015 section 4 rules the model (an
+   `assets` row of type `video`, with an `asset_usages` row whose `usage_role` is `video`), and the
+   vocabulary exists in the schema. **Nothing writes a `usage_role = 'video'` row**, so the model is
+   chosen and unimplemented.
+3. **ROADMAP item 13, "中断恢复", is PARTIAL.** `video_restart_test.go` covers a job restart WITHOUT
+   reference assets. A restart with first-frame, last-frame or reference assets populated is not
+   covered.
+4. **ROADMAP item 14, "单集 E2E", is NOT BUILT.** No test drives one episode through board → video
+   and audio → subtitle → timeline → export → final review as a single walk.
+   `acceptance_wp11_test.go` stops at the export and the approval. WP-10 has
+   `acceptance_wp10_e2e_test.go` for exactly this shape; WP-11 does not.
+5. **ROADMAP item 1's video provider is a complete Mock, which the item permits** ("或完整 Mock").
+   Its payload is a twenty-four byte container header rather than decodable video, which is why
+   ADR-0015 section 2 composes exports from panel frames instead. A real adapter is not built.
+6. **ROADMAP item 4, "TTS Voice/Dialogue mapping", is PARTIAL.** `SubmitAudioJob` maps to a dialogue
+   line; no read enumerates a script version's lines, so the section asks the user to type the line
+   id rather than offering a picker.
+
+## The two AGENT_CONTRACTS section 11.4 clauses this build does not fully answer
+
+- **"所有必需 Shot 有批准视频"** is implemented as approved MEDIA, which in this build is usually a
+  panel image. The divergence is deliberate and now recorded in the rule's own comment: a literal
+  reading would report every shot of every episode, because the video adapter is a mock. The
+  condition for closing it is stated — a build with a real video adapter would require
+  `MediaKind == "video"` for the shots a director marked as needing motion.
+- **"黑帧/空帧/静音异常"** is answered as far as a probe can: a placeholder's size, a type ffmpeg
+  cannot compose, an audio file that is a container header. **A black frame inside a well-formed
+  video and a silent passage inside well-formed audio are NOT caught**, and the rule says so in its
+  own comment rather than reporting a clean result it did not earn.
+
+## The licence clause, and why it is a reported gap
+
+**"资源许可证元数据" has nowhere in this build to read a licence from.** Verified:
+`grep -rni "license\|licence\|rights" --include="*.sql" internal/infrastructure/database/migrations/`
+finds only two prose comments using the English word as a synonym for "justification"; there is no
+column anywhere. PRD R9's mitigation is a THIRD_PARTY_NOTICES document rather than a per-asset
+rights record.
+
+A rule that looked and found nothing would either report every asset as unlicensed — a page of
+findings a user learns to ignore — or report none and read as green. So `FinalFacts.LicensesChecked`
+is `false` in this build and the rule **reports the gap itself**, once, as a minor finding that
+names what is missing. Closing it means adding a licence column to the asset aggregate and a command
+to record it.
+
+## The defects the two independent reviews found
+
+### Spec review — four blockers
+
+1. **CRITICAL: the Final Ruleset was inert in every real build.** `final_reader.go` prepared four
+   SQL statements against columns the schema does not have:
+   `storyboard_versions.episode_id` (the episode is on `storyboards`),
+   `dialogue_lines.script_version_id` (the line reaches its version through `scenes`),
+   `artifact_staleness.id` (the primary key is the pair `(artifact_type, artifact_id)`), and
+   `script_versions.episode_id` (it hangs off `scripts`). The FIRST of these runs unconditionally, so
+   `FinalFacts` returned an error for every episode; `stagepipeline`'s `if err == nil` discarded it;
+   and all eight of section 11.4's clauses contributed nothing while the ruleset's own tests stayed
+   green over a struct-literal double. One of those tests asserted in a comment that the adapter "has
+   its own tests over a real schema", and it did not.
+   **Fixed**, and `internal/infrastructure/database/final_reader_test.go` is the test that would have
+   caught it: it drives the real adapter over the real schema, and eight mutations that reintroduce
+   the broken statements are all killed by it.
+2. **HIGH: burned-in subtitles failed on every Windows machine.** `escapeFilterPath` escaped the
+   drive letter's colon and returned the value UNQUOTED, which ffmpeg rejects — the filtergraph reads
+   `C` as an option name and the rest of the path as its value. Escaping the colon was necessary and
+   not sufficient; the single quotes are what make it an expression. The test covering the function
+   asserted the string's SHAPE and never ran ffmpeg, and the only subtitle compose test used sidecar
+   mode, which takes a different branch. **Fixed**, and `TestBurnedInSubtitlesComposeADecodableFilm`
+   is the test that runs it — verified to fail against the unquoted form with ffmpeg's own
+   "Unable to parse option value" error.
+3. **HIGH: no command could move an artifact into REVIEW.** Both `ApproveSubtitleTrack` and
+   `ApproveExport` refuse a row that is not `under_review`. For an export the only caller that ever
+   wrote that status was an acceptance test reaching past the service to the concrete repository; for
+   a subtitle track nothing wrote it at all — the value lived in the schema's CHECK and in the
+   approval's WHERE clause and nowhere else. So in a real build neither approval was reachable.
+   **Fixed**: `SubmitForReview` on both services, the repository methods moved onto the PORTS, binding
+   methods for both, and the two fixtures rewritten to walk that path instead of bypassing it.
+4. **The ADR's own correction.** It claimed the `final_episode` agent "has a write tool [that]
+   writes a recipe". It has NO write tool — its five granted tools are all reads, and the recipe is
+   the model's structured output recorded on the run. The paragraph now says so.
+
+### Quality review — 321 mutations, 149 killed
+
+The survivors are reported by class in section 0l's table below. The four with consequences:
+
+1. **`internal/application/media` had NO test file at all**, and 34 of 47 mutations to its three
+   services survived — including deleting the "shots with no approved media" refusal that
+   `TestACMEDIA003AnExportRefusesShotsWithNoMedia` is named for. That test asserted `err == nil`
+   alone, so a DIFFERENT refusal from a later rule satisfied it. **Fixed**: the assertion now names
+   the refusal's message, and a mutation that deletes the guard is killed.
+2. **`save_dialog.go` had 0.0% coverage**, and two of its nine surviving mutations were
+   security-relevant (the traversal reduction and the Windows device-name refusal in
+   `sanitizeSuggestedName`). **Fixed**: `save_dialog_test.go` covers the sanitiser, the filter, the
+   atomic write sequence and the binding's storage-key guard.
+3. **Three tests were written against the constants they were testing** — `DefaultMinMediaBytes`,
+   `DefaultMaxWidth` and `DefaultMaxFPS` appeared on both sides of their comparisons, so a mutation
+   that changed a bound moved the test with it. **Fixed**: the tests now use literals and
+   `TestTheDefaultsAreTheNumbersTheTestsPin` states what the constants are, so a deliberate change
+   fails that assertion once and is updated once.
+4. **Two tests could not fail.** The audio-severity assertion compared a finding count against a
+   filtered count over a list in which every element was already a blocker — equal by construction.
+   And `TestAFrameOfTheWrongShapeIsPaddedRatherThanCropped` asserted OUTPUT DIMENSIONS, which a plain
+   `scale` also produces, so removing `pad` from the filtergraph (stretching the picture instead of
+   letterboxing it) survived. **Both fixed**: the severity is asserted directly, and the padding test
+   now extracts a frame and checks the PIXELS — verified to fail with "the sides are {248 39 39 255},
+   want the black bars padding draws" when `pad` is removed.
+
+## Verification, with results
+
+- `go test ./... -count=1` — **PASS** (62 packages; no failures).
+- `go vet ./...` — **PASS**.
+- `gofmt -l .` — **PASS** (no files).
+- `node scripts/security-scan.mjs` — **PASS**: 591 files scanned, 2 audited dynamic-execution
+  exceptions, 4 audited legacy direct-call files with named owners.
+- The four `--check` generators — **PASS**.
+- `npm run typecheck` — **PASS**. `npm run test` — **PASS**, 59 tests. `npm run build` — **PASS**.
+  `npm run build:monoform` — **PASS**.
+- `npx playwright test` — **PASS**, 25 passed / 1 skipped (a pre-existing canvas crop skip).
+- `wails build` — **PASS**; `wails generate module` regenerated `MediaBinding` and the models.
+- Real ffmpeg 5.1.1 composes a real MP4, reads it back with ffprobe, and the composed file carries
+  the audio and subtitle streams that were asked for.
+
+### Verification limits, stated
+
+- **`go test -race` cannot run on this host**: the C toolchain reports
+  `cc1.exe: 64-bit mode not compiled in`. This is an ENVIRONMENT FAILURE, not a pass, and no race
+  evidence exists for this package. **Every concurrency claim in this package is from reading, not
+  from a detector.** The two synchronised structures (`FFmpegEngine.versionOnce` and
+  `MediaBinding`'s mutex) were read and are correct; `mediaWiring.saveFile` is written before
+  `attach` reads it at startup and is not synchronised, which is safe in the current call order and
+  would need a lock if a binding call could arrive earlier.
+- **No real paid provider was called.** The video and audio providers are the complete Mock the
+  roadmap permits; no generation left the process.
+- **`wails build` requires the pinned CLI on PATH.** It is not on `scripts/verify.sh`'s PATH by
+  default, so that gate SKIPS it and says so; it was run explicitly and separately.
+
+## Mutation testing, in summary
+
+Two rounds, both reported in full above. The spec review's round and the quality review's **321
+mutations across eight areas: 149 KILLED, 157 SURVIVED, 9 NO-COMPILE, 6 NO-ANCHOR**, with the
+survivors classified as reachable-with-a-missing-test, equivalent, or unreachable. The
+reachable-with-a-missing-test survivors in `internal/application/media` (34), the root-level
+adapters (`save_dialog.go`, `media_reader.go`, `media_wiring.go`'s two port adapters) and the
+frontend probes are the ones the fixes above address; the remainder are recorded here rather than
+silently dropped:
+
+- **`internal/application/media`'s own refusals** — the cross-episode guards, the FPS and
+  subtitle-mode checks, the empty-shot and engine-unavailable refusals, and the four cue-timing
+  rules of `cuesFor` — have no unit test. They are exercised only through the acceptance walk's
+  happy path. **Not fixed in this package**; the package's test file does not exist.
+- **`media_reader.go` and `media_wiring.go`'s file-store and temp-dir adapters** are covered by the
+  wiring test's construction path but not by an assertion about their behaviour.
+- **`internal/desktop`'s DTO mapping layer** (twelve methods) has no Go test; the frontend calls
+  them through Wails bindings that no Go test drives.
+- **`ParseTimeRange` and `DecodeManifest`** had no production caller. (DecodeManifest's bypass is
+  fixed: `final_reader.go` now reads the manifest through it, so its empty/`null`/missing-schema
+  guards apply on the production path.)
+
+## What this package does NOT cover, stated plainly
+
+1. **No script export, no storyboard export.** ROADMAP item 11 asks for four artifacts and two are
+   built.
+2. **No single-episode E2E walk.** ROADMAP item 14.
+3. **No real video provider.** The mock's bytes are a container header, which is why exports compose
+   from panel frames.
+4. **`video_generation` has no agent and no test.** The stage is configured in the policy table and
+   driven by `SubmitVideoJob`; ADR-0015 section 5 records why, and the stage's policy entry is
+   unreachable in practice.
+5. **Black frames and silent passages inside well-formed media are not detected.** Section 11.4's
+   fifth clause is answered only as far as a probe can.
+6. **The licence clause is a reported gap**, not a check — see above.
+7. **Staleness for an export is a deterministic finding** that compares the manifest against what is
+   currently approved, not a node in the staleness chain: migration 000012's `artifact_type` CHECK is
+   closed and published, and ADR-0015 section 7 records the ruling.
+8. **`scripts/gen-canary-fixture.mjs` produces no media fixture.** The canary drama's subtitles and
+   manifest are not generated, so a drift between the canary and the media code is not detected.
+9. **No "FFmpeg 路径" setting, which PRD FR-180 lists.** The two program names are constants in the
+   adapter, because a path from a settings field or a request would be a way to run an arbitrary
+   program — see that file's comment for why the reasoning applies even though SECURITY section 11's
+   "文件创建使用 exclusive" is about files. A machine whose ffmpeg is not on PATH gets the
+   engine-unavailable diagnostic rather than a field to correct it.
+
+## Git and data safety
+
+- Existing user changes preserved: **yes**. The brand-rename files and the untracked
+  `.zcode/plans/` scratch were left intact; a user-authored proposal document remains untracked and
+  was not added to the index.
+- Automatic commit/push/stash/reset/clean: **none** beyond the commits the user's instruction
+  authorised.
+- Secrets found or introduced: **none**. The media adapter has no network path, the save dialog
+  writes only where the user pointed, and no provider key reaches the frontend.
+- Migrations/backups: `000020` is forward only, `000001` through `000019` were not modified, and no
+  user database was touched.
+- Real Provider calls: **none**.
+- Build products: `build/bin/` and `web/dist/` are gitignored; `web/dist/.gitkeep` was restored after
+  a build removed it.
 
 # 0j. WP-09 result: the production pipeline, the gap report and the MONOFORM bridge (2026-09-22)
 

@@ -568,10 +568,20 @@ func TestACMEDIA003AnExportRefusesShotsWithNoMedia(t *testing.T) {
 		t.Fatalf("the timeline reports %d shots with no media, want 1", timeline.MissingMedia)
 	}
 	// The export refuses, and the refusal says what is wrong rather than producing a short film.
-	if _, _, err := harness.service.Export(ctx, appmedia.ExportRequest{
+	//
+	// THE MESSAGE IS ASSERTED, not merely the presence of an error, and the distinction is a defect an
+	// independent quality review found: this assertion used to be `err == nil` alone, and DELETING the
+	// missing-media guard left it green — because the timeline read below also refuses, so an error
+	// still came back, from a different rule about a different problem. A test that accepts any refusal
+	// cannot tell a guard from the guard beside it.
+	_, _, err = harness.service.Export(ctx, appmedia.ExportRequest{
 		EpisodeID: "drama-episode", Quality: domainmedia.QualityPreview, FPS: 15, CreatedByType: "user",
-	}); err == nil {
+	})
+	if err == nil {
 		t.Fatal("an export with unapproved shots was accepted")
+	}
+	if !strings.Contains(err.Error(), "no approved media") {
+		t.Fatalf("the export was refused for a reason other than the missing media: %v", err)
 	}
 	// And the episode with no approved board at all is refused with a DIFFERENT message, because "no
 	// board" and "an incomplete board" are different things to fix. The second episode is written here
