@@ -140,6 +140,18 @@ func TestToolsWithOnlyOptionalArgumentsAcceptAnEmptyObject(t *testing.T) {
 		"script.read_shots":       false,
 		"asset.create_gap_report": false,
 		"asset.read_gap_report":   true,
+		// WP-11's two media reads, in the two directions this table is checked in.
+		//
+		// `media.read_capability` takes NO argument at all: the answer is about the machine the agent
+		// is running on, so an empty call states nothing and the schema must accept `{}`.
+		//
+		// `media.read_timeline` is TRUE against the empty object for the reason
+		// `asset.read_gap_report` is: its schema requires nothing, because an empty episode id means
+		// "the episode this run is about", and the handler refuses only when neither the argument nor
+		// the run names one. The schema constrains a SHAPE and the handler checks the VALUES it uses,
+		// which is the division every row of this table is checked against.
+		"media.read_capability": true,
+		"media.read_timeline":   true,
 	}
 	if len(allOptional) != len(Keys()) {
 		t.Fatalf("this test names %d tools and the table registers %d", len(allOptional), len(Keys()))
@@ -246,6 +258,12 @@ func TestHandlerArgumentNamesMatchTheirSchemas(t *testing.T) {
 		// `limit`/`excludeMessageId` still serve the no-query window. The assertion is what caught the
 		// schema and the handler drifting apart when only one of them was updated.
 		"memory.deep_recall": {"query", "maxSummaries", "maxRawMessages", "limit", "excludeMessageId"},
+		// WP-11's two media reads. `media.read_capability` takes NO property — its handler decodes
+		// nothing, which is the schema's empty `properties` stated from the other side, and an empty
+		// slice here is what makes "a model cannot name the machine it is asking about" an assertion
+		// rather than a comment.
+		"media.read_capability": {},
+		"media.read_timeline":   {"episodeId", "boardVersionId"},
 	}
 	registered := Keys()
 	if len(expected) != len(registered) {

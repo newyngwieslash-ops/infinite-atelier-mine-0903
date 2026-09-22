@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://infinite-atelier.invalid/schemas/agent/tools/media.read_capability.json",
+  "title": "media.read_capability input",
+  "description": "Reports whether this machine can compose a film, and what to install when it cannot. No arguments: the answer is about the machine the agent is running on, and a model that could name another target would be asking about a machine it is not on. A recipe written without reading this may be one nobody can execute.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {}
+}

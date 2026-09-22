@@ -157,6 +157,42 @@
         "maxToolCalls": 16,
         "timeoutSeconds": 300
       }
+    },
+    {
+      "key": "production.execution.final_episode",
+      "layer": "execution",
+      "skill": "execution/final_episode.md",
+      "inputSchema": "schemas/agent/execution-request.v1.json",
+      "outputSchema": "schemas/agent/execution-result.v1.json",
+      "allowedTools": [
+        "storyboard.read_storyboard",
+        "script.read_script_version",
+        "asset.read_approved_assets",
+        "media.read_capability",
+        "media.read_timeline"
+      ],
+      "limits": {
+        "maxToolCalls": 8,
+        "timeoutSeconds": 180
+      }
+    },
+    {
+      "key": "production.supervision.final_episode",
+      "layer": "supervision",
+      "skill": "supervision/final_episode.md",
+      "inputSchema": "schemas/agent/supervision-request.v1.json",
+      "outputSchema": "schemas/agent/review-report.v1.json",
+      "allowedTools": [
+        "media.read_timeline",
+        "media.read_capability",
+        "storyboard.read_storyboard",
+        "script.read_script_version",
+        "asset.read_approved_assets"
+      ],
+      "limits": {
+        "maxToolCalls": 10,
+        "timeoutSeconds": 240
+      }
     }
   ]
 }

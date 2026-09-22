@@ -22,3 +22,5 @@ asset.create_gap_report
 asset.read_gap_report
 asset.create_candidate_version
 memory.deep_recall
+media.read_capability
+media.read_timeline

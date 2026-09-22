@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://infinite-atelier.invalid/schemas/agent/tools/media.read_timeline.json",
+  "title": "media.read_timeline input",
+  "description": "Returns an episode's ordered shots with the media, the audio and the cue count each carries, plus the total length and the counts of what is missing. The order comes from the approved storyboard's own rows. This is the read that answers what an export would actually assemble, which the board alone does not: a board states intentions and this states what is approved.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "episodeId": {
+      "type": "string",
+      "description": "The episode to read. Empty reads the episode the run is about.",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "boardVersionId": {
+      "type": "string",
+      "description": "The storyboard version to read. Empty uses the episode's approved board.",
+      "maxLength": 200
+    }
+  }
+}

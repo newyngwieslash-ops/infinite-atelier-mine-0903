@@ -541,6 +541,29 @@ const TOOLS = [
         },
     },
 
+    // --- Media: the two reads the final episode's recipe is written from ---
+    //
+    // They sit last rather than beside the storyboard tools because this table is the order of
+    // record: `TestEverySchemaHasARegisteredTool` compares KEYS.txt with the Go registry element by
+    // element, so a tool appended in one place is appended in the other.
+    {
+        key: "media.read_capability",
+        title: "Read media capability",
+        description:
+            "Reports whether this machine can compose a film, and what to install when it cannot. No arguments: the answer is about the machine the agent is running on, and a model that could name another target would be asking about a machine it is not on. A recipe written without reading this may be one nobody can execute.",
+        properties: {},
+    },
+    {
+        key: "media.read_timeline",
+        title: "Read an episode's timeline",
+        description:
+            "Returns an episode's ordered shots with the media, the audio and the cue count each carries, plus the total length and the counts of what is missing. The order comes from the approved storyboard's own rows. This is the read that answers what an export would actually assemble, which the board alone does not: a board states intentions and this states what is approved.",
+        properties: {
+            episodeId: id("The episode to read. Empty reads the episode the run is about."),
+            boardVersionId: str("The storyboard version to read. Empty uses the episode's approved board."),
+        },
+    },
+
     // --- Control: the tools a Decision agent uses to ask the runtime to act ---
 ];
 

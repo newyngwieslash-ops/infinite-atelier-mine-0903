@@ -105,9 +105,24 @@ type Deps struct {
 	// Chapters reads a chapter's text. It is a port rather than a service because the
 	// adapter that implements it lives in the desktop layer.
 	Chapters ChapterReader
+	// Media is what the final_episode agent reads with, and it is the ONE optional field
+	// here.
+	//
+	// Its optionality is an ORDER rather than a leniency: the media stack is composed after
+	// the drama stack, because its timeline joins tables the drama stack owns, and the tool
+	// table is built from the drama stack's services. A required field would make the two
+	// orders circular, so the two media tools refuse with a sentence instead of the table
+	// failing to build at all. See final_handlers.go for the reasoning in full.
+	Media MediaReader
 }
 
 // Available reports whether every service a tool needs is composed.
+//
+// `Media` is deliberately ABSENT from this check, for the reason its own field comment
+// states: the two tools that read it refuse with a sentence rather than being absent from
+// the registry, which is the fail-closed direction for a build whose media stack has not
+// composed yet. Every other field here is required, and a build missing one does not get a
+// table at all.
 func (d Deps) Available() bool {
 	return d.Story != nil && d.Script != nil && d.Storyboard != nil &&
 		d.Workflow != nil && d.Memory != nil && d.Assets != nil &&
@@ -206,6 +221,17 @@ var table = []tableEntry{
 	// RECENT window WP-07's scope item 15 allows; the name keeps the section's spelling
 	// so a skill does not change when WP-10 deepens it.
 	{"memory.deep_recall", agent.ToolRead, "project", 64 * 1024, bindDeepRecall},
+
+	// --- Media ---
+	//
+	// The two reads the final_episode agent needs. They are READ rather than a mode of their
+	// own for the reason `memory.deep_recall` is: both read stored state and write nothing.
+	//
+	// They sit LAST rather than beside the storyboard tools, and that is the generator's
+	// order of record: `TestEverySchemaHasARegisteredTool` compares this list with KEYS.txt
+	// element by element, so a tool appended here is a tool appended there.
+	{"media.read_capability", agent.ToolRead, "project", 4 * 1024, bindReadMediaCapability},
+	{"media.read_timeline", agent.ToolRead, "project", 128 * 1024, bindReadTimeline},
 }
 
 // Build assembles the table.

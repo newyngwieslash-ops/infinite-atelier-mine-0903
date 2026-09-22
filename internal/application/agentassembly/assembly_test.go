@@ -110,13 +110,28 @@ func TestAssemblyRegistersOneSkillVersionPerPack(t *testing.T) {
 
 // TestAssemblyRegistersEverySection19Agent is the inventory assertion.
 //
-// Section 19 names eight script agents and nine production agents, and this checks the
-// registry against that list rather than against the manifests — so an agent deleted from
-// a manifest is a failure here rather than a stage that cannot run.
+// Section 19's list is the INITIAL inventory — its own heading says so ("初始 Agent 清单") — and this
+// checks the registry against it PLUS the agents later work packages added under their own
+// authority. Keeping the additions in this list rather than relaxing the check is what preserves the
+// property: a key the registry carries that neither section 19 nor a cited package names is still
+// either a typo or a pack that grew without the specification being consulted.
+//
+// The two additions are WP-11's, and each cites what requires it:
+//
+//   - `production.execution.final_episode` — ROADMAP WP-11 scope item 12, "Final Supervisor", and
+//     FR-100's own stage list, which names `final_episode` where section 19's does not.
+//   - `production.supervision.final_episode` — the same item, plus AGENT_CONTRACTS section 11.4's
+//     "LLM Supervisor 负责语义质量": the Final Ruleset's hard clauses are the deterministic half, and
+//     the section says the other half is a model's. AC-MEDIA-003 names "Final Supervisor" as a clause
+//     of its own.
+//
+// `video_generation` gets no agent, and section 19 is why rather than an omission: its own note under
+// the production list says "媒体生成本身由 Job/Provider Service 执行，不让 LLM 阻塞等待大文件", so the
+// stage is driven by `SubmitVideoJob` rather than by a run.
 func TestAssemblyRegistersEverySection19Agent(t *testing.T) {
 	assembly, _ := buildAssembly(t)
 	want := []string{
-		// Script pack.
+		// Script pack (section 19).
 		"script.decision",
 		"script.execution.event_extraction",
 		"script.execution.story_skeleton",
@@ -125,7 +140,7 @@ func TestAssemblyRegistersEverySection19Agent(t *testing.T) {
 		"script.supervision.story_skeleton",
 		"script.supervision.adaptation_strategy",
 		"script.supervision.script",
-		// Production pack.
+		// Production pack (section 19).
 		"production.decision",
 		"production.execution.director_plan",
 		"production.execution.asset_analysis",
@@ -135,6 +150,9 @@ func TestAssemblyRegistersEverySection19Agent(t *testing.T) {
 		"production.supervision.director_plan",
 		"production.supervision.storyboard_table",
 		"production.supervision.storyboard_panel",
+		// Production pack, added by WP-11 (ROADMAP item 12, FR-100, section 11.4).
+		"production.execution.final_episode",
+		"production.supervision.final_episode",
 	}
 	registered := assembly.Registry().Keys()
 	have := map[string]bool{}

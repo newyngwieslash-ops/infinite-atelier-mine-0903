@@ -224,8 +224,15 @@ func (a *app) startup(ctx context.Context) {
 				// tables that stack owns. A machine with no ffmpeg still composes: the engine reports
 				// itself unavailable and the binding says so with a diagnostic, because a build with no
 				// engine can still draft subtitles and read a timeline.
+				//
+				// IT IS COMPOSED BEFORE THE AGENT STACK, and that order is what lets the agent stack's
+				// two media reads have an implementation. The dependency looks circular — the media
+				// stack needs `dramaStack.script` and the agent stack needs the media stack's reads —
+				// and it is not: both need the DRAMA stack, which is composed above this point, and
+				// neither needs the other.
+				var media *mediaWiring
 				if a.mediaBinding != nil {
-					media := composeMedia(handle, dramaStack.script, store, dirs.Temp)
+					media = composeMedia(handle, dramaStack.script, store, dirs.Temp)
 					if media != nil {
 						// The save dialog needs the startup context, which exists here and not at
 						// composition, so the save path is supplied in this pass.
@@ -249,6 +256,10 @@ func (a *app) startup(ctx context.Context) {
 					Handle: handle, Drama: dramaStack,
 					Providers: wiring.registry, Files: a.files,
 					Jobs: jobService,
+					// The `final_episode` agent's two reads. It is nil in a build whose media stack
+					// did not compose, and the tools then answer with a sentence rather than the whole
+					// table failing to build.
+					Media: mediaReader{stack: media},
 				})
 				if agentStack != nil {
 					if a.agentBinding != nil {

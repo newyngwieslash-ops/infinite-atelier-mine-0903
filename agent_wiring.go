@@ -83,6 +83,12 @@ type agentDeps struct {
 	// optional: a build without it still runs the five agent stages, and the batch refuses
 	// with a reason rather than reporting a submission that never happened.
 	Jobs *appjobs.Service
+	// Media is the two reads the `final_episode` agent uses. It is optional for the same
+	// reason `agenttools.Deps.Media` is, and it is a field here rather than something this
+	// function composes because the media stack needs `deps.Drama.script` — a service from
+	// the very stack this function is called inside — so the composition root builds it and
+	// passes the reader down.
+	Media agenttools.MediaReader
 }
 
 // composeAgents builds the agent stack over a writable database.
@@ -159,6 +165,12 @@ func composeAgents(deps agentDeps) *agentWiring {
 		// The chapter reader WP-06 declared: the walk from a chapter to the text it
 		// indexes, which is the same one the extraction service uses.
 		Chapters: desktop.NewChapterTextReader(deps.Drama.story, deps.Drama.importing),
+		// The media reads the `final_episode` agent writes its recipe from. It is the table's ONE
+		// optional dependency — see `agenttools.Deps.Media` — and the reason it may be nil here is the
+		// ORDER: this function is called from inside the drama stack's composition block, and the
+		// media stack needs a service from that same block. The composition root therefore builds the
+		// media stack first and passes the reader in through `agentDeps.Media`, which `app.go` does.
+		Media: deps.Media,
 	})
 	if err != nil {
 		// A table that will not build is a composition defect and there is no degraded
@@ -232,12 +244,17 @@ func composeAgents(deps agentDeps) *agentWiring {
 	// Composing it is what makes section 11.4's "硬规则应尽量用确定性代码先检查" true in a real build
 	// rather than only in tests. Until this existed the rules were reachable from nowhere, which is
 	// the "interface with no real path" shape this repository's reviews have found five times.
+	//
+	// THE FINAL RULESET IS ATTACHED TO THE SAME OBJECT, which is what makes AC-MEDIA-003's "Final
+	// Supervisor" clause real: the `final_episode` stage's supervisor is preceded by these rules, and
+	// a ruleset composed anywhere but here would leave the stage supervised by a model alone. The
+	// reader takes the same connection, for the reason the storyboard rules' reads do.
 	checker := database.NewStoryboardConsistencyChecker(
 		database.NewStoryboardRepository(connection),
 		database.NewAssetRepository(connection),
 		newScriptReaderSource(database.NewScriptRepository(connection)),
 		database.NewStoryRepository(connection),
-	)
+	).WithFinalRuleset(database.NewFinalFactsReader(connection))
 	var pipeline *appscriptpipeline.Service
 	if deps.Drama != nil && deps.Drama.script != nil && deps.Drama.workflow != nil {
 		pipeline = appscriptpipeline.New(appscriptpipeline.Options{
