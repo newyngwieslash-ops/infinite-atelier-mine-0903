@@ -317,28 +317,32 @@ func TestSkillDocumentsCarryEveryRequiredSection(t *testing.T) {
 	}
 }
 
-// TestSkillDocumentsAreRealProseInTheScriptPackAndSkeletonsInProduction is the successor to WP-05's
-// "空 Skill 骨架" assertion.
+// TestBothSkillPacksCarryRealProse is the successor to WP-05's "空 Skill 骨架" assertion.
 //
-// WP-05's scope item 16 required both packs to carry section structure and NOTHING ELSE, and its test
-// asserted that no document exceeded a per-section budget — because the business content was a later
-// work package's. WP-08 is that later package for the SCRIPT pack: its eight documents are what a model
-// reads, so the assertion has to reverse direction rather than be deleted.
+// WP-05's scope item 16 required both packs to carry section structure and NOTHING ELSE, and
+// its test asserted that no document exceeded a per-section budget — because the business
+// content was a later work package's. WP-08 filled the SCRIPT pack and reversed the
+// assertion for that pack alone, leaving production asserted as skeletons.
 //
-// The two halves are asserted together, because either alone would be satisfied by the wrong state:
+// WP-09 is the package that fills production's nine agents (the five execution stages, the
+// three supervisors and the decision layer), so the assertion reverses for BOTH packs now.
+// The property being asserted is the same one WP-08's half used, and it is deliberately
+// crude: the question is "did a person write this", and a document that merely renamed its
+// headings does not have it.
 //
-//   - the script pack's documents are PROSE, measured as more than the per-section budget WP-05's rule
-//     used. A budget is a crude test and it is the honest one here: the property is "a person wrote
-//     this", and a document that merely renamed its headings does not have it.
-//   - the production pack's documents are still SKELETONS, which is WP-09's and WP-11's to fill. Asserting
-//     this keeps a half-written production document from looking like finished work, and it keeps the
-//     claim honest: WP-08 filled one pack, not both.
-func TestSkillDocumentsAreRealProseInTheScriptPackAndSkeletonsInProduction(t *testing.T) {
+// WP-11's stages — video, audio, subtitles, export — have NO documents yet, because they
+// have no agents yet. This test fails if one appears as a skeleton, which is what keeps a
+// half-written document from looking like finished work.
+func TestBothSkillPacksCarryRealProse(t *testing.T) {
 	assembly, _ := buildAssembly(t)
 	// The same budget WP-05 used. A document under it has headings and guidance and no prose.
 	const perSectionBudget = 400
 	for _, name := range assembly.PackNames() {
 		pack, _ := assembly.Pack(name)
+		if len(pack.Pack.Skills) == 0 {
+			t.Errorf("the %s pack carries no skills", name)
+			continue
+		}
 		for key, document := range pack.Pack.Skills {
 			sections := strings.Count(document, "\n# ")
 			if sections == 0 {
@@ -346,22 +350,14 @@ func TestSkillDocumentsAreRealProseInTheScriptPackAndSkeletonsInProduction(t *te
 				continue
 			}
 			runes := len([]rune(document))
-			overBudget := runes > sections*perSectionBudget
-			if name == "script" {
-				if !overBudget {
-					t.Errorf("the document for %s is %d runes over %d sections, which is still a skeleton: WP-08 owns filling the script pack",
-						key, runes, sections)
-				}
-				// And the generator's placeholder must be gone, which is the marker WP-05's own test was
-				// written against.
-				if strings.Contains(document, "WP-0X fills this in") {
-					t.Errorf("the document for %s still carries the generator's placeholder", key)
-				}
-				continue
-			}
-			if overBudget {
-				t.Errorf("the document for %s is %d runes over %d sections, which reads as content: the production pack is WP-09's and WP-11's to fill",
+			if runes <= sections*perSectionBudget {
+				t.Errorf("the document for %s is %d runes over %d sections, which is still a skeleton",
 					key, runes, sections)
+			}
+			// The generator's placeholder must be gone, which is the marker WP-05's own test
+			// was written against.
+			if strings.Contains(document, "WP-0X fills this in") {
+				t.Errorf("the document for %s still carries the generator's placeholder", key)
 			}
 		}
 	}
