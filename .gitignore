@@ -35,3 +35,7 @@ build/windows/
 /.comet/*
 !/.comet/config.yaml
 # <<< Comet managed project state <<<
+
+# Local agent scratch: plan-mode working files and the patch scripts a package used. They are
+# per-session and per-machine, and committing them buried a real change under a hundred of them.
+.zcode/
