@@ -132,10 +132,13 @@ func (s *Service) Summarize(ctx context.Context, request SummarizeRequest) (memo
 		// a condensation of one confident and one shaky memory is neither certain nor
 		// worthless, and reporting the maximum would overstate it.
 		Confidence: summaryConfidence(sources),
-		SourceType: memory.SourceSummary,
-		CreatedAt:  now,
-		UpdatedAt:  now,
-		Revision:   1,
+		// No source columns, because a summary cites MANY memories and the pair holds one. Its
+		// provenance is the source table below, and the row's AgentKey names whose run produced it
+		// so "role/agent/time 保留" (AC-MEM-004) is answerable without walking the links.
+		AgentKey:  strings.TrimSpace(request.CreatedByID),
+		CreatedAt: now,
+		UpdatedAt: now,
+		Revision:  1,
 	}
 	links := make([]memory.SummarySource, 0, len(sources))
 	for index, source := range sources {
@@ -186,29 +189,23 @@ func (s *Service) Summarize(ctx context.Context, request SummarizeRequest) (memo
 // summarySources reads what a summary at this level would cover.
 func (s *Service) summarySources(ctx context.Context, level int, scope Scope, window int) ([]memory.MemoryItem, error) {
 	if level == 1 {
-		// Unsummarised EPISODIC memories, which is what "the messages since the last
-		// summary" is on the memory side. The transcript is not read here: a summary has to
-		// cite memory rows, because those are what the source table's foreign key points at
-		// and what survives the run that produced them.
-		return s.items.UnsummarisedItems(ctx, scope, window)
+		// Unsummarised EPISODIC memories, which is what "the messages since the last summary" is on
+		// the memory side. The transcript is not read here: a summary has to cite memory rows,
+		// because those are what the source table's foreign key points at and what survives the run
+		// that produced them.
+		//
+		// THE TYPE IS THE LEVEL'S, and asking for the right one is not an optimisation. The first
+		// version asked for every type and filtered level two in Go, which meant level ONE read the
+		// summary rows too: the second summarise run condensed the first summary into a new one, the
+		// `summarized` flag never cleared the window, and the run after that would have condensed
+		// that. The integration test caught it as "a second summarise produced a second summary of
+		// the same turns".
+		return s.items.UnsummarisedItems(ctx, scope, memory.TypeEpisodic, window)
 	}
-	// Level two: the summaries of this episode that are not yet condensed into a parent.
-	// The same `summarized` flag is reused at this level, so a summary is read once by
-	// whichever parent covers it.
-	candidates, err := s.items.UnsummarisedItems(ctx, scope, window)
-	if err != nil {
-		return nil, err
-	}
-	summaries := make([]memory.MemoryItem, 0, len(candidates))
-	for _, candidate := range candidates {
-		if candidate.Type == memory.TypeSummary {
-			summaries = append(summaries, candidate)
-		}
-	}
-	if len(summaries) > MaxSummaryParents {
-		summaries = summaries[:MaxSummaryParents]
-	}
-	return summaries, nil
+	// Level two: the summaries of this episode that are not yet condensed into a parent. The same
+	// `summarized` flag is reused at this level, so a summary is read once by whichever parent
+	// covers it.
+	return s.items.UnsummarisedItems(ctx, scope, memory.TypeSummary, MaxSummaryParents)
 }
 
 // renderSummary builds the summary's text from its sources.

@@ -46,7 +46,6 @@ type Repository interface {
 	MemoryItemExists(ctx context.Context, id string) (bool, error)
 	GetItem(ctx context.Context, id string) (memory.MemoryItem, error)
 	ListItems(ctx context.Context, filter MemoryListFilter) ([]memory.MemoryItem, error)
-	RecallCandidates(ctx context.Context, scope memory.Scope, limit int) ([]memory.MemoryItem, error)
 	DeleteItem(ctx context.Context, id, actor string, at time.Time) (bool, error)
 	SetLocked(ctx context.Context, id string, locked bool, actor string, at time.Time) (bool, error)
 	UpdateContent(ctx context.Context, id, content, actor string, at time.Time) (bool, error)
@@ -62,7 +61,11 @@ type Repository interface {
 	CreateSummaryWithSources(ctx context.Context, summary memory.MemoryItem, sources []memory.SummarySource, markSummarized bool) error
 	ListSummarySources(ctx context.Context, summaryID string) ([]memory.SummarySource, error)
 	SummariesOf(ctx context.Context, sourceMemoryID string) ([]memory.MemoryItem, error)
-	UnsummarisedItems(ctx context.Context, scope memory.Scope, limit int) ([]memory.MemoryItem, error)
+	// UnsummarisedItems returns the window a summary at this LEVEL would cover. The type is a
+	// parameter rather than a filter applied after the read, because the two levels read
+	// different rows and reading the wrong ones is how a summary came to condense itself: a
+	// level-one summary covers MESSAGES, so a summary row must not be among its sources.
+	UnsummarisedItems(ctx context.Context, scope memory.Scope, memoryType memory.MemoryType, limit int) ([]memory.MemoryItem, error)
 	AddEntityLinks(ctx context.Context, links []memory.EntityLink) error
 	ListEntityLinks(ctx context.Context, memoryID string) ([]memory.EntityLink, error)
 	SetSummarized(ctx context.Context, ids []string, at time.Time) error
@@ -81,9 +84,16 @@ type MemoryListFilter struct {
 }
 
 // VectorItem is one vector handed to an index.
+//
+// Model and Version ride WITH the vector rather than beside the call, because DOMAIN_MODEL
+// section 14.5 makes them part of what a vector IS: "embedding 模型变化不覆盖旧向量，重建后切换
+// 索引版本". A vector whose provenance travelled separately could be stored without one, and the
+// search would then have nothing to filter on.
 type VectorItem struct {
-	ID     string
-	Vector []float32
+	ID      string
+	Vector  []float32
+	Model   string
+	Version string
 }
 
 // VectorHit is one search result.
@@ -106,8 +116,8 @@ type SearchOptions struct {
 	Model   string
 	Version string
 	TopK    int
-	// Limit bounds how many candidates are read from the store before scoring. Zero uses
-	// DefaultCandidates; the ceiling is MaxCandidates.
+	// Limit bounds how many candidates are read from the store before scoring. Zero means the
+	// caller set no bound, and the store's ceiling (MaxCandidates) applies.
 	Limit int
 }
 
@@ -118,7 +128,7 @@ type SearchOptions struct {
 // the caller, because AGENT_CONTRACTS section 12.2 requires it to happen before scoring and
 // an index that returned another project's row would have already broken that rule.
 type VectorIndex interface {
-	// Upsert writes or replaces the vectors of the named items.
+	// Upsert writes the vectors of the named items, each with its model and version.
 	Upsert(ctx context.Context, scope memory.Scope, items []VectorItem) error
 	// Search returns the nearest items in one scope and one embedding version.
 	Search(ctx context.Context, scope memory.Scope, vector []float32, options SearchOptions) ([]VectorHit, error)

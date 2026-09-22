@@ -107,6 +107,22 @@ func (r *Registry) WithMockImageAdapter(adapter appjobs.ImagePort) *Registry {
 	return r
 }
 
+// ConfigFor returns a provider's configuration metadata.
+//
+// It exists so a caller can decide WHETHER a provider can serve a capability before it decides
+// to call one: the embedding bridge in particular must not send a project's text to a provider
+// whose kind has no embedding adapter, and learning that from an "unsupported" error would mean
+// discovering it at the moment the text was already in the request.
+//
+// It returns metadata only. Nothing here can read a secret: the secret is resolved inside an
+// adapter's authorize step and nowhere else.
+func (r *Registry) ConfigFor(ctx context.Context, providerID string) (provider.Config, error) {
+	if r == nil || r.configs == nil {
+		return provider.Config{}, provider.NewUnsupportedError()
+	}
+	return r.configs.GetConfig(ctx, providerID)
+}
+
 // WithMockEmbeddingAdapter registers the deterministic embedding adapter.
 //
 // It is registered separately from the others and reachable only for KindMockEmbedding, which

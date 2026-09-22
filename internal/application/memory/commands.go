@@ -327,7 +327,19 @@ func (s *Service) embedItems(ctx context.Context, projectID string, items []memo
 		key := item.Scope.Key()
 		group := byScope[key]
 		group.scope = item.Scope
-		group.items = append(group.items, VectorItem{ID: item.ID, Vector: normalized})
+		// The MODEL AND VERSION ride with the vector, and leaving them out was a real defect the
+		// integration test caught: the index refuses a vector that names no model, because section
+		// 14.5 makes the model part of what a vector is and a search selects by it. The refusal was
+		// returned to this function's caller, which swallowed it by design (an embedding failure
+		// does not undo the memory), so the observable effect was a memory with no vector and no
+		// error anywhere — the exact "silently not stored" shape the index's contract exists to
+		// prevent.
+		group.items = append(group.items, VectorItem{
+			ID:      item.ID,
+			Vector:  normalized,
+			Model:   embedding.Model,
+			Version: embedding.Version,
+		})
 		byScope[key] = group
 	}
 	for _, group := range byScope {

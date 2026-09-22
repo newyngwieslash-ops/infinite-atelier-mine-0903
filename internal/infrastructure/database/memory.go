@@ -147,21 +147,16 @@ func (r *MemoryRepository) GetItem(ctx context.Context, id string) (memory.Memor
 	return item, nil
 }
 
-// MemoryListFilter narrows a list read.
+// MemoryListFilter is the application port's own type, ALIASED rather than restated.
 //
-// Zero values mean "no narrowing" rather than "match the empty value": a list read is
-// browsing, and a caller that left a field blank did not ask for the rows whose column is
-// blank. The RECALL is the opposite, and it does not use this type: its scope is an exact
-// match on every part, which is what section 14.4 requires.
-type MemoryListFilter struct {
-	ProjectID string
-	// Types is the set to include. Empty means every type.
-	Types []memory.MemoryType
-	// IncludeDeleted is what the memory section's list asks for, so a user can see what
-	// they removed. Recall never sets it.
-	IncludeDeleted bool
-	Limit          int
-}
+// The first version of this file declared a second struct with the same fields, and that was
+// a defect rather than a style choice: two named types with one shape are not assignable, so
+// `var _ Repository = (*MemoryRepository)(nil)` would not compile and — because nobody had
+// written that assertion — nothing failed. The interface went unsatisfied, the service's
+// `StorageAvailable` was false in every composed build, and every memory command returned
+// "no memory store is configured" while the store sat there implemented and tested. The
+// compile-time assertions at the bottom of this file are what refuse that shape now.
+type MemoryListFilter = appmemory.MemoryListFilter
 
 // DefaultMemoryListLimit bounds a list read, and MaxMemoryListLimit its ceiling.
 const (
@@ -205,36 +200,6 @@ func (r *MemoryRepository) ListItems(ctx context.Context, filter MemoryListFilte
 	arguments = append(arguments, limit)
 	rows, err := conn.QueryContext(ctx, memoryItemSelectColumns+
 		` WHERE `+strings.Join(clauses, " AND ")+` ORDER BY created_at DESC, id DESC LIMIT ?`, arguments...)
-	if err != nil {
-		return nil, memory.StorageError("The memories could not be read.", err)
-	}
-	defer rows.Close()
-	return scanMemoryItems(rows)
-}
-
-// RecallCandidates returns the memories a scope can recall, newest first.
-//
-// THE SCOPE IS AN EXACT MATCH, and that is section 14.4's requirement rather than a
-// simplification. The six parts are compared as six columns, so project-1 and project-10
-// cannot collide; the project is non-negotiable, and the other five match only when the
-// caller named them, which is what makes a project-level query (no episode, no agent) a
-// different question from an episode-level one.
-func (r *MemoryRepository) RecallCandidates(ctx context.Context, scope memory.Scope, limit int) ([]memory.MemoryItem, error) {
-	conn := r.conn()
-	if conn == nil {
-		return nil, memory.StorageError("The memory store is unavailable.", nil)
-	}
-	if err := scope.Validate(); err != nil {
-		return nil, err
-	}
-	if limit <= 0 {
-		limit = DefaultMemoryListLimit
-	}
-	clauses, arguments := scopeClauses(scope)
-	arguments = append(arguments, limit)
-	rows, err := conn.QueryContext(ctx, memoryItemSelectColumns+
-		` WHERE `+strings.Join(clauses, " AND ")+
-		` AND deleted_at = '' ORDER BY created_at DESC, id DESC LIMIT ?`, arguments...)
 	if err != nil {
 		return nil, memory.StorageError("The memories could not be read.", err)
 	}
@@ -389,19 +354,26 @@ func (r *MemoryRepository) ItemsNeedingEmbedding(ctx context.Context, projectID,
 
 // VectorCandidates returns the embedded memories a search may score.
 //
-// THREE FILTERS, IN THIS ORDER, AND THEY ARE ALL IN SQL: the project (section 14.4), the
-// model and version (section 14.5), and the deleted flag. AGENT_CONTRACTS section 12.2
-// requires the scope filter to run BEFORE scoring, and doing it here is what makes that
-// true structurally — the scorer cannot see another project's row because it was never
-// returned.
-func (r *MemoryRepository) VectorCandidates(ctx context.Context, projectID, model, version, episodeID string, limit int) ([]memory.MemoryItem, error) {
+// FOUR FILTERS, IN THIS ORDER, AND THEY ARE ALL IN SQL: the project, the agent, the model
+// and version, and the deleted flag. AGENT_CONTRACTS section 12.2 requires the scope filter to
+// run BEFORE scoring, and doing it here is what makes that true structurally — the scorer
+// cannot see another scope's row because it was never returned.
+//
+// THE AGENT IS ONE OF THEM, and it was missing until the review caught it. The first version
+// filtered the project and the episode and dropped scope.AgentKey on the floor, while four doc
+// comments — this file's, the index's, the service's and the port's — all asserted the scope
+// filter ran in full. The consequence was that a decision agent could recall a supervisor's
+// conversation by similarity, which is the cross-scope leak section 14.4's structural filtering
+// exists to prevent; the transcript path had always filtered it, so the two channels disagreed
+// about what a scope was. A blank part still widens (see scopeClauses), which is what makes a
+// project-level or episode-level read expressible.
+func (r *MemoryRepository) VectorCandidates(ctx context.Context, scope memory.Scope, model, version string, limit int) ([]memory.MemoryItem, error) {
 	conn := r.conn()
 	if conn == nil {
 		return nil, memory.StorageError("The memory store is unavailable.", nil)
 	}
-	project := strings.TrimSpace(projectID)
-	if project == "" {
-		return nil, memory.InvalidError("A memory search must name its project.")
+	if err := scope.Validate(); err != nil {
+		return nil, err
 	}
 	if strings.TrimSpace(model) == "" || strings.TrimSpace(version) == "" {
 		return nil, memory.InvalidError("A memory search must name the embedding model and version.")
@@ -412,16 +384,13 @@ func (r *MemoryRepository) VectorCandidates(ctx context.Context, projectID, mode
 	if limit > appmemory.MaxCandidates {
 		limit = appmemory.MaxCandidates
 	}
-	// The episode narrows when the caller named one, and an empty episode means the
-	// project's own rows rather than every episode's: a project-level question is a
-	// different question from an episode-level one, and this build treats a blank part as
-	// a value everywhere (see the domain's Scope).
-	clauses := []string{"scope_project = ?", "scope_episode = ?", "embedding_model = ?",
-		"embedding_version = ?", "embedding_blob IS NOT NULL", "deleted_at = ''"}
+	clauses, arguments := scopeClauses(scope)
+	clauses = append(clauses, "embedding_model = ?", "embedding_version = ?",
+		"embedding_blob IS NOT NULL", "deleted_at = ''")
+	arguments = append(arguments, model, version, limit)
 	rows, err := conn.QueryContext(ctx, memoryItemSelectColumns+
 		` WHERE `+strings.Join(clauses, " AND ")+
-		` ORDER BY created_at DESC, id DESC LIMIT ?`,
-		project, strings.TrimSpace(episodeID), model, version, limit)
+		` ORDER BY created_at DESC, id DESC LIMIT ?`, arguments...)
 	if err != nil {
 		return nil, memory.StorageError("The memories could not be read.", err)
 	}
@@ -572,10 +541,17 @@ func (r *MemoryRepository) SummariesOf(ctx context.Context, sourceMemoryID strin
 
 // UnsummarisedItems returns the memories a summary window may cover, oldest first.
 //
-// The predicate is `summarized = 0`, which is what migration 000019's column is for: a
-// window that selected by position would re-summarise the same turns every time it ran,
-// and a window that selected by time would skip a burst of activity it happened to miss.
-func (r *MemoryRepository) UnsummarisedItems(ctx context.Context, scope memory.Scope, limit int) ([]memory.MemoryItem, error) {
+// Two predicates, and BOTH matter:
+//
+//   - `summarized = 0`, which is what migration 000019's column is for: a window that selected
+//     by position would re-summarise the same turns every time it ran, and a window that
+//     selected by time would skip a burst of activity it happened to miss.
+//   - `memory_type = ?`, which the integration test forced. The first version read every type,
+//     so a LEVEL-ONE summary — which covers messages — found its own row (and its siblings)
+//     among its sources: the second summarise run produced a summary OF the first summary, and
+//     the window never emptied. The type is the caller's because the two levels of PRD FR-120's
+//     ladder read different rows.
+func (r *MemoryRepository) UnsummarisedItems(ctx context.Context, scope memory.Scope, memoryType memory.MemoryType, limit int) ([]memory.MemoryItem, error) {
 	conn := r.conn()
 	if conn == nil {
 		return nil, memory.StorageError("The memory store is unavailable.", nil)
@@ -583,12 +559,15 @@ func (r *MemoryRepository) UnsummarisedItems(ctx context.Context, scope memory.S
 	if err := scope.Validate(); err != nil {
 		return nil, err
 	}
+	if !memory.IsValidMemoryType(memoryType) {
+		return nil, memory.InvalidError("The memory type is not recognised.")
+	}
 	if limit <= 0 {
 		limit = appmemory.MaxSummaryWindow
 	}
 	clauses, arguments := scopeClauses(scope)
-	clauses = append(clauses, "summarized = 0", "deleted_at = ''")
-	arguments = append(arguments, limit)
+	clauses = append(clauses, "memory_type = ?", "summarized = 0", "deleted_at = ''")
+	arguments = append(arguments, string(memoryType), limit)
 	rows, err := conn.QueryContext(ctx, memoryItemSelectColumns+
 		` WHERE `+strings.Join(clauses, " AND ")+` ORDER BY created_at ASC, id ASC LIMIT ?`, arguments...)
 	if err != nil {
@@ -746,3 +725,15 @@ func nullableBytes(value []byte) any {
 	}
 	return value
 }
+
+// The compile-time proof that the store satisfies the port.
+//
+// It is not decoration. Without it a signature drift is INVISIBLE: the service takes an
+// interface, so a repository that no longer satisfies it compiles everywhere and simply leaves
+// `Items` nil at composition, which reads at runtime as "no memory store is configured". That
+// is what happened before these two lines existed, and a build with no memory commands at all
+// looked exactly like a build whose memory was empty.
+var (
+	_ appmemory.Repository  = (*MemoryRepository)(nil)
+	_ appmemory.VectorIndex = (*MemoryVectorIndex)(nil)
+)

@@ -282,9 +282,25 @@ func (m MemoryItem) Validate() error {
 	if len([]rune(m.Content)) > MaxContentLength {
 		return InvalidError("The memory is larger than one message may be.")
 	}
-	// A citation with no referent, or a referent with no kind, is a provenance a reader
-	// cannot follow — which is the same defect as having none.
-	if (strings.TrimSpace(m.SourceID) == "") != (m.SourceType == SourceUnset) {
+	// A citation with no referent, or a referent with no kind, is a provenance a reader cannot
+	// follow — which is the same defect as having none.
+	//
+	// A SUMMARY is the one type that cites MANY things, and the source columns are a single pair,
+	// so it cites nothing here and its provenance lives in memory_summary_sources instead. The
+	// first version of this rule had no such case: it demanded a source id of every non-empty
+	// source type, so every summary failed validation, the summary table stayed empty, and both
+	// AC-MEM-004 and AC-MEM-005 had no runnable path. The rule is stated per type now.
+	//
+	// The consequence to keep in mind is that "this row is a summary" is implied by its type
+	// rather than by its source columns, and the SOURCES are the relation table — which is what
+	// section 14.2 calls them.
+	citesOne := strings.TrimSpace(m.SourceID) != ""
+	namesKind := m.SourceType != SourceUnset
+	if m.Type == TypeSummary {
+		if citesOne || namesKind {
+			return InvalidError("A summary cites its sources through the summary source table, not through the source columns.")
+		}
+	} else if citesOne != namesKind {
 		return InvalidError("A memory must name both what it came from and which kind of thing that is.")
 	}
 	// An embedding that names no model cannot be searched: the vector index selects

@@ -356,9 +356,14 @@ func (s *Service) BuildMemoryContext(ctx context.Context, request MemoryContextR
 	if budget > MaxContextTokenBudget {
 		budget = MaxContextTokenBudget
 	}
+	// THE THRESHOLD DEFAULTS, and the first version forgot to. It clamped a negative to zero and
+	// passed a zero straight through, so PassesThreshold's `Similarity >= 0` admitted everything
+	// the vector search returned: the constant below existed, was documented as the reason the
+	// criterion would not be satisfied "only in the tests that set it", and was read by nothing on
+	// this path. That is literally "无条件返回低相关结果", which PRD FR-120 forbids.
 	threshold := request.Threshold
-	if threshold < 0 {
-		threshold = 0
+	if threshold <= 0 {
+		threshold = DefaultThreshold
 	}
 	result := MemoryContext{
 		Recent:    []Item{},

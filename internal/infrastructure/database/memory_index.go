@@ -63,18 +63,24 @@ func NewMemoryVectorIndex(items *MemoryRepository) *MemoryVectorIndex {
 	return &MemoryVectorIndex{items: items}
 }
 
-// Upsert writes or replaces the vectors of the named items.
+// Upsert writes the vectors of the named items.
 //
-// There is nothing to write here: a vector is a column on the item row, so the write belongs to
-// the item's own update (the repository's AssignEmbedding) and this method's job is to REFUSE a
-// call that would silently do nothing. That is worth stating rather than leaving as an empty
-// method: a caller that believed it had stored a vector and had not would find out through a
-// search that returned nothing, which is the hardest kind of defect to attribute.
+// ARCHITECTURE section 12.3 declares this method as "Upsert(ctx, items []VectorItem) error" and
+// the port adds a scope, because a vector without a scope cannot be filtered and section 12.2
+// requires the filter. What the method DOES is the storage's business, and here the vector is a
+// column on the item row — so this writes that column, through the same repository call every
+// other path uses.
 //
-// The refusal is not an error the caller can hit in this build — the service never calls
-// Upsert, because it writes through AssignEmbedding — so this exists as the port's contract
-// made honest: an index whose storage already holds the vector reports that it has nothing to
-// do, and one that is asked to store into a table it does not own says so.
+// THE FIRST VERSION VALIDATED AND RETURNED NIL WITHOUT WRITING, and its comment justified that
+// as "the write belongs to the item's own update". The reviewer's probe called it directly, got
+// no error, and found the row still unembedded: a method named Upsert that silently does not
+// upsert is exactly the "interface with no real path" shape, and a caller that trusted it would
+// find out through a search returning nothing. Refusing instead of writing would have been
+// honest; writing is better, because the port says write.
+//
+// The scope is CHECKED against the row rather than assumed. A caller that passed another
+// project's item under this scope would otherwise store a vector that the scope-filtered search
+// could never return — a silent no-op wearing the other mask.
 func (i *MemoryVectorIndex) Upsert(ctx context.Context, scope memory.Scope, items []VectorItem) error {
 	if i == nil || i.items == nil {
 		return memory.StorageError("The memory index is unavailable.", nil)
@@ -82,8 +88,7 @@ func (i *MemoryVectorIndex) Upsert(ctx context.Context, scope memory.Scope, item
 	if err := scope.Validate(); err != nil {
 		return err
 	}
-	// Every identifier is checked to exist, so a caller that named a memory which is not there
-	// learns it here rather than by searching later and finding nothing.
+	rows := make([]upsertedVector, 0, len(items))
 	for _, item := range items {
 		if strings.TrimSpace(item.ID) == "" {
 			return memory.InvalidError("A vector must name the memory it belongs to.")
@@ -91,11 +96,46 @@ func (i *MemoryVectorIndex) Upsert(ctx context.Context, scope memory.Scope, item
 		if len(item.Vector) == 0 {
 			return memory.InvalidError("A vector cannot be empty.")
 		}
-		if _, err := i.items.GetItem(ctx, item.ID); err != nil {
+		record, err := i.items.GetItem(ctx, item.ID)
+		if err != nil {
+			return err
+		}
+		if record.Deleted() {
+			return memory.InvalidError("A deleted memory cannot be embedded.")
+		}
+		// The row's own scope decides, not the caller's argument: a mismatch means the caller is
+		// storing under a scope the row does not live in, and the vector would be unreachable.
+		if record.Scope.Project != scope.Project {
+			return memory.InvalidError("A vector belongs to the project its memory lives in.")
+		}
+		if strings.TrimSpace(item.Model) == "" || strings.TrimSpace(item.Version) == "" {
+			// Section 14.5 again: a vector with no model cannot be searched, because the search
+			// selects candidates by model and version. Storing one would be storing a row no query
+			// can ever reach.
+			return memory.InvalidError("A vector must name the model and version that produced it.")
+		}
+		rows = append(rows, upsertedVector{
+			id:      item.ID,
+			blob:    memory.EncodeVector(memory.Normalize(item.Vector)),
+			model:   strings.TrimSpace(item.Model),
+			version: strings.TrimSpace(item.Version),
+		})
+	}
+	now := time.Now().UTC()
+	for _, row := range rows {
+		if err := i.items.AssignEmbedding(ctx, row.id, row.blob, row.model, row.version, now); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// upsertedVector is one encoded vector on its way to a row.
+type upsertedVector struct {
+	id      string
+	blob    []byte
+	model   string
+	version string
 }
 
 // Search returns the nearest items in one scope and one embedding version.
@@ -118,10 +158,16 @@ func (i *MemoryVectorIndex) Search(ctx context.Context, scope memory.Scope, vect
 	if strings.TrimSpace(options.Model) == "" || strings.TrimSpace(options.Version) == "" {
 		return nil, memory.InvalidError("A search must name the embedding model and version.")
 	}
-	if options.Limit <= 0 {
-		options.Limit = 0 // the repository applies its own default and ceiling
+	// A zero limit is left at zero and the repository applies its ceiling, which is
+	// MaxCandidates. The port's doc names DefaultCandidates for a zero, and that was wrong: the
+	// repository has one answer for a caller that stated no bound, and naming a second one here
+	// would be a number no code produces.
+	if options.Limit < 0 {
+		options.Limit = 0
 	}
-	items, err := i.items.VectorCandidates(ctx, scope.Project, options.Model, options.Version, scope.Episode, options.Limit)
+	// The WHOLE scope, not its project and episode: dropping the agent key here was the defect
+	// the review found, and it made a decision agent able to recall a supervisor's conversation.
+	items, err := i.items.VectorCandidates(ctx, scope, options.Model, options.Version, options.Limit)
 	if err != nil {
 		return nil, err
 	}
