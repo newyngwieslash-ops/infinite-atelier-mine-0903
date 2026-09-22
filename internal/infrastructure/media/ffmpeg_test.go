@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -127,10 +126,10 @@ func TestAPathBeginningWithADashIsRefused(t *testing.T) {
 // It uses the engine's own `run`, so it is exercising the code path a composition uses rather than
 // a parallel one written for the test.
 func TestAMetacharacterInAValueStaysOneArgument(t *testing.T) {
-	if _, err := exec.LookPath("ffmpeg"); err != nil {
-		t.Skip("no ffmpeg on this host, so the engine's own run cannot be exercised")
-	}
 	engine := engineForTest(t)
+	// The engine's own answer to "is there an ffmpeg" is what the test asks, rather than a second
+	// LookPath: ADR-0015 section 1 permits ONE file to start a process, and a test helper that
+	// needed its own copy of the constructor would be the second — which is how such a rule erodes.
 	requireFFmpeg(t, engine)
 
 	// A value full of everything a shell would act on, and a few things only a shell would.
@@ -172,9 +171,13 @@ newline"
 
 // TestACommandIsNeverAssembledFromAString is the structural half of the same rule.
 //
-// The scanner fails on a second `os/exec` import, but it cannot see whether the ONE import is used
-// with a shell. This asserts the property directly on the source: the file contains no shell
-// invocation, and the only command constructor is the structured one.
+// The scanner fails on a second import of the process package, but it cannot see whether the ONE
+// import is used with a shell. This asserts the property directly on the source: the file contains
+// no shell invocation, and the only command constructor is the structured one.
+//
+// The source it reads is named rather than written with the package's own name in a comment, for
+// the reason above: the scanner reads comments too, and a test that quoted the pattern would be
+// flagged as an instance of what it is checking for.
 func TestACommandIsNeverAssembledFromAString(t *testing.T) {
 	source, err := os.ReadFile("ffmpeg.go")
 	if err != nil {
