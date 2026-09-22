@@ -3739,6 +3739,32 @@ export namespace desktop {
 	        this.resolvedBy = source["resolvedBy"];
 	    }
 	}
+	export class RestoreResult {
+	    manifestVersion: number;
+	    projects: number;
+	    assets: number;
+	    files: number;
+	    databasePath: string;
+	    previousDatabasePath?: string;
+	    rolledBack: boolean;
+	    restartRequired: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new RestoreResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.manifestVersion = source["manifestVersion"];
+	        this.projects = source["projects"];
+	        this.assets = source["assets"];
+	        this.files = source["files"];
+	        this.databasePath = source["databasePath"];
+	        this.previousDatabasePath = source["previousDatabasePath"];
+	        this.rolledBack = source["rolledBack"];
+	        this.restartRequired = source["restartRequired"];
+	    }
+	}
 	export class ReviewIssueDTO {
 	    id: string;
 	    reviewReportId: string;

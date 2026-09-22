@@ -158,9 +158,16 @@ type Promoter interface {
 	// state back. It is called by Promote itself on a verification failure, and is
 	// exported so an operator can invoke it deliberately.
 	Rollback(ctx context.Context) (PromoteResult, error)
+	// DiscardPrevious removes the state a promotion displaced.
+	//
+	// It is the ONLY irreversible act in a restore, and it is a separate method for that
+	// reason: the displaced state is the only copy of a user's work until they have opened a
+	// project and seen that the restored data is what they wanted. `Promote` deliberately
+	// keeps it, so a caller performs restore -> look -> discard.
+	DiscardPrevious(ctx context.Context) error
 	// HasBackupState reports whether a promotion's displaced state is still on disk.
-	// A true value at startup means a promotion was interrupted, and the caller
-	// decides whether to roll it back or accept it.
+	// A true value at startup means a promotion happened and was never confirmed as good,
+	// so a caller can still offer to go back.
 	HasBackupState() bool
 }
 

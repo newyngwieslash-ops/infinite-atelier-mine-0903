@@ -305,6 +305,7 @@ func isLowerHexDigest(value string) bool {
 
 // Ensure the store satisfies both ports.
 var (
-	_ backup.Source = (*BackupStore)(nil)
-	_ backup.Sink   = (*BackupStore)(nil)
+	_ backup.Source   = (*BackupStore)(nil)
+	_ backup.Sink     = (*BackupStore)(nil)
+	_ backup.Promoter = (*BackupStore)(nil)
 )

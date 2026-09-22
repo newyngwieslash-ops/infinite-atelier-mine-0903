@@ -84,7 +84,7 @@ func composeProjects(handle *database.Handle, dirs appdirs.Dirs, store *filestor
 		Clock: clock,
 	})
 
-	backupStore := database.NewBackupStore(connection, dirs.Files, dirs.Temp, dirs.Snapshots, buildinfo.Version)
+	backupStore := database.NewBackupStore(connection, dirs.Database, dirs.Files, dirs.Temp, dirs.Snapshots, buildinfo.Version)
 	exportService := appbackup.NewExportService(appbackup.ExportOptions{
 		Source: backupStore, Clock: clock, AppVersion: buildinfo.Version, WorkDir: dirs.Temp,
 	})
@@ -117,7 +117,11 @@ func (w *projectWiring) attach(ctx context.Context) {
 	if w.backup != nil {
 		// The store is both the export source and the restore sink: the export
 		// reads through it and a restore stages into its private temp area.
-		desktop.AttachBackup(w.backup, ctx, w.export, w.restore, w.backupStore)
+		// The store is both ports: the sink a restore stages into, and the promoter that
+		// puts the result in force. One object because the two share the staging layout and
+		// the application's directories, and two compositions could disagree about where
+		// that is.
+		desktop.AttachBackup(w.backup, ctx, w.export, w.restore, w.backupStore, w.backupStore)
 	}
 }
 

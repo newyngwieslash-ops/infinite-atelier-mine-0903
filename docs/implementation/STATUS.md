@@ -686,7 +686,12 @@ What genuinely remains:
    Its payload is a twenty-four byte container header rather than decodable video, which is why
    ADR-0015 section 2 composes exports from panel frames instead. A real adapter is not built, and
    building one is a WP-12-or-later decision rather than an oversight.
-2. **No read of a LINE's approved audio.** `SubmitAudioJob` attaches a job to a `dialogueLineId`, and
+2. **ROADMAP item 5's restore atomicity was PARTIAL and is now COMPLETE.** WP-04 validated and
+   staged a restore without touching live data; WP-12 added the step after it. See section 0o.
+   What is NOT covered by a test is a restore of a database large enough to need more than one
+   disk operation, and the promotion's own `os.Rename` is atomic within a filesystem rather
+   than across two — which it refuses rather than attempts.
+3. **No read of a LINE's approved audio.** `SubmitAudioJob` attaches a job to a `dialogueLineId`, and
    the timeline's audio column is per SHOT ("whether audio is approved for any line in this row's
    scene"). So the audio section reports the shot's state and names the line it is voicing, and a
    per-line "which lines have audio" list would need a read that does not exist. ROADMAP item 4's
