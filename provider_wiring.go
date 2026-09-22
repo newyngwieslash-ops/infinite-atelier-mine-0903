@@ -46,6 +46,21 @@ func composeProviders(db *sql.DB, publisher appproviders.EventPublisher) *provid
 	// silently simulated, because submission only happens for jobs whose
 	// provider kind resolves to a registered adapter.
 	registry.WithMediaAdapters(infraproviders.NewMockVideoAdapter(), infraproviders.NewMockAudioAdapter())
+	// The IMAGE mock is deliberately NOT registered here, and the reason is worth stating
+	// because the absence looks like an omission.
+	//
+	// `ImagePortFor` resolves a provider by reading its CONFIG and dispatching on kind, and
+	// `IsUserConfigurableKind` refuses to persist `mock_image` — so no config row can carry
+	// that kind, and a mock registered here could never be returned. Registering it would be
+	// an arm nothing can reach: the "interface with no real path" shape this repository
+	// refuses, one level down.
+	//
+	// What a real build uses instead is a REAL image provider: `openai_compatible` and
+	// `gemini_compatible` both resolve to adapters that WP-05 registered, so the storyboard
+	// batch works against a configured provider. AGENT_CONTRACTS section 18.3's "CI does not
+	// call a paid provider" is satisfied the other way round — a harness that wants the
+	// deterministic image adapter builds its own registry and registers it, which is exactly
+	// what the batch's tests do and what the mock-text adapter has always required.
 	return &providerWiring{
 		secretsService: secretService,
 		configService:  configService,

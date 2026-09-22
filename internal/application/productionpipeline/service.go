@@ -22,6 +22,9 @@ type Service struct {
 	storyboard *appstoryboard.Service
 	gaps       *appassets.GapService
 	jobs       *appjobs.Service
+	// assets is where a collected candidate BECOMES a version. It is the same service the
+	// layer's approvals use, and the batch needs it for the other half of its work.
+	assets *appassets.Service
 	// maxImageConcurrency is the batch's submission bound, copied from Options so the
 	// batch does not reach back into a configuration struct on every call.
 	maxImageConcurrency int
@@ -72,6 +75,7 @@ func New(options Options) *Service {
 		storyboard:          options.Storyboard,
 		gaps:                options.Gaps,
 		jobs:                options.Jobs,
+		assets:              options.Assets,
 		maxImageConcurrency: options.MaxImageConcurrency,
 	}
 }
@@ -88,7 +92,7 @@ func (s *Service) Available() bool {
 // the batch then refuses for the reason it cannot run rather than for a missing stage
 // stack.
 func (s *Service) BatchAvailable() bool {
-	return s != nil && s.jobs != nil && s.storyboard != nil && s.gaps != nil
+	return s != nil && s.jobs != nil && s.storyboard != nil && s.gaps != nil && s.assets != nil
 }
 
 // Episodes returns the episode lookup the manual edit's scope check runs against.

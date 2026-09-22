@@ -261,6 +261,10 @@ func (a *app) startup(ctx context.Context) {
 						// route by the stage they were given, so one surface serves both
 						// layers.
 						desktop.AttachProductionPipeline(a.dramaBinding, ctx, agentStack.Production())
+						// The batch goes to the same binding in its own slot: it needs the job
+						// store, which neither pipeline does, so a build can run the five agent
+						// stages without it and say so when a batch is asked for.
+						desktop.AttachProductionBatch(a.dramaBinding, ctx, agentStack.Production())
 					}
 					a.agentStack = agentStack
 				}

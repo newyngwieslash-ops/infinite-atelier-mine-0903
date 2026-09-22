@@ -91,6 +91,10 @@ type RunImageBatchRequest struct {
 	ModelName  string
 	// PromptSuffix is appended to every derived prompt, for a project-wide style clause.
 	PromptSuffix string
+	// Seed is passed to the provider and recorded on the candidate the collection makes.
+	// Empty means the provider chooses, which is the ordinary case and which the collection
+	// then records as empty rather than inventing one.
+	Seed string
 }
 
 // BatchSubmission is one job the batch submitted, or found already submitted.
@@ -280,6 +284,7 @@ func (s *Service) submitCandidate(ctx context.Context, request RunImageBatchRequ
 		CandidateIndex: candidate,
 		ShotID:         item.ShotID,
 		ItemID:         item.ID,
+		Seed:           request.Seed,
 	}
 	encoded, err := json.Marshal(input)
 	if err != nil {
@@ -319,6 +324,10 @@ type imageBatchInput struct {
 	CandidateIndex int    `json:"candidateIndex"`
 	ShotID         string `json:"shotId"`
 	ItemID         string `json:"itemId"`
+	// Seed is what the provider used, when the caller states one. It travels so the
+	// COLLECTION can record it: AC-ASSET-002 names the seed, and a version whose seed was
+	// dropped is a render nothing can reproduce.
+	Seed string `json:"seed,omitempty"`
 }
 
 // imagePromptFor derives the generation prompt for one storyboard item.

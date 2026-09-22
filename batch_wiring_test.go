@@ -16,10 +16,13 @@ import (
 	appstoryboard "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/storyboard"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/asset"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/job"
+	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/provider"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/script"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/versioning"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/infrastructure/database"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/infrastructure/filestore"
+	infrajobs "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/infrastructure/jobs"
+	infraproviders "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/infrastructure/providers"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/platform/id"
 )
 
@@ -39,6 +42,11 @@ type batchHarness struct {
 	jobs       *appjobs.Service
 	db         *sql.DB
 	projectID  string
+	// images is the deterministic adapter this harness registered, so a test can assert what
+	// the batch asked a provider for.
+	images *infraproviders.MockImageAdapter
+	// imageProviderID is the config row whose kind resolves to that adapter.
+	imageProviderID string
 	// lastGapReportID is the id of the most recent report `writeGapReport` recorded, so a
 	// test can assert on the approval of a report it deliberately did NOT approve.
 	lastGapReportID string
@@ -69,11 +77,30 @@ func newBatchHarness(t *testing.T) *batchHarness {
 	if stack == nil {
 		t.Fatal("composeDrama returned nil over a writable database")
 	}
+	// THE JOB STACK IS COMPLETE HERE rather than a bare service, because these tests are about
+	// a batch's jobs EXECUTING: a service with no runner accepts submissions and settles
+	// nothing, so every collection assertion would be about a job that never ran.
+	//
+	// The image adapter is supplied DIRECTLY to the runner, through the `AdapterSource` port
+	// the runner declares for exactly this. Going through the registry could not work: the
+	// registry resolves a provider by reading its CONFIG and dispatching on kind, so the mock
+	// needs a `provider_configs` row carrying `mock_image` — and the schema's CHECK does not
+	// admit that kind, which is the guardrail that stops a real configuration selecting it.
+	// A harness that wanted one would have to change the schema, and the guardrail is worth
+	// more than the fixture's convenience.
+	//
+	// What matters for these tests is that an image job RUNS and produces a file the
+	// collection can turn into a candidate; which adapter answered is not their subject.
+	images := infraproviders.NewMockImageAdapter()
+	resultStore := infrajobs.NewResultStore(store, database.NewFileRepository(handle.SQL()), database.NewFileReferenceRepository(handle.SQL()))
+	runner := infrajobs.NewRunner(batchAdapterSource{images: images}, resultStore, nil, maxJobResultBytes)
 	jobService := appjobs.NewService(appjobs.Options{
 		Repository: database.NewJobRepository(handle.SQL()),
-		Clock:      appprojectsClock{},
+		Clock:      appjobs.NewClockFunc(func() time.Time { return time.Now().UTC() }),
 		IDs:        appjobsPrefixIDs{inner: id.NewGenerator()},
 		Publisher:  discardPublisher{},
+		Runner:     runner,
+		Policy:     job.DefaultRetryPolicy(),
 	})
 	production := productionpipeline.New(productionpipeline.Options{
 		Storyboard: stack.storyboard,
@@ -82,8 +109,13 @@ func newBatchHarness(t *testing.T) *batchHarness {
 		Assets:     stack.assets,
 		Workflow:   stack.workflow,
 	})
+	// The provider id the batch is asked to submit to. It needs no config row, because the
+	// adapter source below answers for every id: what a real build resolves through a
+	// configured provider is resolved here directly.
+	const imageProviderID = "canary-image-provider"
 	return &batchHarness{
-		drama: stack, production: production, jobs: jobService, db: handle.SQL(),
+		drama: stack, production: production, jobs: jobService,
+		db: handle.SQL(), images: images, imageProviderID: imageProviderID,
 		projectID: seedWiringProject(t, canvasWriter),
 	}
 }
@@ -524,4 +556,32 @@ func jobSubjectsFor(t *testing.T, db *sql.DB, projectID string) []string {
 		t.Fatalf("reading the project's jobs: %v", err)
 	}
 	return subjects
+}
+
+// batchAdapterSource answers the runner's adapter lookup with the deterministic image mock.
+//
+// It is the seam `infrastructure/jobs` declares for a caller that supplies its own adapters —
+// the same port the registry implements in a real build — and it exists here because the
+// registry CANNOT answer for the mock: the schema's kind CHECK does not admit `mock_image`,
+// which is the guardrail that keeps a real configuration from selecting it.
+type batchAdapterSource struct {
+	images *infraproviders.MockImageAdapter
+}
+
+func (s batchAdapterSource) ImagePortFor(context.Context, string) (appjobs.ImagePort, error) {
+	if s.images == nil {
+		return nil, provider.NewUnsupportedError()
+	}
+	return s.images, nil
+}
+
+// VideoPortFor and AudioPortFor report unsupported, which is the honest answer for a harness
+// whose subject is an IMAGE batch: a video job reaching this source is a job the harness did
+// not mean to submit, and a mock answer would hide that.
+func (batchAdapterSource) VideoPortFor(context.Context, string) (appjobs.VideoPort, error) {
+	return nil, provider.NewUnsupportedError()
+}
+
+func (batchAdapterSource) AudioPortFor(context.Context, string) (appjobs.AudioPort, error) {
+	return nil, provider.NewUnsupportedError()
 }

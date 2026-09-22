@@ -110,6 +110,20 @@ func (s *Service) AttachJobResult(ctx context.Context, request AttachJobResultRe
 	if err != nil {
 		return asset.Version{}, nil, err
 	}
+	// A JOB PRODUCES ONE VERSION PER ASSET, checked before anything is written. The check is
+	// here rather than left to the version-number constraint because the two conflicts mean
+	// different things: "that number is taken" sends a caller to reload, while "this job was
+	// already collected" sends it to continue — the work is done. A collector that read the
+	// second as the first would report a duplicate as a failure.
+	existing, err := s.repository.ListVersions(ctx, assetID)
+	if err != nil {
+		return asset.Version{}, nil, err
+	}
+	for _, version := range existing {
+		if version.GenerationJobID == jobID {
+			return asset.Version{}, nil, asset.DuplicateJobVersionError()
+		}
+	}
 	// The producer is the AGENT when a run is named and the SYSTEM otherwise, and the
 	// distinction is what FR-100's audit reads: a job the user started by hand and a job an
 	// agent asked for are different answers to "where did this image come from". A version

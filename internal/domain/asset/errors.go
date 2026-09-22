@@ -19,6 +19,11 @@ type Error struct {
 	Category    ErrorCategory
 	SafeMessage string
 	Cause       error
+	// Duplicate marks a conflict that says the work was ALREADY DONE rather than that the
+	// caller's copy is stale. The two send a caller to different places — one to "continue,
+	// this is finished", the other to "reload and try again" — and a message match cannot
+	// tell them apart.
+	Duplicate bool
 }
 
 func (e *Error) Error() string {
@@ -44,6 +49,23 @@ func InvalidError(message string) *Error {
 // inside the domain, where "conflict" is unambiguous.
 func conflictError(message string) *Error {
 	return &Error{Category: CategoryConflict, SafeMessage: message}
+}
+
+// DuplicateJobVersionError reports that a generation job already produced a version.
+//
+// IT IS A NAMED SLOT RATHER THAN A MESSAGE a caller matches on, and it exists because the
+// alternative is exactly what this repository refuses: a caller deciding "was this a
+// duplicate?" by looking for a word in a safe message. That is a check that breaks when
+// somebody improves the wording, and it fails OPEN — a reworded message means a duplicate is
+// read as a fresh failure.
+//
+// The category is conflict because the caller's next step is to stop rather than to retry.
+func DuplicateJobVersionError() *Error {
+	return &Error{
+		Category:    CategoryConflict,
+		SafeMessage: "That generation job already produced a version of this asset.",
+		Duplicate:   true,
+	}
 }
 
 // ConflictError reports a conflict the caller may be able to resolve by
