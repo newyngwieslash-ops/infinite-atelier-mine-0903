@@ -41,6 +41,7 @@ import (
 	"time"
 
 	appmedia "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/media"
+	domainmedia "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/media"
 )
 
 // The two programs this adapter can run, by name.
@@ -344,7 +345,7 @@ func (e *FFmpegEngine) finishExport(ctx context.Context, joined string, request 
 		}
 		arguments = append(arguments, "-i", audioPath)
 	}
-	burning := request.SubtitlePath != "" && request.SubtitleMode == appmedia.SubtitleBurn
+	burning := request.SubtitlePath != "" && request.SubtitleMode == domainmedia.SubtitleBurn
 	// A named subtitle file with no mode is a SIDECAR, which is the reversible default: a caller
 	// that attached subtitles and said nothing about how got them as a track it can turn off.
 	sidecar := request.SubtitlePath != "" && !burning
@@ -542,10 +543,10 @@ func validateCompose(request appmedia.ComposeRequest) error {
 	if request.FPS <= 0 || request.FPS > 120 {
 		return appmedia.InvalidError("An export must state a plausible frame rate.")
 	}
-	if !appmedia.IsValidSubtitleMode(request.SubtitleMode) {
+	if !domainmedia.IsValidSubtitleMode(request.SubtitleMode) {
 		return appmedia.InvalidError("The subtitle mode is not recognised.")
 	}
-	if request.SubtitlePath != "" && request.SubtitleMode == appmedia.SubtitleNone {
+	if request.SubtitlePath != "" && request.SubtitleMode == domainmedia.SubtitleNone {
 		return appmedia.InvalidError("An export names subtitles and asks for none.")
 	}
 	if strings.TrimSpace(request.OutputPath) == "" {

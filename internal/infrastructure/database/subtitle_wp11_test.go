@@ -282,7 +282,7 @@ func TestACMEDIA002SRTAndVTTAreValidAndRoundTrip(t *testing.T) {
 	track, _ := harness.draft(t)
 	ctx := context.Background()
 
-	srt, err := harness.service.Export(ctx, appmedia.ExportRequest{
+	srt, err := harness.service.Export(ctx, appmedia.SubtitleExportRequest{
 		TrackID: track.ID, Format: domainmedia.FormatSRT,
 	})
 	if err != nil {
@@ -300,7 +300,7 @@ func TestACMEDIA002SRTAndVTTAreValidAndRoundTrip(t *testing.T) {
 		t.Fatalf("the SRT's text round tripped wrong: %+v", cues)
 	}
 
-	vtt, err := harness.service.Export(ctx, appmedia.ExportRequest{
+	vtt, err := harness.service.Export(ctx, appmedia.SubtitleExportRequest{
 		TrackID: track.ID, Format: domainmedia.FormatVTT,
 	})
 	if err != nil {
@@ -326,7 +326,7 @@ func TestACMEDIA002SRTAndVTTAreValidAndRoundTrip(t *testing.T) {
 		}
 	}
 	// An unknown format is refused rather than silently defaulting.
-	if _, err := harness.service.Export(ctx, appmedia.ExportRequest{TrackID: track.ID, Format: "ass"}); err == nil {
+	if _, err := harness.service.Export(ctx, appmedia.SubtitleExportRequest{TrackID: track.ID, Format: "ass"}); err == nil {
 		t.Fatal("an unknown format was exported")
 	}
 }
@@ -413,7 +413,7 @@ func TestTheSubtitleDraftRefusesWhatItCannotDraft(t *testing.T) {
 	// And exporting that empty track is REFUSED, with a message that says which track was empty: an
 	// empty subtitle file is legal and useless, and a caller that got one would have no way to tell it
 	// from a broken render.
-	if _, err := empty.service.Export(ctx, appmedia.ExportRequest{
+	if _, err := empty.service.Export(ctx, appmedia.SubtitleExportRequest{
 		TrackID: track.ID, Format: domainmedia.FormatSRT,
 	}); err == nil {
 		t.Fatal("an empty track was exported")

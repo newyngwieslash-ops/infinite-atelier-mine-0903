@@ -400,8 +400,12 @@ func (s *SubtitleService) Missing(ctx context.Context, request MissingLinesReque
 	return domainmedia.MissingLines(lines, cues), nil
 }
 
-// ExportRequest renders a track as a subtitle document.
-type ExportRequest struct {
+// SubtitleExportRequest renders a track as a subtitle document.
+//
+// The name is qualified because this package has two exports and they are different acts: this one
+// produces a SUBTITLE FILE, and ExportRequest composes an episode into an MP4. A caller that confused
+// them would ask for the wrong artifact, and the compiler is where that should be caught.
+type SubtitleExportRequest struct {
 	TrackID string
 	Format  domainmedia.SubtitleFormat
 }
@@ -412,7 +416,7 @@ type ExportRequest struct {
 // 5 records: a subtitle is a locally derived artifact, so writing it is the CALLER's step through the
 // file store rather than this service's through the provider result pipeline. What this owns is the
 // rendering, which is the part two callers need the same answer from.
-func (s *SubtitleService) Export(ctx context.Context, request ExportRequest) (string, error) {
+func (s *SubtitleService) Export(ctx context.Context, request SubtitleExportRequest) (string, error) {
 	if !s.Available() {
 		return "", NotAvailableError("No subtitle store is configured.")
 	}

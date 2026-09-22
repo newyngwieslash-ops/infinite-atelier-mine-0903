@@ -12,6 +12,7 @@ import (
 	"time"
 
 	appmedia "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/media"
+	domainmedia "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/media"
 )
 
 // compose_test.go proves the export actually works: real PNGs in, a real MP4 out, read back.
@@ -182,7 +183,7 @@ func TestAnExportWithSubtitlesCarriesThem(t *testing.T) {
 		Height:       240,
 		FPS:          24,
 		SubtitlePath: subtitles,
-		SubtitleMode: appmedia.SubtitleSidecar,
+		SubtitleMode: domainmedia.SubtitleSidecar,
 		OutputPath:   withSubtitles,
 	}); err != nil {
 		t.Fatalf("Compose with subtitles: %v", err)

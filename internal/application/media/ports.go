@@ -19,6 +19,8 @@ package media
 import (
 	"context"
 	"time"
+
+	domainmedia "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/media"
 )
 
 // SegmentKind says what a segment's file is.
@@ -96,46 +98,15 @@ type ComposeRequest struct {
 	AudioPaths []string
 	// SubtitlePath is an SRT or VTT file to mux in, or empty for none.
 	SubtitlePath string
-	// SubtitleMode is "sidecar", "burn" or "none". A sidecar track is the default when subtitles
-	// ARE named, because it is reversible: a burned-in subtitle is part of the picture and cannot
-	// be turned off.
-	//
-	// The ZERO VALUE is none, and that is deliberate rather than an oversight. Most exports have no
-	// subtitles — the field is empty and the export is a silent picture — so a caller that says
-	// nothing about subtitles should get a film without them, not a refusal about a mode it never
-	// chose. The first version of this type made the zero value invalid, and every caller had to
-	// restate a default that was obviously "none".
-	SubtitleMode SubtitleMode
+	// SubtitleMode is "sidecar", "burn" or "none", which is the DOMAIN's vocabulary: the export
+	// service decides what to ask for and the engine decides what to run, and one definition is what
+	// keeps the two from disagreeing.
+	SubtitleMode domainmedia.SubtitleMode
 	// OutputPath is where the adapter writes. It comes from the caller, which got it from the
 	// application's own temporary directory — never from a request. ADR-0015 section 1.
 	OutputPath string
 	// Timeout bounds the whole composition. Zero uses DefaultComposeTimeout.
 	Timeout time.Duration
-}
-
-// SubtitleMode is how a subtitle track travels into the export.
-type SubtitleMode string
-
-const (
-	// SubtitleNone exports without subtitles. It is the ZERO VALUE, so an empty field means this.
-	SubtitleNone SubtitleMode = ""
-	// SubtitleSidecar muxes the subtitles as a stream the player can turn off.
-	SubtitleSidecar SubtitleMode = "sidecar"
-	// SubtitleBurn draws them into the picture.
-	SubtitleBurn SubtitleMode = "burn"
-)
-
-// SubtitleModes lists the documented modes in the schema's order.
-var SubtitleModes = []SubtitleMode{SubtitleNone, SubtitleSidecar, SubtitleBurn}
-
-// IsValidSubtitleMode reports whether a mode may be requested.
-func IsValidSubtitleMode(value SubtitleMode) bool {
-	for _, candidate := range SubtitleModes {
-		if candidate == value {
-			return true
-		}
-	}
-	return false
 }
 
 // ComposeResult is what a composition produced.

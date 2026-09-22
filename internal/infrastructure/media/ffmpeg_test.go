@@ -10,6 +10,7 @@ import (
 	"time"
 
 	appmedia "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/media"
+	domainmedia "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/media"
 )
 
 // ffmpeg_test.go covers the ONE place this repository starts a process.
@@ -283,7 +284,7 @@ func TestAnExportWithNoSegmentsIsRefused(t *testing.T) {
 		{"subtitles named but none asked for", appmedia.ComposeRequest{
 			Segments: []appmedia.Segment{{Kind: appmedia.SegmentImage, Path: "a.png", DurationMS: 1}},
 			Width:    2, Height: 2, FPS: 24, OutputPath: output,
-			SubtitlePath: "c.srt", SubtitleMode: appmedia.SubtitleNone}},
+			SubtitlePath: "c.srt", SubtitleMode: domainmedia.SubtitleNone}},
 		{"no output path", appmedia.ComposeRequest{
 			Segments: []appmedia.Segment{{Kind: appmedia.SegmentImage, Path: "a.png", DurationMS: 1}},
 			Width:    2, Height: 2, FPS: 24}},

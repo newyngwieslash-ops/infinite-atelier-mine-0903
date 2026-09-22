@@ -212,6 +212,38 @@ func DecodeManifest(document string) (Manifest, error) {
 	return manifest, nil
 }
 
+// SubtitleMode is how a subtitle track travels into an export.
+//
+// It lives in the domain rather than beside the engine port because it is a VOCABULARY with
+// validation, and two callers need the same answer: the export service decides what to ask for, and
+// the engine decides what to run. A second definition on either side would be a second answer.
+//
+// The ZERO VALUE is none, and that is deliberate: most exports have no subtitles, so a caller that
+// says nothing gets a film without them rather than a refusal about a mode it never chose.
+type SubtitleMode string
+
+const (
+	// SubtitleNone exports without subtitles. It is the zero value.
+	SubtitleNone SubtitleMode = ""
+	// SubtitleSidecar muxes the subtitles as a stream the player can turn off.
+	SubtitleSidecar SubtitleMode = "sidecar"
+	// SubtitleBurn draws them into the picture.
+	SubtitleBurn SubtitleMode = "burn"
+)
+
+// SubtitleModes lists the documented modes in the schema's order.
+var SubtitleModes = []SubtitleMode{SubtitleNone, SubtitleSidecar, SubtitleBurn}
+
+// IsValidSubtitleMode reports whether a mode may be requested.
+func IsValidSubtitleMode(value SubtitleMode) bool {
+	for _, candidate := range SubtitleModes {
+		if candidate == value {
+			return true
+		}
+	}
+	return false
+}
+
 // ExportQuality is how much a film was made for.
 type ExportQuality string
 
