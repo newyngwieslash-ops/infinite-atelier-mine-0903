@@ -37,6 +37,7 @@ import {
     saveExport,
 } from "../desktop/media";
 import { isMediaJobSubmissionAvailable, submitAudioJob, submitVideoJob } from "../desktop/jobs";
+import { withDesktopCore, type FakeBindings } from "./desktop-core";
 
 test("a window with no desktop core reports both media capabilities unsatisfied", () => {
     assert.equal(isMediaBindingsAvailable(), false);
@@ -121,28 +122,11 @@ test("every media command throws when the core is absent", async () => {
  * window with no binding at all would read as available). The probes are the sections' only gate, so
  * both directions have to be asserted.
  *
- * The fake installs the same shape Wails generates: `window.go.desktop.<Binding>.<Method>`. It is
+ * The fake installs the same shape Wails generates, `window.go.desktop.<Binding>.<Method>`. It is
  * installed and removed per test, and `globalThis` is restored afterwards so the absence tests above
- * cannot be affected by one that ran before them.
+ * cannot be affected by one that ran before them. The helper itself lives in `./desktop-core` now that
+ * three specs need it; this file kept its own copy until the third arrived.
  */
-type FakeBindings = Record<string, Record<string, (...args: never[]) => unknown>>;
-
-/** withDesktopCore runs a body with a fake Wails binding surface installed. */
-async function withDesktopCore(bindings: FakeBindings, body: () => Promise<void> | void) {
-    const host = globalThis as { window?: unknown };
-    const previous = host.window;
-    host.window = { go: { desktop: bindings } };
-    try {
-        await body();
-    } finally {
-        if (previous === undefined) {
-            delete host.window;
-        } else {
-            host.window = previous;
-        }
-    }
-}
-
 test("a window with a core reports the capabilities its binding satisfies", async () => {
     // The full surface, which is what a real build has.
     const complete: FakeBindings = {

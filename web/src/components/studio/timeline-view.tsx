@@ -28,7 +28,7 @@ import {
     submitExportForReview,
     submitSubtitleTrackForReview,
 } from "@/services/desktop/media";
-import { isDramaBindingsAvailable, listScriptVersions } from "@/services/desktop/drama";
+import { ensureStoryboard, isDramaBindingsAvailable, listScriptVersions, listStoryboardVersions } from "@/services/desktop/drama";
 import type { desktop } from "@/wailsjs/go/models";
 
 /**
@@ -73,6 +73,16 @@ import type { desktop } from "@/wailsjs/go/models";
  *  6. A DOCUMENT IS READ BEFORE IT IS WRITTEN. ROADMAP item 11's script, shot list and manifest are
  *     the same shape as the subtitle document: the core returns the TEXT and `SaveDocument` is the
  *     separate act that writes it, so each of the three is previewed here and saved from the preview.
+ *  7. A DOCUMENT NAMES THE VERSION IT RENDERS. `ExportScript` and `ExportShotList` each take an
+ *     optional `versionId` and the core honours it, so the script and shot-list controls carry a
+ *     picker over the episode's own history: without one a user could export the version in force and
+ *     nothing else, which was the PARTIAL this closes. Each pre-selects the APPROVED version when
+ *     there is one, because that is the version in force and the one "my script" means. Changing a
+ *     picker CLEARS that document's preview, because text rendered from the version that WAS selected
+ *     is a preview that silently belongs to a different version the moment the picker moves — the
+ *     defect this task exists to remove. The manifest has no picker: it names no version. It is the
+ *     newest export's own document (`ExportManifestDocument` takes only the episode), so a control
+ *     there would be one with nothing behind it.
  */
 export type TimelineSectionProps = {
     /**
@@ -127,6 +137,37 @@ const SHOT_LIST_FORMATS = ["csv", "txt"] as const;
 type RenderedDocument = {
     text: string;
     suggestedName: string;
+    /**
+     * The EPISODE and VERSION the text was rendered from, which is what makes a stale preview
+     * detectable. Both are recorded at render time rather than read back off the current state later,
+     * because the two differ exactly when it matters: a render that is in flight while the user moves
+     * the picker — or switches episode — answers with the OLD subject's text, and a preview compared
+     * against the CURRENT selection is the only way to notice.
+     *
+     * The episode is carried for the reason the version is. Switching episode does not immediately
+     * change a picker either: the new version history takes a round trip to arrive, so for that window
+     * both sides still hold the previous episode's id and a version-only comparison would call the
+     * preview current. The document on screen would then belong to another episode while the save
+     * control beside it wrote it out under this one's name.
+     *
+     * `versionId` is empty for a document whose request names no version, which today is the manifest.
+     */
+    episodeId: string;
+    versionId: string;
+};
+
+/**
+ * The three fields every version picker in this section reads.
+ *
+ * `ScriptVersionDTO` and `StoryboardVersionDTO` both carry them, and a picker only ever needs the id
+ * to send, the number to show and the status to label the option with. Naming the shape once is what
+ * lets the label and the empty-state notice be built in one place for both families rather than
+ * twice in near-identical copies.
+ */
+type VersionRow = {
+    id: string;
+    versionNumber: number;
+    status: string;
 };
 
 /** The three documents this section can render, which is also the busy key of each export. */
@@ -156,6 +197,15 @@ export function TimelineSection({ episodes, activeEpisodeId, onSelectEpisode, on
      * `scriptVersions` is `null` until the read has answered, so "could not read" stays
      * distinguishable from "this episode has no script version yet" — the same distinction the
      * timeline, track and export lists keep in this file.
+     *
+     * ONE LIST, TWO CHOICES. The list is read once and feeds both this section's script-version
+     * controls — the subtitle draft's and the document export's below — because it is one question
+     * ("which script versions does this episode have") and a second read would be a second answer that
+     * could disagree. The two SELECTIONS are separate fields, because the two controls ask different
+     * questions of that list: `scriptVersionId` is the script a subtitle DRAFT renders from, and
+     * `scriptDocumentVersionId` is the script an exported FILE contains. One shared field would make
+     * moving either picker silently move the other and discard the other's preview, which is the class
+     * of surprise this section's version handling exists to remove.
      */
     const [scriptVersions, setScriptVersions] = useState<desktop.ScriptVersionDTO[] | null>(null);
     const [scriptVersionId, setScriptVersionId] = useState("");
@@ -183,7 +233,23 @@ export function TimelineSection({ episodes, activeEpisodeId, onSelectEpisode, on
     const [shotListFormat, setShotListFormat] = useState<string>("csv");
     const [includeShots, setIncludeShots] = useState(false);
     const [documents, setDocuments] = useState<Record<DocumentKind, RenderedDocument | null>>({ script: null, shotList: null, manifest: null });
-
+    /**
+     * The two document VERSION PICKERS' selections: the script a script document contains and the
+     * board a shot list contains.
+     *
+     * Both default by the same rule (see the effect below) and both are fed by the reads in `reload`:
+     * `scriptVersions` above is the shared list, and `shotListVersions` is the board's own history,
+     * which needs the extra `EnsureStoryboard` step because `ListStoryboardVersions` takes a BOARD
+     * rather than an episode. That is the pair `StoryboardTableSection` calls, in the same order, and
+     * reusing it is what keeps the two sections describing the same board.
+     *
+     * `shotListVersions` is `null` until its read has answered, for the reason the script list is:
+     * a failed read must not render as "this episode has no board", a claim about its content drawn
+     * from a call that never returned.
+     */
+    const [scriptDocumentVersionId, setScriptDocumentVersionId] = useState("");
+    const [shotListVersions, setShotListVersions] = useState<VersionRow[] | null>(null);
+    const [shotListVersionId, setShotListVersionId] = useState("");
     const activeEpisode = useMemo(() => episodes.find((episode) => episode.id === activeEpisodeId) || null, [episodes, activeEpisodeId]);
 
     const bindingsAvailable = isMediaBindingsAvailable();
@@ -206,6 +272,21 @@ export function TimelineSection({ episodes, activeEpisodeId, onSelectEpisode, on
     const scriptBindingsAvailable = isDramaBindingsAvailable();
 
     /**
+     * The two selections are cleared when the EPISODE changes, because the ids they hold name rows of
+     * the history that is about to be replaced. Clearing them here rather than waiting for the read
+     * makes the picker empty — `undefined` on a Select — instead of holding a value that belongs to
+     * another episode for as long as the round trip takes; `documentIsStale` covers the preview in the
+     * same window, and the two together are what stop an id crossing episodes.
+     *
+     * The SUBTITLE picker's own field is cleared by the defaulting effect below, which is enough there
+     * because nothing is rendered from it until a draft is asked for.
+     */
+    useEffect(() => {
+        setScriptDocumentVersionId("");
+        setShotListVersionId("");
+    }, [activeEpisodeId]);
+
+    /**
      * reload reads the timeline, the machine's capability, the tracks and the exports.
      *
      * Each failure is recorded once and the unread lists are set back to `null`, which is what makes
@@ -218,6 +299,7 @@ export function TimelineSection({ episodes, activeEpisodeId, onSelectEpisode, on
             setTracks(null);
             setExports(null);
             setScriptVersions(null);
+            setShotListVersions(null);
             setMissing([]);
             setDrafts([]);
             return;
@@ -242,6 +324,7 @@ export function TimelineSection({ episodes, activeEpisodeId, onSelectEpisode, on
         // not read", which is the distinction the picker's empty state depends on.
         if (!scriptBindingsAvailable) {
             setScriptVersions(null);
+            setShotListVersions(null);
         } else {
             try {
                 setScriptVersions(await listScriptVersions(activeEpisodeId));
@@ -252,6 +335,16 @@ export function TimelineSection({ episodes, activeEpisodeId, onSelectEpisode, on
                 // with a detail about a picker.
                 setError((current) => current || (failure instanceof Error ? failure.message : t("studio.timeline.scriptVersionsUnread")));
             }
+            // The board history is a SECOND read with a step in front of it, and it is wrapped on its
+            // own so a board that cannot be ensured still leaves the script picker filled: the two
+            // document exports are independent, and one failing read must not empty the other's list.
+            try {
+                const board = await ensureStoryboard(activeEpisodeId);
+                setShotListVersions(await listStoryboardVersions(board.id));
+            } catch (failure) {
+                setShotListVersions(null);
+                setError((current) => current || (failure instanceof Error ? failure.message : t("studio.timeline.shotListVersionsUnread")));
+            }
         }
         setLoading(false);
     }, [activeEpisodeId, scriptBindingsAvailable, t]);
@@ -261,10 +354,10 @@ export function TimelineSection({ episodes, activeEpisodeId, onSelectEpisode, on
     }, [reload]);
 
     /**
-     * The script version the draft form starts on, resolved once per list of versions.
+     * The script version the subtitle draft form starts on, resolved once per list of versions.
      *
      * APPROVED first, and the newest otherwise. The two rules are different answers to "which script
-     * does this track caption": an approved version is the one in force, so a caption drafted from it
+     * does this caption describe": an approved version is the one in force, so a caption drafted from it
      * describes the picture the export will render, while a draft version is the only script there is
      * on an episode nobody has approved yet — where refusing to pre-select would leave a form the
      * user has to fill before it can do anything.
@@ -279,6 +372,31 @@ export function TimelineSection({ episodes, activeEpisodeId, onSelectEpisode, on
         const preferred = scriptVersions.find((version) => version.status === "approved") ?? scriptVersions[0];
         setScriptVersionId(preferred?.id ?? "");
     }, [scriptVersions, scriptVersionId]);
+
+    /**
+     * The two DOCUMENT pickers default by the same rule, out of the same two lists.
+     *
+     * Written out rather than folded into a helper because each is one line and a helper would have to
+     * take the setter, the current value and the list — a signature longer than the rule it carries.
+     * The rule itself is the subtitle picker's above and is stated there: approved first, newest
+     * otherwise, a user's own choice kept while it names a version the list still holds. An approved
+     * board or script is the version in force, so a document rendered from the pre-selected row is the
+     * one a user means by "my script" and "my shot list"; the newest is the fallback for an episode
+     * whose history has no approval in it yet.
+     */
+    useEffect(() => {
+        if (scriptVersions === null) return;
+        if (scriptDocumentVersionId && scriptVersions.some((version) => version.id === scriptDocumentVersionId)) return;
+        const preferred = scriptVersions.find((version) => version.status === "approved") ?? scriptVersions[0];
+        setScriptDocumentVersionId(preferred?.id ?? "");
+    }, [scriptVersions, scriptDocumentVersionId]);
+
+    useEffect(() => {
+        if (shotListVersions === null) return;
+        if (shotListVersionId && shotListVersions.some((version) => version.id === shotListVersionId)) return;
+        const preferred = shotListVersions.find((version) => version.status === "approved") ?? shotListVersions[0];
+        setShotListVersionId(preferred?.id ?? "");
+    }, [shotListVersions, shotListVersionId]);
 
     /**
      * loadTrack reads one track's cues and the spoken lines it does not cover.
@@ -513,19 +631,71 @@ export function TimelineSection({ episodes, activeEpisodeId, onSelectEpisode, on
      *
      * A failed render CLEARS that document rather than leaving the previous one on screen: text that
      * came from an earlier, successful call would be read as this call's answer.
+     *
+     * The version is CAPTURED before the call rather than read after it. A render is a round trip, and
+     * the picker can move while it is in flight: reading the state on the way back would stamp the
+     * answer with the version the user just chose rather than the one that was actually rendered, which
+     * is precisely the mismatch `RenderedDocument.versionId` exists to catch.
      */
     const renderDocument = async (kind: DocumentKind) => {
         if (!activeEpisode) return;
+        // The episode and version are read ONCE and used for both the request and the stamp, so the
+        // text a user reads and the subject recorded beside it are the same fact by construction
+        // rather than by two reads that could straddle a picker change.
+        const versionId = documentVersionId(kind);
+        const episodeId = activeEpisode.id;
         setBusy(`document-${kind}`);
         try {
-            const rendered = await renderByKind(kind, activeEpisode.id, { scriptFormat, shotListFormat, includeShots });
-            setDocuments((current) => ({ ...current, [kind]: { text: rendered.text, suggestedName: rendered.suggestedName } }));
+            const rendered = await renderByKind(kind, episodeId, { scriptFormat, shotListFormat, includeShots, versionId });
+            setDocuments((current) => ({ ...current, [kind]: { text: rendered.text, suggestedName: rendered.suggestedName, episodeId, versionId } }));
         } catch (failure) {
             message.error(failure instanceof Error ? failure.message : t(`studio.timeline.documentFailed.${kind}`));
             setDocuments((current) => ({ ...current, [kind]: null }));
         } finally {
             setBusy("");
         }
+    };
+
+    /**
+     * documentVersionId is the version one document's picker currently names.
+     *
+     * The manifest has no picker and answers the empty string, which is what its request carries:
+     * `ExportManifestDocument` names the episode alone. Returning the picker's value rather than a copy
+     * held beside it is what keeps "what is selected" and "what a render would send" one fact.
+     */
+    const documentVersionId = (kind: DocumentKind): string => {
+        switch (kind) {
+            case "script":
+                return scriptDocumentVersionId;
+            case "shotList":
+                return shotListVersionId;
+            case "manifest":
+                // Empty because the manifest's request HAS no version field — not because one is
+                // unselected. `documentIsStale` therefore compares `""` against `""` and a manifest
+                // preview is never stale, which is the truth about a document that names no version.
+                return "";
+        }
+    };
+
+    /**
+     * documentIsStale reports whether a held document belongs to a subject the section has left.
+     *
+     * The comparison is made when the preview renders rather than in an effect that clears the slot,
+     * and that is the whole point: a render that was IN FLIGHT when the picker moved lands afterwards,
+     * and an effect watching only the picker would have already run and would not fire again — leaving
+     * the old version's text on screen under the new version's control. Deriving it here catches that
+     * case, and also the harmless one of a user changing their mind: putting the picker back on the
+     * version the text came from makes the same text valid again, and it comes back rather than being
+     * lost to a slot that was cleared.
+     *
+     * BOTH the episode and the version are compared. The episode is not redundant: a switch does not
+     * move a picker until the new history arrives, so a version-only check reads the previous episode's
+     * preview as current for exactly as long as the read takes.
+     */
+    const documentIsStale = (kind: DocumentKind): boolean => {
+        const rendered = documents[kind];
+        if (!rendered) return false;
+        return rendered.episodeId !== activeEpisodeId || rendered.versionId !== documentVersionId(kind);
     };
 
     /**
@@ -536,12 +706,26 @@ export function TimelineSection({ episodes, activeEpisodeId, onSelectEpisode, on
      * saved. `suggestedName` is the core's own suggestion — a hint to a human, not a destination — and
      * the dialog is still the only thing that decides where the file goes.
      *
+     * A STALE document is refused here as well as hidden, because this is the handler that would
+     * otherwise do the damage: the text it sends is the text on screen, so writing a preview whose
+     * picker has moved would put a version on disk that the user did not choose. The check is a guard
+     * rather than the mechanism — the control is not rendered for a stale document — and it is here
+     * because a guard at the write is the one that cannot be bypassed by a later render change.
+     *
      * `written: false` is the user having cancelled the dialog, and this handler reports it the way
      * `writeToDisk` does: as an ordinary act, not a failure.
      */
     const saveRenderedDocument = async (kind: DocumentKind) => {
         const rendered = documents[kind];
         if (!rendered) return;
+        if (documentIsStale(kind)) {
+            message.warning(
+                rendered.episodeId !== activeEpisodeId
+                    ? t("studio.timeline.documentEpisodeChanged")
+                    : t("studio.timeline.documentVersionChanged", { version: documentVersionLabel(kind, rendered.versionId) }),
+            );
+            return;
+        }
         setBusy(`document-save-${kind}`);
         try {
             const result = await saveDocument({ text: rendered.text, suggestedName: rendered.suggestedName });
@@ -596,28 +780,66 @@ export function TimelineSection({ episodes, activeEpisodeId, onSelectEpisode, on
      * area is read-only for the same reason the subtitle document's is — the core returns the DOCUMENT
      * rather than writing it — and the save control appears only beside a document, because there is
      * nothing to write until one has been rendered.
+     *
+     * A STALE document is shown rather than hidden, with no save control and a notice saying which
+     * version it came from. Hiding it would be the simpler code and the worse answer: a user who
+     * pressed "render", then moved the picker, then looked down would see an empty space and could not
+     * tell whether the render had failed, was still running, or had produced something they must not
+     * use. What is on screen is real text from a real version, so it stays, labelled, and the only
+     * thing taken away is the write — which is the act that would put the wrong version on disk.
      */
     const documentPreview = (kind: DocumentKind, rows: number) => {
         const rendered = documents[kind];
         if (!rendered) return null;
+        const stale = documentIsStale(kind);
         return (
             <div className="mt-3">
                 <Space wrap className="mb-2">
-                    <Button
-                        size="small"
-                        icon={<Download className="size-3" />}
-                        loading={busy === `document-save-${kind}`}
-                        disabled={!documentExportAvailable}
-                        data-testid={`studio-timeline-save-document-${kind}`}
-                        onClick={() => void saveRenderedDocument(kind)}
-                    >
-                        {t("studio.timeline.save")}
-                    </Button>
-                    <Typography.Text className="text-xs text-stone-500">{t("studio.timeline.suggestedName", { name: rendered.suggestedName })}</Typography.Text>
+                    {stale ? (
+                        // WHY the preview went out of date, said in the terms the user moved in. The two
+                        // causes are named separately because they are different sentences: a version the
+                        // picker left still has a number worth quoting, while a document belonging to the
+                        // previous episode has no meaningful version label HERE — its id would resolve
+                        // against a history the section no longer holds, and naming it would be a claim
+                        // about this episode's versions drawn from another episode's row.
+                        <Typography.Text className="text-xs" data-testid={`studio-timeline-document-stale-${kind}`}>
+                            {rendered.episodeId !== activeEpisodeId
+                                ? t("studio.timeline.documentEpisodeChanged")
+                                : t("studio.timeline.documentVersionChanged", { version: documentVersionLabel(kind, rendered.versionId) })}
+                        </Typography.Text>
+                    ) : (
+                        <>
+                            <Button
+                                size="small"
+                                icon={<Download className="size-3" />}
+                                loading={busy === `document-save-${kind}`}
+                                disabled={!documentExportAvailable}
+                                data-testid={`studio-timeline-save-document-${kind}`}
+                                onClick={() => void saveRenderedDocument(kind)}
+                            >
+                                {t("studio.timeline.save")}
+                            </Button>
+                            <Typography.Text className="text-xs text-stone-500">{t("studio.timeline.suggestedName", { name: rendered.suggestedName })}</Typography.Text>
+                        </>
+                    )}
                 </Space>
                 <Input.TextArea readOnly rows={rows} value={rendered.text} data-testid={`studio-timeline-document-${kind}`} className="font-mono text-xs" />
             </div>
         );
+    };
+
+    /**
+     * documentVersionLabel names one version id for a person.
+     *
+     * The id is what the request carried, and a picker option is what a user recognises, so the two are
+     * joined through the lists this section already holds. A version that is no longer in its list —
+     * superseded and filtered out, or the read failed — falls back to the raw id rather than to a
+     * number this interface would be inventing.
+     */
+    const documentVersionLabel = (kind: DocumentKind, versionId: string): string => {
+        const rows: VersionRow[] = kind === "script" ? scriptVersions ?? [] : kind === "shotList" ? shotListVersions ?? [] : [];
+        const found = rows.find((version) => version.id === versionId);
+        return found ? versionOptionLabel(found, t) : versionId;
     };
 
     const cueColumns: ColumnsType<CueDraft> = [
@@ -1031,6 +1253,28 @@ export function TimelineSection({ episodes, activeEpisodeId, onSelectEpisode, on
                         <h3 className="mb-2 text-sm font-medium">{t("studio.timeline.documentKind.script")}</h3>
                         <Space wrap align="end">
                             <label>
+                                <span className="mb-1 block text-sm">{t("studio.timeline.documentVersionLabel")}</span>
+                                {/* The version this document CONTAINS, which the request names as
+                                    `versionId` and the core honours. It is a different choice from the
+                                    subtitle picker above — that one is the script a draft renders
+                                    from — so the two are separate fields over one list. */}
+                                <Select
+                                    className="min-w-56"
+                                    value={scriptDocumentVersionId || undefined}
+                                    placeholder={scriptBindingsAvailable ? t("studio.timeline.documentVersionPlaceholder") : t("studio.timeline.scriptCoreMissing")}
+                                    loading={loading}
+                                    disabled={!scriptBindingsAvailable || scriptVersions === null || scriptVersions.length === 0}
+                                    data-testid="studio-timeline-script-document-version"
+                                    onChange={(value: string) => setScriptDocumentVersionId(value)}
+                                    options={(scriptVersions ?? []).map((version) => ({
+                                        value: version.id,
+                                        // See `versionOptionLabel`: the status is what tells two versions
+                                        // with the same number apart.
+                                        label: versionOptionLabel(version, t),
+                                    }))}
+                                />
+                            </label>
+                            <label>
                                 <span className="mb-1 block text-sm">{t("studio.timeline.scriptFormatLabel")}</span>
                                 <Select
                                     className="w-32"
@@ -1058,12 +1302,44 @@ export function TimelineSection({ episodes, activeEpisodeId, onSelectEpisode, on
                                 {t("studio.timeline.renderScript")}
                             </Button>
                         </Space>
+                        {/* WHY THE PICKER IS EMPTY, and which of the two reasons it is — the same
+                            distinction the subtitle picker draws above. "No script version" is a state
+                            a user can act on and the notice names the act; "this build cannot read
+                            script versions" is not, and reporting it as the first would be a claim
+                            about the episode drawn from an absent binding. A disabled Select on its
+                            own would say neither. */}
+                        {!scriptBindingsAvailable ? (
+                            <Typography.Paragraph className="mt-2 text-xs text-stone-500" data-testid="studio-timeline-script-document-no-core">
+                                {t("studio.timeline.noScriptCoreBody")}
+                            </Typography.Paragraph>
+                        ) : scriptVersions !== null && scriptVersions.length === 0 ? (
+                            <Typography.Paragraph className="mt-2 text-xs text-stone-500" data-testid="studio-timeline-script-document-no-version">
+                                {t("studio.timeline.documentNoScriptVersionBody")}
+                            </Typography.Paragraph>
+                        ) : null}
                         {documentPreview("script", 16)}
                     </div>
 
                     <div>
                         <h3 className="mb-2 text-sm font-medium">{t("studio.timeline.documentKind.shotList")}</h3>
                         <Space wrap align="end">
+                            <label>
+                                <span className="mb-1 block text-sm">{t("studio.timeline.documentVersionLabel")}</span>
+                                {/* The board this shot list contains. `listStoryboardVersions` reads it
+                                    through the episode's own board identity, which is the pair
+                                    `StoryboardTableSection` calls — so the versions offered here are
+                                    the ones the storyboard table is showing. */}
+                                <Select
+                                    className="min-w-56"
+                                    value={shotListVersionId || undefined}
+                                    placeholder={scriptBindingsAvailable ? t("studio.timeline.documentVersionPlaceholder") : t("studio.timeline.scriptCoreMissing")}
+                                    loading={loading}
+                                    disabled={!scriptBindingsAvailable || shotListVersions === null || shotListVersions.length === 0}
+                                    data-testid="studio-timeline-shot-list-version"
+                                    onChange={(value: string) => setShotListVersionId(value)}
+                                    options={(shotListVersions ?? []).map((version) => ({ value: version.id, label: versionOptionLabel(version, t) }))}
+                                />
+                            </label>
                             <label>
                                 <span className="mb-1 block text-sm">{t("studio.timeline.shotListFormatLabel")}</span>
                                 <Select
@@ -1083,6 +1359,15 @@ export function TimelineSection({ episodes, activeEpisodeId, onSelectEpisode, on
                                 {t("studio.timeline.renderShotList")}
                             </Button>
                         </Space>
+                        {!scriptBindingsAvailable ? (
+                            <Typography.Paragraph className="mt-2 text-xs text-stone-500" data-testid="studio-timeline-shot-list-no-core">
+                                {t("studio.timeline.noScriptCoreBody")}
+                            </Typography.Paragraph>
+                        ) : shotListVersions !== null && shotListVersions.length === 0 ? (
+                            <Typography.Paragraph className="mt-2 text-xs text-stone-500" data-testid="studio-timeline-shot-list-no-version">
+                                {t("studio.timeline.documentNoShotListVersionBody")}
+                            </Typography.Paragraph>
+                        ) : null}
                         {documentPreview("shotList", 12)}
                     </div>
 
@@ -1098,6 +1383,11 @@ export function TimelineSection({ episodes, activeEpisodeId, onSelectEpisode, on
                                 {t("studio.timeline.renderManifest")}
                             </Button>
                         </Space>
+                        {/* NO VERSION PICKER HERE, deliberately. `ExportManifestDocumentRequest`
+                            carries the episode and nothing else: the manifest is the NEWEST EXPORT'S
+                            own record of what that film was made from, not a rendering of a version a
+                            user selects. A picker would be a control that changes nothing. */}
+                        <Typography.Paragraph className="mt-2 text-xs text-stone-500">{t("studio.timeline.manifestNoVersionNote")}</Typography.Paragraph>
                         {documentPreview("manifest", 12)}
                     </div>
                 </div>
@@ -1129,26 +1419,58 @@ export function TimelineSection({ episodes, activeEpisodeId, onSelectEpisode, on
  * rule, and it would have to take a kind to do this instead — a union in a client whose other exports
  * each take their own request.
  *
- * No `versionId` is sent: the core renders the version IN FORCE, and a version id this interface
- * invented would render someone else's draft as "my script". That is a different question from the
- * subtitle engine's `scriptVersionId`, which is a version a user PICKS: a draft is a new artifact a
- * user asks for, and the core lets them choose which script it renders from, while these three
- * documents are defined as the approved versions and have no parameter to choose with.
+ * `versionId` carries the picking user's choice for the two kinds that HAVE a picker, and it is empty
+ * for the manifest because that request has no such field to fill. Empty is meaningful rather than a
+ * gap for the other two: the core reads it as "the version in force", which is the honest request
+ * exactly when the picker holds nothing — an episode whose history this build could not read — and
+ * `documents[kind].versionId` records the value sent, so a preview rendered under one version and read
+ * under another is detectable rather than silent.
  */
 async function renderByKind(
     kind: DocumentKind,
     episodeId: string,
-    formats: { scriptFormat: string; shotListFormat: string; includeShots: boolean },
+    request: { scriptFormat: string; shotListFormat: string; includeShots: boolean; versionId: string },
 ): Promise<desktop.DocumentDTO> {
     switch (kind) {
         case "script":
-            return exportScript({ episodeId, format: formats.scriptFormat, includeShots: formats.includeShots } as never);
+            return exportScript({
+                episodeId,
+                versionId: request.versionId || undefined,
+                format: request.scriptFormat,
+                includeShots: request.includeShots,
+            } as never);
         case "shotList":
-            return exportShotList({ episodeId, format: formats.shotListFormat } as never);
+            return exportShotList({ episodeId, versionId: request.versionId || undefined, format: request.shotListFormat } as never);
         case "manifest":
+            // No `versionId`: the manifest is the NEWEST EXPORT'S own document, not a rendering of a
+            // version a user could pick. `ExportManifestDocumentRequest` carries the episode alone, so
+            // a picker beside this control would have nothing to put in the request.
             return exportManifestDocument({ episodeId } as never);
     }
 }
+
+/**
+ * versionOptionLabel is how every version picker in this section names one option.
+ *
+ * `v{n} · {status}` is the shape the timeline's subtitle picker and the audio section's picker already
+ * use, and keeping it identical here is what makes the controls read as one: the status is part of the
+ * label rather than decoration around it, because a draft and an approved version can carry the same
+ * number and which one a document contains is the choice being made. The status goes through `t` with
+ * the RAW value as its fallback, so a status a locale has not caught up with shows as itself rather
+ * than as a missing key.
+ */
+function versionOptionLabel(version: VersionRow, translate: Translate): string {
+    return `v${version.versionNumber} · ${translate(`studio.versionStatus.${version.status}`, { defaultValue: version.status })}`;
+}
+
+/**
+ * Translate is the one shape this file needs from i18next.
+ *
+ * `t` itself is a heavily overloaded generic, and naming the slice used here keeps the two helpers
+ * below readable; the alternative — threading `t` through every call site's own inline expression —
+ * is what the three near-identical labels would otherwise become.
+ */
+type Translate = (key: string, options: { defaultValue: string }) => string;
 
 /**
  * firstCueProblem reports the first cue problem a user can act on, or the empty string.

@@ -2,12 +2,17 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 /**
- * The script-version read, from both sides.
+ * The version reads `drama.ts` exposes, from both sides.
  *
- * `listScriptVersions` is `drama.ts`'s QUERY that closes the one version family whose history had no
- * binding. Two sections depend on it — the audio section's dialogue-line picker and the timeline
- * section's subtitle-draft picker — and both call it before they render anything, so both of its
- * directions have to be asserted:
+ * `listScriptVersions` is the QUERY that closed the one version family whose history had no binding.
+ * `listStoryboardVersions` is its BOARD counterpart, which the timeline's new shot-list version picker
+ * reads: `ListStoryboardVersions` takes a storyboard id rather than an episode, so the picker resolves
+ * the episode's board through `EnsureStoryboard` first and the id it passes here is the BOARD's. That
+ * difference is why the second case asserts the id's passage rather than only the rows: a client that
+ * forwarded an episode id to this method would be asking the wrong question, and the core would answer
+ * "no versions" for a board that has several.
+ *
+ * Both directions are asserted for each:
  *
  *  - with no core, an empty list, because a browser session renders each picker's empty state rather
  *    than an error;
@@ -15,39 +20,17 @@ import { test } from "node:test";
  *    would offer versions that do not exist.
  *
  * The second direction is the one a mutation would survive: `return []` unconditionally passes every
- * absence check in the suite. It is also why the fake records the call rather than only its result —
- * the episode id has to reach the binding, since `ListScriptVersions` takes the EPISODE and resolves
- * the script from it.
+ * absence check in the suite. It is also why the fake records the call rather than only its result.
  *
  * The fake installs the shape Wails generates, `window.go.desktop.<Binding>.<Method>`, exactly as
- * `media.spec.ts` does. `REQUIRED_DRAMA_METHODS` is installed alongside it because
- * `isDramaBindingsAvailable` gates the call: a fake with only `ListScriptVersions` would assert the
- * unavailable path instead of the one under test.
+ * `media.spec.ts` does, and reuses that file's `withDesktopCore` helper pattern rather than growing a
+ * third copy of it. `REQUIRED_DRAMA_METHODS` is installed alongside because `isDramaBindingsAvailable`
+ * gates the calls: a fake with only the read under test would assert the unavailable path instead.
  */
-import { isDramaBindingsAvailable, listScriptVersions, resetDramaClients } from "../desktop/drama";
+import { isDramaBindingsAvailable, listScriptVersions, listStoryboardVersions } from "../desktop/drama";
+import { withDesktopCore, type FakeBindings } from "./desktop-core";
 
-type FakeBindings = Record<string, Record<string, (...args: never[]) => unknown>>;
-
-/** withDesktopCore runs a body with a fake Wails binding surface installed. */
-async function withDesktopCore(bindings: FakeBindings, body: () => Promise<void> | void) {
-    const host = globalThis as { window?: unknown };
-    const previous = host.window;
-    host.window = { go: { desktop: bindings } };
-    try {
-        await body();
-    } finally {
-        if (previous === undefined) {
-            delete host.window;
-        } else {
-            host.window = previous;
-        }
-        // The binding module is cached across calls, so it is released here rather than left pointing
-        // at a window a later test has replaced.
-        resetDramaClients();
-    }
-}
-
-/** dramaSurface is the smallest binding `isDramaBindingsAvailable` accepts, plus the read. */
+/** dramaSurface is the smallest binding `isDramaBindingsAvailable` accepts, plus the reads. */
 function dramaSurface(overrides: Record<string, (...args: never[]) => unknown>): FakeBindings {
     return {
         DramaBinding: {
@@ -117,4 +100,48 @@ test("a binding that predates the read is treated as present and fails on the ca
             "a build with no ListScriptVersions must fail on the call rather than answer empty",
         );
     });
+});
+
+test("the storyboard version read answers empty when the core is absent", async () => {
+    // The BOARD family's read, which the timeline's shot-list version picker calls. It is a QUERY like
+    // the script one above, so a browser session gets `[]` and the picker renders its empty state
+    // rather than an error toast — and a mutation that made this method return a fixed row, or throw,
+    // would fail here.
+    assert.deepEqual(await listStoryboardVersions("storyboard-1"), []);
+});
+
+test("a reachable binding carries the storyboard version read through and returns its rows", async () => {
+    // The ids and numbers are deliberately NOT a sequence a client could synthesize: the picker labels
+    // each option `v{versionNumber} · {status}` and sends the `id` back as the shot list's `versionId`,
+    // so a client that fabricated either would offer versions the core cannot render.
+    const rows = [
+        { id: "board-5", storyboardId: "board-1", versionNumber: 5, status: "draft" },
+        { id: "board-4", storyboardId: "board-1", versionNumber: 4, status: "approved" },
+        { id: "board-3", storyboardId: "board-1", versionNumber: 3, status: "superseded" },
+    ];
+    const calls: Array<[string, unknown]> = [];
+    const recording = dramaSurface({
+        ListStoryboardVersions: (storyboardId: unknown) => {
+            calls.push(["ListStoryboardVersions", storyboardId]);
+            return rows;
+        },
+    });
+
+    await withDesktopCore(recording, async () => {
+        assert.equal(isDramaBindingsAvailable(), true, "the fake surface must read as available");
+        const versions = await listStoryboardVersions("board-1");
+        assert.deepEqual(versions, rows, "the core's own rows must be the ones answered");
+        // The order is the CORE'S — `ORDER BY version_number DESC`, newest first — and the client must
+        // not re-sort it: the picker reads the first entry as "the newest" when it finds no approved
+        // version to prefer, and the storyboard table reads it the same way.
+        assert.deepEqual(
+            versions.map((version) => version.id),
+            ["board-5", "board-4", "board-3"],
+        );
+    });
+
+    // The STORYBOARD id, not an episode's: `ListStoryboardVersions` takes the board the versions belong
+    // to, which is why the caller resolves the episode's board first. A client that forwarded an
+    // episode id here would ask the wrong question and be told, truthfully, that it has no versions.
+    assert.deepEqual(calls, [["ListStoryboardVersions", "board-1"]], "the storyboard id must reach the binding");
 });

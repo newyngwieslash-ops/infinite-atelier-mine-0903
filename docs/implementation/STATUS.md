@@ -3,7 +3,7 @@
 > Last updated: 2026-09-23
 > Product: Infinite Atelier Core + Drama Production Pack
 > Current work package: **WP-11 — 视频、音频、字幕、时间线与导出**
-> Status: **COMPLETE for the 14 ROADMAP items, with four PARTIAL items named in section 0l.** The media half of the product is built: the one audited subprocess and its ffmpeg adapter, migration 000020's three tables, the media domain's timecodes and cue/manifest rules, the subtitle service with drafts that cite dialogue lines and an editor that reads back, the timeline as an ordered join over the board's own rows, the export service that composes a real playable MP4 from approved panel frames with audio and subtitles muxed in, the `SaveFile` path that writes to where a user points — the first such path this application has ever had — the video and audio job submissions with their reference-asset pipeline, the two `final_episode` agents and the deterministic Final Ruleset that precedes the supervisor, and the video, audio and timeline sections. Section 0l states what this package delivered, the defects TWO INDEPENDENT REVIEWS found (321 mutations, 149 killed; four blockers), the two ROADMAP items closed after the first report, and — plainly — what remains PARTIAL. WP-01 through WP-10 remain COMPLETE for their recorded scopes.
+> Status: **COMPLETE for all 14 ROADMAP items, with two PARTIAL items named in section 0l.** The media half of the product is built: the one audited subprocess and its ffmpeg adapter, migration 000020's three tables, the media domain's timecodes and cue/manifest rules, the subtitle service with drafts that cite dialogue lines and an editor that reads back, the timeline as an ordered join over the board's own rows, the export service that composes a real playable MP4 from approved panel frames with audio and subtitles muxed in, the `SaveFile` path that writes to where a user points — the first such path this application has ever had — the video and audio job submissions with their reference-asset pipeline, the two `final_episode` agents and the deterministic Final Ruleset that precedes the supervisor, and the video, audio and timeline sections. Section 0l states what this package delivered, the defects TWO INDEPENDENT REVIEWS found (321 mutations, 149 killed; four blockers), the items closed after the first report, and — plainly — what remains PARTIAL. WP-01 through WP-10 remain COMPLETE for their recorded scopes.
 
 WP-03 start baseline (2026-09-15): branch `codex/wp-01-desktop-foundation`, HEAD `a243891455ec17687dd54b5ac90d3bd64478a1a1`, empty index. Freshly re-run baseline: `go test ./... -count=1` PASS (15 packages at start), `go vet ./...` PASS, `web` `npm run typecheck` PASS, `npm test` PASS (15 tests), `npm run build` PASS. Go commands require `GOTOOLCHAIN=go1.25.0 GOSUMDB=sum.golang.org` on this host because the user-level `go env` sets `GOSUMDB=off`, which blocks toolchain verification. The working tree already contained the WP-01/WP-02 tracked and untracked work plus the user's brand rename; none of it was modified outside the WP-03 scope.
 
@@ -255,10 +255,11 @@ unusable** (uncompilable or equivalent). The survivors are reported in three cla
 
 ## Scope completed
 
-- **Status: COMPLETE for all 14 ROADMAP items, with four PARTIAL.** Items 11 and 14 were reported
-  NOT BUILT in this package's first report and are now built — see "Item 11 and item 14, closed
-  after the first report" below, which also records the defect the item-14 walk found. Each
-  remaining PARTIAL is stated rather than glossed. Two independent reviews ran against the
+- **Status: COMPLETE for all 14 ROADMAP items, with two PARTIAL.** Items 11 and 14 were reported
+  NOT BUILT in the first report and are now built; item 13's references case and the version pickers
+  were closed after it. See "Item 11 and item 14, closed after the first report" and "What remains
+  PARTIAL" below — the latter records, for each closure, what the first account of it got wrong.
+  Every closure is stated rather than glossed. Two independent reviews ran against the
   package — a spec review and a mutation/quality review — and the defects they found are listed
   with what was done about each.
 
@@ -382,22 +383,34 @@ what found it, which is the argument for item 14 existing at all.
 
 ## What remains PARTIAL
 
-1. **ROADMAP item 13, "中断恢复", is PARTIAL.** `video_restart_test.go` covers a job restart WITHOUT
-   reference assets. A restart with first-frame, last-frame or reference assets populated is not
-   covered.
-2. **ROADMAP item 1's video provider is a complete Mock, which the item permits** ("或完整 Mock").
+**Two of the five recorded here have been closed since the first report**, and each closure is worth
+naming because the first account of it was wrong:
+
+- **ROADMAP item 13, "中断恢复", is COMPLETE.** The restart test covered a job with no references, which
+  proved the remote ID survives and said nothing about the frames — a resumed job is POLLED, and a poll
+  is given no references at all. `TestVideoRestartKeepsTheReferencesAJobWasSubmittedWith` recovers a job
+  carrying a reference, a first frame and a last frame and compares the input field by field, and
+  `TestRunnerVideoCarriesReferencesAndFrames` grades the pipeline that carries them (which had NO test
+  at all: the stub discarded its request, so it could have been deleted with the suite green).
+- **ROADMAP item 4's "no picker" half is COMPLETE, and the reason first recorded here was FALSE.** It
+  said "no read enumerates a script version's lines". `GetScriptStructure` has always listed them, with
+  each line's id, type and character. What was genuinely missing was the version HISTORY —
+  `ListScriptVersions` was on the repository and dispatched by `Service.ListVersions` since WP-08 with
+  no binding, while the skeleton and strategy families both had one. It has one now, so the audio
+  section and a subtitle draft resolve their version (and, for audio, their line) by picking, and the
+  document exports offer a `versionId` picker for both script and board.
+
+What genuinely remains:
+
+1. **ROADMAP item 1's video provider is a complete Mock, which the item permits** ("或完整 Mock").
    Its payload is a twenty-four byte container header rather than decodable video, which is why
-   ADR-0015 section 2 composes exports from panel frames instead. A real adapter is not built.
-3. **ROADMAP item 4, "TTS Voice/Dialogue mapping", is PARTIAL, and the reason first recorded here was
-   wrong.** It said "no read enumerates a script version's lines". `GetScriptStructure` has always
-   listed them; what was missing was the version HISTORY — `ListScriptVersions` was on the repository
-   and dispatched by `Service.ListVersions` since WP-08, with no binding. It has one now, and the audio
-   section resolves both the version and the line by picking. What remains PARTIAL is a read of a
-   LINE's approved audio: the timeline's audio column is per shot, so the section still reports the
-   shot's state.
-4. **The document exports have no `versionId` picker.** Each accepts one and the core honours it, but
-   nothing feeds the UI a list to choose from — the same `ListScriptVersions` shape, now available for
-   scripts and still absent for a BOARD version. A user exports the version in force.
+   ADR-0015 section 2 composes exports from panel frames instead. A real adapter is not built, and
+   building one is a WP-12-or-later decision rather than an oversight.
+2. **No read of a LINE's approved audio.** `SubmitAudioJob` attaches a job to a `dialogueLineId`, and
+   the timeline's audio column is per SHOT ("whether audio is approved for any line in this row's
+   scene"). So the audio section reports the shot's state and names the line it is voicing, and a
+   per-line "which lines have audio" list would need a read that does not exist. ROADMAP item 4's
+   mapping is otherwise complete.
 
 ## The two AGENT_CONTRACTS section 11.4 clauses this build does not fully answer
 

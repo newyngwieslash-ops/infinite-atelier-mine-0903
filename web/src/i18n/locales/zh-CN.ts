@@ -1630,6 +1630,7 @@ export default {
             scriptVersionPlaceholder: "草稿所依据的剧本版本",
             scriptCoreMissing: "本构建读不到剧本版本",
             scriptVersionsUnread: "读取剧本版本列表失败。",
+            shotListVersionsUnread: "读取分镜版本列表失败。",
             scriptVersionRequired: "请选择剧本版本：核心拒绝没有剧本版本的字幕草稿。",
             noScriptVersionTitle: "该剧集还没有剧本版本",
             noScriptVersionBody: "可选项来自 ListScriptVersions，因此这里如实报告没有版本可挑。剧本版本由剧本分区的「剧本生成」阶段产生（需要先批准骨架与改编策略），批准后回到本分区即可选择；已批准的版本会被优先选中。",
@@ -1710,6 +1711,20 @@ export default {
             shotListFormatLabel: "格式",
             renderShotList: "渲染镜头表",
             renderManifest: "渲染清单文件",
+            // 文档导出的版本选择。两份文档的请求各自带一个 versionId，核心按它渲染指定版本，
+            // 所以控制项旁边必须有选择器：没有它，用户只能导出当前生效的那一版。
+            documentVersionLabel: "版本",
+            documentVersionPlaceholder: "导出哪一版",
+            // 换了版本就让旧预览作废：保存按钮送回的正是屏幕上那段文本，留着它等于允许把另一版写进磁盘。
+            // 提示中点名那段文本出自哪一版，用户才不必自己去比数字。
+            documentVersionChanged: "版本已改：上面预览来自 {{version}}，已作废，请重新渲染后再保存。",
+            // 换了剧集同理，但说法不同：那段文本来自上一集，它的版本号在本集这里没有意义，所以不点名版本。
+            documentEpisodeChanged: "剧集已换：上面预览属于上一个剧集，已作废，请重新渲染后再保存。",
+            // 这两句说明「选择器为什么是空的」，并点名产生它的阶段——空下拉框本身说不出任何理由。
+            documentNoScriptVersionBody: "该剧集还没有剧本版本可导出，因此这里如实报告没有版本可挑。剧本版本由剧本分区的「剧本生成」阶段产生（需要先批准骨架与改编策略）；已批准的版本会被优先选中。",
+            documentNoShotListVersionBody: "该剧集还没有分镜版本可导出，因此这里如实报告没有版本可挑。分镜版本由「分镜表」阶段产生（需要已批准的剧本与导演规划）；已批准的版本会被优先选中。",
+            // 清单文件没有版本可选：它是最新一次导出自己记录的那份文档，不是某个版本的渲染结果。
+            manifestNoVersionNote: "清单文件记录的是最新一次导出所依据的版本，没有可挑的版本，因此这里不放选择器。",
             documentFailed: {
                 script: "渲染剧本失败。",
                 shotList: "渲染镜头表失败。",

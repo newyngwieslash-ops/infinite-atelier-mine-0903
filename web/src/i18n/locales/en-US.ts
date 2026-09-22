@@ -1632,6 +1632,7 @@ export default {
             scriptVersionPlaceholder: "the script version the draft renders",
             scriptCoreMissing: "This build cannot read script versions",
             scriptVersionsUnread: "Could not read the list of script versions.",
+            shotListVersionsUnread: "Could not read the list of storyboard versions.",
             scriptVersionRequired: "Pick a script version: the core refuses a subtitle draft without one.",
             noScriptVersionTitle: "This episode has no script version yet",
             noScriptVersionBody: "The options come from ListScriptVersions, so this is an honest report that there is none to pick. A script version is produced by the script section's \"script generation\" stage, which needs an approved skeleton and an approved strategy first; an approved version is preferred automatically once there is one.",
@@ -1712,6 +1713,26 @@ export default {
             shotListFormatLabel: "Format",
             renderShotList: "Render the shot list",
             renderManifest: "Render the manifest",
+            // The document exports' version choice. Both requests carry a `versionId` the core honours,
+            // so each control needs a picker beside it: without one a user can export the version in
+            // force and nothing else.
+            documentVersionLabel: "Version",
+            documentVersionPlaceholder: "which version to export",
+            // A changed version discards the preview, because the save control sends the text on
+            // screen back to `SaveDocument` — leaving it there would let another version reach the
+            // disk. The notice names the version the text came from so the user need not compare
+            // numbers themselves.
+            documentVersionChanged: "The version changed: the preview above came from {{version}} and is no longer valid — render again before saving.",
+            // An episode switch says the same thing in different terms: the text belongs to the previous
+            // episode, so its version number means nothing here and is not quoted.
+            documentEpisodeChanged: "The episode changed: the preview above belongs to the previous episode and is no longer valid — render again before saving.",
+            // These two say WHY the picker is empty and name the stage that fills it; a disabled
+            // dropdown on its own states no reason.
+            documentNoScriptVersionBody: "This episode has no script version to export, so this is an honest report that there is none to pick. A script version is produced by the script section's \"script generation\" stage, which needs an approved skeleton and an approved strategy; an approved version is preferred automatically once there is one.",
+            documentNoShotListVersionBody: "This episode has no storyboard version to export, so this is an honest report that there is none to pick. A board version is produced by the \"storyboard table\" stage, which needs an approved script and director plan; an approved version is preferred automatically once there is one.",
+            // The manifest has no version to pick: it is the newest export's own record, not a
+            // rendering of a version.
+            manifestNoVersionNote: "The manifest records the versions the newest export was made from, so there is no version to pick and no picker here.",
             documentFailed: {
                 script: "Rendering the script failed.",
                 shotList: "Rendering the shot list failed.",
