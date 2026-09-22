@@ -129,6 +129,18 @@ else
   printf 'SKIP: skill pack check — the generator is missing.\n'
 fi
 
+# The SBOM is generated from go.sum/go.mod/web-package-lock.json and is a release artifact:
+# PRD section 18 blocks release while "许可证和第三方声明缺失" and SECURITY section 15 lists
+# SBOM as CI. Without this step the checked-in document would keep describing a dependency
+# set that no longer exists — the exact failure mode that made it generated rather than
+# written. LICENSE_ALLOWLIST is not implemented and is NOT claimed here.
+if [ -f "$ROOT_DIR/scripts/gen-sbom.mjs" ]; then
+  cd "$ROOT_DIR"
+  run_step "SBOM is current" node scripts/gen-sbom.mjs --check
+else
+  printf 'SKIP: SBOM check — the generator is missing.\n'
+fi
+
 if command -v wails >/dev/null 2>&1; then
   cd "$ROOT_DIR"
   run_step "Wails production build" wails build

@@ -2,8 +2,124 @@
 
 > Last updated: 2026-09-23
 > Product: Infinite Atelier Core + Drama Production Pack
-> Current work package: **WP-12 — 硬化、性能、打包与 Release Candidate, scope items 3 and 4 (性能 / benchmark)**
+> Current work package: **WP-12 — 硬化、性能、打包与 Release Candidate, scope items 10, 12 and the
+> release-blocker audit (headline acceptance)**
 >
+> # 0n. WP-12 items 10 and 12, and the release-blocker audit (2026-09-23)
+>
+> Items 10 (third-party notices/SBOM) and 12 (dependency vulnerability) are CLOSED, and PRD section
+> 18's eleven release blockers were each checked against the running code rather than against a
+> comment. **All eleven are CLEARED**, with one named caveat that is a capability gap rather than a
+> blocker: there is no working video or audio generation in secure desktop mode, inherited from item
+> 16.
+>
+> ## Item 10: SBOM and notices
+>
+> - **`scripts/gen-sbom.mjs` generates `sbom/cyclonedx.json` (CycloneDX 1.5) and
+>   `sbom/licences.json`**, and supports `--check`. Both verify scripts now run the check, so the
+>   document cannot drift from `go.mod`/`go.sum`/`web/package-lock.json` without failing a gate.
+>   CycloneDX was chosen over SPDX because its `licenses[].license.id` carries an SPDX identifier
+>   directly and both ecosystems publish CycloneDX tooling. **Neither `syft` nor `cyclonedx-gomod`
+>   nor `cyclonedx-npm` is installed on this host, and this generator uses neither.**
+> - **The generator never writes outside `sbom/`.** It does not run `go mod download`, because that
+>   command appended 143 lines to `go.sum` when it was tried during development — a real
+>   modification to a tracked file made by a tool whose job is to observe. A module whose licence
+>   file is absent from the cache is recorded as `unknown`, never fetched.
+> - **Licence identification was VERIFIED, not restated, and the verification found two WRONG
+>   answers.** `modernc.org/memory`'s LICENSE is BSD-3-Clause but was reported BSD-2-Clause (its
+>   third clause reads "Neither the names of the authors..."), and `hashicorp/golang-lru/v2` plus
+>   `cyphar/filepath-securejoin` were reported **AGPL-3.0** — a false release blocker — because
+>   MPL-2.0's own text mentions the AGPL in ordinary sentence case. Both were found by reading the
+>   files. The GPL-family markers are now case-sensitive, and a negative control over synthetic
+>   AGPL/SSPL/GPL-3/GPL-2/LGPL-2.1 texts caught a regression that the fix itself introduced.
+> - **Result: no AGPL/GPL/LGPL/SSPL dependency anywhere, and no unidentified licence.** Across 130
+>   Go modules: MIT 66, BSD-3-Clause 35, Apache-2.0 14, BSD-2-Clause 8, ISC 4, Unlicense OR MIT 1,
+>   BSD-3-Clause AND MPL-2.0 1, MPL-2.0 1. Across 1,388 npm slots: MIT 1,270, ISC 63, BSD-3-Clause
+>   16, Apache-2.0 12, MPL-2.0 12, BSD-2-Clause 5, BlueOak 2, 0BSD 2, four singletons, two
+>   OR-expressions. The three MPL entries are in the graph tier, not in `go build ./...`'s closure.
+> - **`THIRD_PARTY_NOTICES.md` gained 86 entries**, covering every module in the graph the file had
+>   no entry for (its WP-01 caveat said toolchain-only modules were outside the inventory; that gap
+>   is now closed). No licence entry was removed: `git diff` shows 5,653 insertions and 2 deletions,
+>   and those two are the file's TITLE line and its opening paragraph, rewritten because both said
+>   "WP-01" and "this is not a complete release SBOM" — claims this package made false. All 86
+>   appended licence texts were verified against the module cache, which is how two formatting
+>   defects were caught (a missing trailing newline merging two entries, and an embedded Markdown
+>   fence truncating a 19 KB text to 1.2 KB). Eight lines then had trailing whitespace stripped
+>   inside the fences — `git diff --check` is an AGENTS section 4.4 gate and eight upstream licence
+>   files wrap their text that way. Trailing whitespace carries no legal meaning, every word is
+>   unchanged, and the only 8 differing lines are ones where `rstrip()` matches.
+>
+> ## Item 12: dependency vulnerability
+>
+> - **Go: 25 findings, ALL in the standard library, ALL fixed in go1.25.13.** `go.mod` gained
+>   `toolchain go1.25.13`. Re-scanned with the directive honoured: **"No vulnerabilities found."**
+>   The findings were reachable, not theoretical — `net/url`, `crypto/tls`, `crypto/x509`,
+>   `encoding/xml` and `encoding/asn1` all appear in traces through `providerhttp.Downloader` and
+>   `importing.parseWordBody`.
+> - **npm: 24 findings → 4, via in-major bumps only.** axios 1.16.0→1.20.0, nanoid 5.1.11→5.1.16,
+>   react-router and react-router-dom 7.18.0→7.18.4. `package.json` is unchanged; only the lockfile
+>   moved. Every bump stayed inside its existing major.
+> - **The 4 remaining are moderate, and they are NOT in the shipped bundle.** They are the
+>   `@ant-design/pro-components` → `react-syntax-highlighter` → `refractor` → `prismjs` chain. The
+>   only import of that package is `ProConfigProvider` in `app-providers.tsx`, and the built
+>   `dist/assets/index-*.js` contains zero occurrences of `react-syntax-highlighter`, `refractor`,
+>   `prismjs` or `SyntaxHighlighter` — the vulnerable subtree is tree-shaken out. The available
+>   "fix" is a **major downgrade** to 2.8.10, which is why it was NOT applied.
+> - `shadcn` is a **production** dependency that pulls the whole `@modelcontextprotocol/sdk` →
+>   express/hono/qs chain while contributing exactly one CSS `@import`. That chain's 10 findings are
+>   now fixed by the lockfile update; moving `shadcn` to devDependencies would be the structurally
+>   right change and is left as a recommendation, because it is a dependency-graph decision rather
+>   than a vulnerability fix.
+>
+> ## The release-blocker audit
+>
+> All eleven CLEARED. Each verdict names the code, test or command it rests on. One row carries a
+> caveat that is a capability gap rather than a blocker, and it is stated rather than softened:
+>
+> | # | Blocker | Verdict |
+> |---|---|---|
+> | 1 | 前端或普通备份可获取完整 API Key | **CLEARED** |
+> | 2 | 仍存在任意模型 JavaScript 执行路径 | **CLEARED** |
+> | 3 | API 代理可访问回环、私网或任意地址 | **CLEARED** |
+> | 4 | 工作流运行状态只存在内存 | **CLEARED** |
+> | 5 | 视频结果未验证即标记成功 | **CLEARED** |
+> | 6 | 数据库迁移无备份或回滚/修复路径 | **CLEARED** |
+> | 7 | Supervisor 可使用未授权写工具 | **CLEARED** |
+> | 8 | 导入可路径穿越或 Zip Bomb | **CLEARED** |
+> | 9 | 旧项目迁移存在静默丢失 | **CLEARED** |
+> | 10 | 核心 E2E 测试未通过 | **CLEARED** |
+> | 11 | 许可证和第三方声明缺失 | **CLEARED** — by this package |
+>
+> The evidence for each row, and the SECURITY section 19 / AGENT_CONTRACTS section 20 extras, are in
+> `docs/implementation/RELEASE_BLOCKERS_WP12.md`.
+>
+> ## Verification, with results
+>
+> | Command | Result |
+> |---|---|
+> | `GOTOOLCHAIN=auto go test ./... -count=1` (go1.25.13) | **PASS** — 36 packages ok |
+> | `go build ./...` / `go vet ./...` (go1.25.13) | **PASS** |
+> | `govulncheck ./...` (go1.25.13) | **PASS** — No vulnerabilities found |
+> | `bash scripts/verify.sh` | **PASS** — including the new "SBOM is current" step |
+> | `node scripts/security-scan.mjs` | **PASS** — 607 files, 1 audited dynamic exception, 3 named legacy files |
+> | `node scripts/gen-sbom.mjs --check` | **PASS** |
+> | `web`: `npm run typecheck` / `npm test` (67) / `npm run build` | **PASS** |
+> | `web`: `npx playwright test` | **PASS** — 25 passed, 1 pre-existing skip |
+> | `npm audit --omit=dev` | 4 moderate, all in a tree-shaken-out subtree (was 24) |
+> | `go test -race ./...` | **ENVIRONMENT FAILURE** — `cc1.exe: 64-bit mode not compiled in`. Not a pass. |
+>
+> No test was weakened, skipped or deleted.
+>
+> ## Known limits
+>
+> - **Secure desktop mode has no working video or audio generation**, on the canvas or in the
+>   studio. Item 16 recorded this; the audit confirms it is a capability gap rather than a security
+>   defect, and it is NOT one of PRD section 18's eleven blockers.
+> - `THIRD_PARTY_NOTICES.md` now carries the whole module graph (~385 KB). The generated SBOM is the
+>   machine-readable primary; the Markdown is the licence TEXT a distribution must carry.
+> - The npm half of the SBOM reads `package-lock.json` and, for the two packages it omits a licence
+>   for, the installed package. It does not read the network.
+
 > # 0m1. WP-12 items 3 and 4: the scale cases are measured, and ONE FINDING IS OPEN (2026-09-23)
 >
 > ## What this closes

@@ -2,6 +2,8 @@ module github.com/newyngwieslash-ops/infinite-atelier-mine-0903
 
 go 1.25.0
 
+toolchain go1.25.13
+
 require (
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	github.com/wailsapp/wails/v2 v2.15.0

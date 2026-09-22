@@ -176,5 +176,22 @@ if (Test-Path $SkillPackGen) {
     Write-Host "SKIP: skill pack check — the generator is missing."
 }
 
+# The SBOM is generated from go.sum/go.mod/web-package-lock.json and is a release artifact:
+# PRD section 18 blocks release while "许可证和第三方声明缺失" and SECURITY section 15 lists
+# SBOM as CI. Without this step the checked-in document would keep describing a dependency
+# set that no longer exists — the exact failure mode that made it generated rather than
+# written. LICENSE_ALLOWLIST is not implemented and is NOT claimed here.
+$SbomGen = Join-Path $RootDir "scripts\gen-sbom.mjs"
+if (Test-Path $SbomGen) {
+    Push-Location $RootDir
+    try {
+        Invoke-Step "SBOM is current" { node scripts/gen-sbom.mjs --check }
+    } finally {
+        Pop-Location
+    }
+} else {
+    Write-Host "SKIP: SBOM check — the generator is missing."
+}
+
 Restore-EmbedPlaceholder
 Write-Host "`nPASS: available verification gates completed."
