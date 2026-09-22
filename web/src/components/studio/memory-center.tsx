@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Alert, Button, Drawer, Empty, Input, Modal, Select, Space, Table, Tag, Tooltip, Typography } from "antd";
+import { Alert, Button, Drawer, Empty, Input, InputNumber, Modal, Select, Space, Table, Tag, Tooltip, Typography } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { Lock, LockOpen, Sparkles, Trash2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -11,6 +11,7 @@ import {
     isMemoryCommandsAvailable,
     isMemoryRebuildAvailable,
     listMemories,
+    rememberFact,
     listSummarySources,
     listMemoryEntityLinks,
     previewMemoryRecall,
@@ -66,6 +67,9 @@ export function MemoryCenterSection({ projectId }: MemoryCenterSectionProps) {
     const [deleting, setDeleting] = useState<desktop.MemoryDTO | null>(null);
     const [deleteSummaries, setDeleteSummaries] = useState(false);
     const [notice, setNotice] = useState("");
+    const [fact, setFact] = useState("");
+    const [factImportance, setFactImportance] = useState(0.9);
+    const [savingFact, setSavingFact] = useState(false);
 
     const bindingsAvailable = isMemoryBindingsAvailable();
     const commandsAvailable = isMemoryCommandsAvailable();
@@ -213,6 +217,40 @@ export function MemoryCenterSection({ projectId }: MemoryCenterSectionProps) {
             setNotice(error instanceof Error ? error.message : t("studio.memory.commandFailed"));
         } finally {
             setBusy("");
+        }
+    };
+
+    /**
+     * saveFact writes what the user typed as a semantic memory.
+     *
+     * Its importance defaults HIGH (0.9) rather than to the domain's 0.5, and that is a deliberate
+     * difference from every other write path: a fact a person stops to type is one they want recalled,
+     * and above `HighImportance` it also becomes eligible for the pinned channel — so a user can pin it
+     * and have it recalled regardless of similarity, which is AC-MEM-003's exception and the reason the
+     * field is on this form rather than fixed.
+     */
+    const saveFact = async () => {
+        if (fact.trim() === "") {
+            setNotice(t("studio.memory.factNeedsContent"));
+            return;
+        }
+        setSavingFact(true);
+        try {
+            await rememberFact({
+                projectId,
+                episodeId: selected?.scopeEpisode ?? "",
+                content: fact.trim(),
+                importance: factImportance,
+                createdById: "user",
+                embed: isMemoryRebuildAvailable(),
+            } as never);
+            setNotice(t("studio.memory.factSaved"));
+            setFact("");
+            await load();
+        } catch (error) {
+            setNotice(error instanceof Error ? error.message : t("studio.memory.commandFailed"));
+        } finally {
+            setSavingFact(false);
         }
     };
 
@@ -390,6 +428,33 @@ export function MemoryCenterSection({ projectId }: MemoryCenterSectionProps) {
                         onRow={(row) => ({ onClick: () => void openDetail(row) })}
                     />
                 )}
+            </section>
+
+            <section>
+                <h2 className="mb-3 text-lg font-medium">{t("studio.memory.factTitle")}</h2>
+                <Typography.Paragraph className="text-xs text-stone-500">
+                    {t("studio.memory.factHint")}
+                </Typography.Paragraph>
+                <Space.Compact className="mb-3 w-full max-w-3xl">
+                    <Input
+                        value={fact}
+                        data-testid="memory-fact-content"
+                        placeholder={t("studio.memory.factPlaceholder")}
+                        onChange={(event) => setFact(event.target.value)}
+                        onPressEnter={() => void saveFact()}
+                    />
+                    <InputNumber
+                        min={0}
+                        max={1}
+                        step={0.05}
+                        value={factImportance}
+                        data-testid="memory-fact-importance"
+                        onChange={(value) => setFactImportance(typeof value === "number" ? value : 0.9)}
+                    />
+                    <Button type="primary" loading={savingFact} data-testid="memory-fact-save" onClick={() => void saveFact()}>
+                        {t("studio.memory.factSave")}
+                    </Button>
+                </Space.Compact>
             </section>
 
             <section>

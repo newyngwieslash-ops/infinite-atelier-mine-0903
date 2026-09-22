@@ -150,6 +150,21 @@ export async function updateMemoryContent(request: desktop.MemoryEditRequest): P
     return binding.UpdateMemoryContent(request as never);
 }
 
+/**
+ * rememberFact saves something the user states as a semantic memory.
+ *
+ * It is the ONLY write of FR-120's semantic type, and it is a user command rather than anything an
+ * agent can reach — AGENT_CONTRACTS section 12.4 lists what must not become a high-confidence fact
+ * automatically, and every item on that list is something a model produces. A UI without this call
+ * would leave the semantic channel permanently empty and AC-MEM-003's pinned exception unreachable,
+ * which is what an independent review found before it existed.
+ */
+export async function rememberFact(request: desktop.RememberFactRequest): Promise<desktop.MemoryDTO> {
+    if (!isMemoryCommandsAvailable()) throw unavailableError();
+    const binding = await loadMemoryBinding();
+    return binding.RememberFact(request as never);
+}
+
 /** summarizeMemory condenses a scope's unsummarised memories. */
 export async function summarizeMemory(request: desktop.SummarizeMemoryRequest): Promise<desktop.MemorySummarizeResultDTO> {
     if (!isMemoryCommandsAvailable()) throw unavailableError();
