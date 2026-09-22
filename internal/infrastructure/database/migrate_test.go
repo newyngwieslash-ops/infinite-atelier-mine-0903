@@ -14,7 +14,7 @@ import (
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/apperror"
 )
 
-func foundationSQL(t *testing.T) []byte {
+func foundationSQL(t testing.TB) []byte {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join("migrations", "000001_foundation.sql"))
 	if err != nil {

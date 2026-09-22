@@ -42,7 +42,7 @@ func dramaRepoHandle(t *testing.T) *sql.DB {
 
 // dramaSeedParents writes the rows every WP-05 table hangs off: one workspace,
 // one project, one episode, one script with a version, and one workflow run.
-func dramaSeedParents(t *testing.T, db *sql.DB) {
+func dramaSeedParents(t testing.TB, db *sql.DB) {
 	t.Helper()
 	statements := []string{
 		`INSERT INTO workspaces (id, name, kind, created_at, updated_at, revision)

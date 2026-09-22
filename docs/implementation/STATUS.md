@@ -2,7 +2,87 @@
 
 > Last updated: 2026-09-23
 > Product: Infinite Atelier Core + Drama Production Pack
-> Current work package: **WP-12 — 硬化、性能、打包与 Release Candidate, scope item 16 (删除或不可达危险 legacy path)**
+> Current work package: **WP-12 — 硬化、性能、打包与 Release Candidate, scope items 3 and 4 (性能 / benchmark)**
+>
+> # 0m1. WP-12 items 3 and 4: the scale cases are measured, and ONE FINDING IS OPEN (2026-09-23)
+>
+> ## What this closes
+>
+> - **Item 3 (1,000 node/2,000 edge 性能) is MEASURED.** `internal/infrastructure/database/scale_wp12_test.go`
+>   builds the load through the real repositories over a migrated database;
+>   `scale_canvas_wp12_test.go` holds five bound tests, two benchmarks per operation, a shape test and
+>   a worst-case test at the binding's own 5,000-move ceiling. Every figure is in the file's own
+>   comments beside the bound it set.
+> - **Item 4 (10k asset/Memory benchmark) is MEASURED.**
+>   `scale_records_wp12_test.go` holds the same for 10,000 assets, 10,000 embedded memories and
+>   10,000 transcript rows.
+>
+> ## THE BLOCKING FINDING: three indexed reads sort the whole table
+>
+> **`idx_memory_items_embedding` does not cover the query's ORDER BY, so a memory search spends
+> ~62 ms of which ~0.2 ms is the search's arithmetic.** Measured decomposition and
+> `EXPLAIN QUERY PLAN` output are recorded in `scale_records_wp12_test.go`. The plan is
+> `SEARCH memory_items USING INDEX idx_memory_items_embedding (scope_project=? AND embedding_model=?
+> AND embedding_version=?)` followed by `USE TEMP B-TREE FOR ORDER BY`; the same query with the
+> ORDER BY removed is 0.5 ms, a hundredfold difference.
+>
+> `memory_index.go`'s "The ceiling" section states that the cost of a search "must not be a function
+> of how much a user has accumulated". **That holds for the SCORING, which is capped at
+> `MaxCandidates`, and NOT for the READ, which is linear in the project's embedded rows.**
+>
+> **The same shape affects two more reads**, each confirmed by its own plan:
+>
+> | read | plan's second line | measured |
+> |---|---|---|
+> | `MemoryRepository.VectorCandidates` | `USE TEMP B-TREE FOR ORDER BY` | 62 ms |
+> | `AssetRepository.ListAssets` | `USE TEMP B-TREE FOR ORDER BY` | 23 ms (1,000-row page) |
+> | `MemoryRepository.ListItems`, no type filter | `USE TEMP B-TREE FOR ORDER BY` | 51 ms |
+> | `MemoryRepository.ListItems`, one type | `USE TEMP B-TREE FOR LAST TERM OF ORDER BY` | not measured |
+> | `AgentRepository.RecentMessages` (for contrast) | none — index satisfies the order | 62 µs |
+>
+> The two `ListItems` rows are the same statement with and without a type filter, and the
+> plan's second line differs between them while the conclusion does not: `idx_memory_items_project_type`
+> supplies `scope_project` and `memory_type`, and `created_at` is its fourth column, so the
+> `id DESC` tie-breaker is what still needs a sort. Only the unfiltered variant — the one the
+> benchmark makes — has a measured figure here.
+>
+> **The cause is the same in each case**: every one of these reads orders by
+> `created_at DESC, id DESC` while its index ends at some other column, so SQLite materialises and
+> sorts. `RecentMessages` is the proof that it is fixable — `idx_agent_messages_scope` is
+> `(scope_project, scope_agent_key, created_at)`, which satisfies its ordering, and it is a
+> thousand times faster for it.
+>
+> **The fix is a migration**: an index per affected table whose column list ends with
+> `created_at DESC, id DESC`. That is a change to `docs/DOMAIN_MODEL.md` section 18's index list and
+> belongs to a package with migration scope — WP-12 item 7 is "Database migration from previous
+> package", which is the natural home. **It is NOT done here**, because a performance measurement
+> must not quietly add schema, and no bound was loosened to hide it: the search's bound is 200 ms
+> (3.2x the measurement) with the figure recorded beside it, and the file says explicitly that a
+> loosened bound was not used to make this pass.
+>
+> ## The second finding: the semantic channel cannot reach a memory older than the newest 500
+>
+> `VectorCandidates` orders by `created_at DESC` and cuts to `MaxCandidates`, so a search can only
+> return a memory among the newest 500 embedded rows of its scope. A memory older than that is not
+> ranked lower — it is not a candidate, and no similarity can bring it back. In the 10,000-row load
+> the window is `wp12-memory-09500..wp12-memory-09999` and `wp12-memory-00000` is unreachable.
+>
+> ADR-0014 rules on the index's COST ("A search is O(candidates) rather than O(log n), bounded by
+> `MaxCandidates`") and says nothing about the candidate WINDOW being the newest rows by recency.
+> This is a recall limit nothing documents. Whether it is acceptable is a **product decision** — the
+> alternatives are a non-recency ordering, a wider window, or the sqlite-vec adapter the port's V1
+> names — so it is recorded rather than changed. `TestWP12VectorCandidatesReachOnlyTheNewestRows`
+> asserts the CURRENT behaviour so the limit is a tested number rather than an unchecked
+> assumption.
+>
+> ## What is NOT measured, stated plainly
+>
+> **The React canvas's render cost at 1,000 nodes is not measured, and nothing in this repository
+> currently can.** It is a browser measurement, and the Playwright suite runs the canvas in BROWSER
+> mode where persistence is the legacy IndexedDB adapter rather than the Go core (ADR-BASE-004);
+> its own header says the desktop shell is not launched because "a Wails window cannot be driven
+> from a test runner". The benchmarks below support "the Go core's canvas reads and writes at 1,000
+> nodes and 2,000 edges are bounded" and NOT "the canvas renders 1,000 nodes smoothly".
 >
 > # 0m. WP-12 item 16: the dangerous legacy paths are gone or fail closed (2026-09-23)
 >

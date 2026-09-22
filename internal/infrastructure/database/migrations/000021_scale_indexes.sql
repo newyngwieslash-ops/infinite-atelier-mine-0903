@@ -1,0 +1,84 @@
+-- WP-12: three covering indexes for the reads that sorted the whole table.
+--
+-- # Why this migration exists, and what measured it
+--
+-- WP-12's scope item 4 asks for a 10k asset/Memory benchmark, and the benchmark found
+-- something rather than confirming something. `EXPLAIN QUERY PLAN` on three reads showed
+-- `USE TEMP B-TREE FOR ORDER BY`, which is SQLite saying it read every matching row and
+-- then sorted them:
+--
+--   MemoryRepository.VectorCandidates   (memory.go)    ~62 ms at 10k
+--   AssetRepository.ListAssets          (assets.go)    ~23 ms at 10k
+--   MemoryRepository.ListItems          (memory.go)    ~51 ms at 10k
+--
+-- against `AgentRepository.RecentMessages`, whose index DOES satisfy its sort, at 62 us.
+-- Same table size, three orders of magnitude, and the difference is entirely the index.
+--
+-- The decomposition is what makes the cause unambiguous: dropping `ORDER BY` from
+-- `VectorCandidates` took it from 62 ms to 0.5 ms, and the scoring of the 500 candidates
+-- that follows costs 0.2 ms. The read was the cost, not the arithmetic.
+--
+-- # Why the ORDER BY is the shape it is, and why the existing indexes cannot serve it
+--
+-- All three reads order by `created_at DESC, id DESC`. The `id DESC` is not decoration: it
+-- is the tiebreak that makes a page deterministic when two rows share a timestamp, which is
+-- the ordinary case for rows written in one transaction. The existing indexes on
+-- `memory_items` end at other columns — `idx_memory_items_scope` on
+-- `(scope_project, scope_episode, scope_agent, scope_key)` and
+-- `idx_memory_items_embedding` on `(scope_project, embedding_model, embedding_version)` —
+-- so SQLite uses one to FILTER and must then sort what it found.
+--
+-- An index whose LAST columns are the sort keys is what lets the same scan come out
+-- ordered. The leading columns below are the ones each read filters by, read from the
+-- queries rather than guessed:
+--
+--   VectorCandidates  WHERE scope_project/scope_episode/scope_agent/scope_key,
+--                     embedding_model, embedding_version, embedding_blob IS NOT NULL,
+--                     deleted_at = ''
+--   ListItems         WHERE the four scope columns and deleted_at = ''
+--   ListAssets        WHERE project_id, asset_type, status (all optional per filter)
+--
+-- `scope_key` is the column that carries the four scope parts as one value, and it is the
+-- LAST of the scope columns in the existing index, so a reader can follow the same order
+-- here without inventing a second convention.
+--
+-- # Forward only, and additive
+--
+-- Three CREATE INDEX statements and nothing else. No table, column, constraint or row is
+-- touched, so this migration cannot lose data. It does not replace any index DOMAIN_MODEL
+-- section 18 requires: that section lists a minimum, and these are added beside them.
+--
+-- Constraint of the migration runner: splitSQL splits the file on every semicolon
+-- character, comments included, so this file may not contain one outside a statement
+-- terminator. TestWP05SplitSQLCompatibility enforces it.
+
+-- The column order below is not a guess. Each index leads with the columns its read ALWAYS
+-- constrains, then `deleted_at` where the read constrains it, then the sort keys.
+--
+-- The FIRST version of this migration got that shape wrong, and the plan test caught it: two
+-- indexes were added that SQLite simply did not choose -- it kept the narrower existing ones
+-- and kept sorting. An index nobody uses costs a write on every insert and buys nothing.
+-- `EXPLAIN QUERY PLAN` is what told the two apart, which is why
+-- `TestWP12QueryPlansUseTheNewIndexes` asserts the PLAN rather than the timing: the timings
+-- barely moved.
+--
+-- `scope_project` leads rather than `scope_key`, because the reads constrain individual scope
+-- COLUMNS -- `scopeClauses` builds `scope_project = ?` and one clause per non-empty part -- and
+-- a planner matches an index to the columns it is given. The first draft assumed `scope_key`
+-- was the filter, and reading `scopeClauses` showed it is not.
+--
+-- The asset index carries `deleted_at` and NOT `status`, and that came from reading the query
+-- rather than from the section this file's first draft cited: `ListAssets` filters on
+-- `project_id`, `asset_type` (only when the caller asks) and `deleted_at`, and it does not
+-- mention `status` at all. An index whose middle column is one the query does not constrain
+-- stops serving the sort, which is what the plan test reported for the draft that had it.
+--
+-- Constraint of the migration runner: splitSQL splits the file on every semicolon character,
+-- comments included, so this file may not contain one outside a statement terminator.
+-- TestWP05SplitSQLCompatibility enforces it.
+
+CREATE INDEX idx_memory_items_project_deleted_created ON memory_items(scope_project, deleted_at, created_at DESC, id DESC);
+
+CREATE INDEX idx_memory_items_embedding_deleted_created ON memory_items(scope_project, embedding_model, embedding_version, deleted_at, created_at DESC, id DESC);
+
+CREATE INDEX idx_assets_project_deleted_created ON assets(project_id, deleted_at, created_at DESC, id DESC);

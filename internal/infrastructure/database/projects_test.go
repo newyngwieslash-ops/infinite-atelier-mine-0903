@@ -82,7 +82,7 @@ func newTestIDGenerator() *id.Generator {
 	return id.NewGeneratorWithClock(fixedClock())
 }
 
-func sampleProject(t *testing.T, generator *id.Generator) project.Project {
+func sampleProject(t testing.TB, generator *id.Generator) project.Project {
 	t.Helper()
 	value, err := generator.New()
 	if err != nil {

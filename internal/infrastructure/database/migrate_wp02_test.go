@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-func providerSecuritySQL(t *testing.T) []byte {
+func providerSecuritySQL(t testing.TB) []byte {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join("migrations", "000002_provider_security.sql"))
 	if err != nil {

@@ -13,7 +13,7 @@ import (
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/platform/id"
 )
 
-func migrationSQL(t *testing.T, name string) []byte {
+func migrationSQL(t testing.TB, name string) []byte {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join("migrations", name))
 	if err != nil {
@@ -22,13 +22,13 @@ func migrationSQL(t *testing.T, name string) []byte {
 	return data
 }
 
-func wp05SQL(t *testing.T, name string) []byte {
+func wp05SQL(t testing.TB, name string) []byte {
 	t.Helper()
 	return migrationSQL(t, name)
 }
 
 // wp05Migrations is the full migration set, at the head `wp05HeadVersion` states.
-func wp05Migrations(t *testing.T) fstest.MapFS {
+func wp05Migrations(t testing.TB) fstest.MapFS {
 	t.Helper()
 	return fstest.MapFS{
 		"000001_foundation.sql":                  {Data: foundationSQL(t)},
@@ -51,15 +51,23 @@ func wp05Migrations(t *testing.T) fstest.MapFS {
 		"000018_production.sql":                  {Data: wp05SQL(t, "000018_production.sql")},
 		"000019_memory_and_consistency.sql":      {Data: wp05SQL(t, "000019_memory_and_consistency.sql")},
 		"000020_media.sql":                       {Data: wp05SQL(t, "000020_media.sql")},
+		"000021_scale_indexes.sql":               {Data: wp05SQL(t, "000021_scale_indexes.sql")},
 	}
 }
 
 // wp05HeadVersion is the user_version the shared migration set reaches.
 //
 // The helper keeps its wp05 name because every test calls it by that name and
-// the set is the same set; only its head moves as migrations are added. It is 19
-// since WP-11 added the subtitle tracks and the episode export record.
-const wp05HeadVersion = 20
+// the set is the same set; only its head moves as migrations are added. It is 21
+// since WP-12 added the three covering indexes the scale benchmark found missing.
+//
+// THE LIST ABOVE AND THIS NUMBER MOVE TOGETHER, and forgetting one is silent: a migration
+// absent from the list is a migration every test database does not have, so a test that
+// asserts an index exists passes only if the index was added by hand. That is exactly how
+// this package's first index migration came to be measured against a database that did not
+// contain it — the plan test failed and the timing test showed no change, which is what
+// caught it.
+const wp05HeadVersion = 21
 
 // applyMigrationFileSplits runs one migration file the way the runner does:
 // splitSQL on the raw text, then execute each fragment in order. It returns the

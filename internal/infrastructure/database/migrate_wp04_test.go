@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-func legacyProjectFingerprintsSQL(t *testing.T) []byte {
+func legacyProjectFingerprintsSQL(t testing.TB) []byte {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join("migrations", "000005_legacy_project_fingerprints.sql"))
 	if err != nil {
@@ -20,7 +20,7 @@ func legacyProjectFingerprintsSQL(t *testing.T) []byte {
 	return data
 }
 
-func projectsCanvasSQL(t *testing.T) []byte {
+func projectsCanvasSQL(t testing.TB) []byte {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join("migrations", "000004_projects_canvas.sql"))
 	if err != nil {

@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-func jobsSQL(t *testing.T) []byte {
+func jobsSQL(t testing.TB) []byte {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join("migrations", "000003_jobs.sql"))
 	if err != nil {
