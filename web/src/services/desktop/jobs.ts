@@ -63,6 +63,22 @@ export function isDesktopJobBindingsAvailable(): boolean {
     );
 }
 
+/**
+ * isMediaJobSubmissionAvailable reports whether the two media job submissions
+ * are reachable.
+ *
+ * It is a separate probe from `isDesktopJobBindingsAvailable`, and the
+ * separation is deliberate: the required set there is what the Job Center
+ * needs, and adding a method to it would make an older build's whole queue
+ * surface read as unavailable. A build with ListJobs and no SubmitVideoJob can
+ * still show the queue; it simply cannot start a shot's video, and this says so
+ * on its own.
+ */
+export function isMediaJobSubmissionAvailable(): boolean {
+    const jobs = getDesktopWindow()?.go?.desktop?.JobsBinding;
+    return typeof jobs?.SubmitVideoJob === "function" && typeof jobs?.SubmitAudioJob === "function";
+}
+
 let jobsModule: Promise<typeof import("@/wailsjs/go/desktop/JobsBinding")> | undefined;
 
 async function loadJobsBinding() {
@@ -95,6 +111,40 @@ export async function submitImageJob(request: desktop.SubmitImageJobRequest): Pr
     if (!isDesktopJobBindingsAvailable()) throw new Error("desktop job bindings are unavailable");
     const { SubmitImageJob } = await loadJobsBinding();
     return SubmitImageJob(request);
+}
+
+/**
+ * submitVideoJob enqueues one shot's video generation.
+ *
+ * It lives here rather than in `media.ts` because it is a JobsBinding method:
+ * that module is the client for MediaBinding, and this module is the one place
+ * the webview learns whether the job surface exists. A video job is minutes of
+ * provider polling — ADR-0011 section 6's "媒体生成本身由 Job/Provider Service
+ * 执行，不让 LLM 阻塞等待大文件" — so the command only puts it on the queue and
+ * returns the row a section then polls.
+ *
+ * The returned DTO is the EXISTING job when an identical request was already
+ * submitted, so a double click produces one job rather than two.
+ */
+export async function submitVideoJob(request: desktop.SubmitVideoJobRequest): Promise<desktop.JobDTO> {
+    if (!isDesktopJobBindingsAvailable()) throw new Error("desktop job bindings are unavailable");
+    const { SubmitVideoJob } = await loadJobsBinding();
+    return SubmitVideoJob(request);
+}
+
+/**
+ * submitAudioJob enqueues one dialogue line's speech.
+ *
+ * The line is the job's entity, which is what AC-MEDIA-002's "audio linked to
+ * character/line" reads: the job names the line, and the line names the
+ * character. The text travels on the request because TTS is billed by the
+ * character and the bound on it belongs to the command, not to a runner's
+ * memory of a script.
+ */
+export async function submitAudioJob(request: desktop.SubmitAudioJobRequest): Promise<desktop.JobDTO> {
+    if (!isDesktopJobBindingsAvailable()) throw new Error("desktop job bindings are unavailable");
+    const { SubmitAudioJob } = await loadJobsBinding();
+    return SubmitAudioJob(request);
 }
 
 export async function cancelJobs(ids: string[]): Promise<number> {

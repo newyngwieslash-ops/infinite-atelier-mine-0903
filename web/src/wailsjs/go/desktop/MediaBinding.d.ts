@@ -27,3 +27,7 @@ export function ReadTimeline(arg1:desktop.TimelineRequest):Promise<desktop.Timel
 export function RunExport(arg1:desktop.RunExportRequest):Promise<desktop.ExportRecordDTO>;
 
 export function SaveExport(arg1:desktop.SaveExportRequest):Promise<desktop.SaveFileResultDTO>;
+
+export function SubmitExportForReview(arg1:desktop.SubmitExportForReviewRequest):Promise<desktop.ExportRecordDTO>;
+
+export function SubmitSubtitleTrackForReview(arg1:desktop.SubmitSubtitleTrackForReviewRequest):Promise<desktop.SubtitleTrackDTO>;

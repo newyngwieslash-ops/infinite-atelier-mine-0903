@@ -262,6 +262,31 @@ func (r *SubtitleRepository) ApproveTrack(ctx context.Context, trackID, episodeI
 	})
 }
 
+// MarkTrackUnderReview moves a draft track to review, which is the state an approval requires.
+//
+// It mirrors `ExportRepository.MarkUnderReview`, and the two exist for the same reason: the review is
+// a step a person takes before an approval, and an approval whose WHERE clause demands a status that
+// nothing writes is an approval nobody can reach.
+func (r *SubtitleRepository) MarkTrackUnderReview(ctx context.Context, trackID string) error {
+	conn := r.conn()
+	if conn == nil {
+		return media.StorageError("The subtitle store is unavailable.", nil)
+	}
+	result, err := conn.ExecContext(ctx,
+		`UPDATE subtitle_tracks SET status = 'under_review' WHERE id = ? AND status = 'draft'`, trackID)
+	if err != nil {
+		return media.StorageError("The subtitle track could not be moved to review.", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return media.StorageError("The subtitle track could not be moved to review.", err)
+	}
+	if affected == 0 {
+		return media.ConflictError("That subtitle track is not a draft, so it cannot be moved to review.")
+	}
+	return nil
+}
+
 // ReplaceCues rewrites a track's cues in one transaction.
 //
 // It is how an EDIT persists: AC-MEDIA-002 asks that a subtitle be editable, and an edit that

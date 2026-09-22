@@ -311,6 +311,23 @@ export { StoryboardTableSection } from "@/components/studio/storyboard-table-vie
 export type { StoryboardTableSectionProps } from "@/components/studio/storyboard-table-view";
 
 // ---------------------------------------------------------------------------
+// Media and export (WP-11)
+// ---------------------------------------------------------------------------
+
+// The three media sections, re-exported the way the production ones above are: the shell keeps a
+// single import surface, and each section lives in its own file because one section growing past a
+// file's worth of behaviour should be its own file. These three are the largest in the studio — the
+// timeline in particular owns subtitles, an export and the manifest — and keeping them out of here
+// is what the file-per-section rule is for.
+
+export { VideoSection } from "@/components/studio/video-view";
+export type { VideoSectionProps } from "@/components/studio/video-view";
+export { AudioSection } from "@/components/studio/audio-view";
+export type { AudioSectionProps } from "@/components/studio/audio-view";
+export { TimelineSection } from "@/components/studio/timeline-view";
+export type { TimelineSectionProps } from "@/components/studio/timeline-view";
+
+// ---------------------------------------------------------------------------
 // Assets
 // ---------------------------------------------------------------------------
 

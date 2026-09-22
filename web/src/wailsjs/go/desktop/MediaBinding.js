@@ -53,3 +53,11 @@ export function RunExport(arg1) {
 export function SaveExport(arg1) {
   return window['go']['desktop']['MediaBinding']['SaveExport'](arg1);
 }
+
+export function SubmitExportForReview(arg1) {
+  return window['go']['desktop']['MediaBinding']['SubmitExportForReview'](arg1);
+}
+
+export function SubmitSubtitleTrackForReview(arg1) {
+  return window['go']['desktop']['MediaBinding']['SubmitSubtitleTrackForReview'](arg1);
+}

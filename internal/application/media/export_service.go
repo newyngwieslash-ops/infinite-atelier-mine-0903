@@ -50,6 +50,20 @@ type ExportRepository interface {
 	MaxExportVersionNumber(ctx context.Context, episodeID string) (int, error)
 	CurrentApprovedExport(ctx context.Context, episodeID string) (ExportRecord, bool, error)
 	ApproveExport(ctx context.Context, exportID, episodeID, traceID string, at time.Time) error
+	// MarkUnderReview moves a draft export to the state an approval requires.
+	//
+	// IT IS ON THE PORT BECAUSE NOTHING ELSE COULD REACH THAT STATE. An earlier version of this
+	// interface omitted it while the repository had the method, so the only caller in the whole build
+	// was an acceptance test reaching past the service to the concrete repository — and `Approve`
+	// refuses anything that is not `under_review`. In a real build the approval was therefore
+	// UNREACHABLE: an export could be composed and listed and never approved, with the UI's only clue
+	// a conflict message about a status nothing could change. An independent review found it while
+	// wiring the approval control.
+	//
+	// The review is separate from the approval rather than folded into it because they are two acts:
+	// a draft becomes a candidate for release, and then a person puts it in force. Folding them would
+	// let the approve command move a row nobody had looked at.
+	MarkUnderReview(ctx context.Context, exportID string) error
 }
 
 // ExportRecord is one row of `episode_exports`.
@@ -463,6 +477,33 @@ func (s *ExportService) ExportRecord(ctx context.Context, id string) (ExportReco
 		return ExportRecord{}, NotAvailableError("No export service is configured.")
 	}
 	return s.exports.GetExport(ctx, strings.TrimSpace(id))
+}
+
+// SubmitForReview moves a draft export to the state an approval requires.
+//
+// # Why this is a command rather than part of Approve
+//
+// `ApproveExport` refuses a row that is not `under_review`, and before this method nothing in the
+// build could put one there — see the port's comment. The two acts are kept separate because they
+// are a person's two decisions: this one says "I am asking for this to be reviewed", and the
+// approval says "I have reviewed it". A command that did both would let a caller approve an export
+// nobody had looked at, which is the shape every other version family in this build avoids by
+// refusing an approval whose expected status is wrong.
+func (s *ExportService) SubmitForReview(ctx context.Context, exportID, episodeID string) (ExportRecord, error) {
+	if s == nil || s.exports == nil {
+		return ExportRecord{}, NotAvailableError("No export service is configured.")
+	}
+	record, err := s.exports.GetExport(ctx, strings.TrimSpace(exportID))
+	if err != nil {
+		return ExportRecord{}, err
+	}
+	if named := strings.TrimSpace(episodeID); named != "" && record.EpisodeID != named {
+		return ExportRecord{}, InvalidError("That export belongs to a different episode.")
+	}
+	if err := s.exports.MarkUnderReview(ctx, record.ID); err != nil {
+		return ExportRecord{}, err
+	}
+	return s.exports.GetExport(ctx, record.ID)
 }
 
 // Approve puts an export in force.

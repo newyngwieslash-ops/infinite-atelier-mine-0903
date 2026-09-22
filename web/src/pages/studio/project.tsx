@@ -8,7 +8,7 @@ import { StudioSectionNav } from "@/components/studio/studio-section-nav";
 import { StudioEmptySection } from "@/components/studio/studio-empty-section";
 import { AgentCenterSection } from "@/components/studio/agent-center";
 import { MemoryCenterSection } from "@/components/studio/memory-center";
-import { AssetsSection, DirectorSection, OverviewSection, QualitySection, ScriptSection, SourceSection, StoryboardCanvasSection, StoryboardTableSection, StoryGraphSection, getProjectName, getProjectSettings, loadProjectRules } from "@/pages/studio/sections";
+import { AssetsSection, AudioSection, DirectorSection, OverviewSection, QualitySection, ScriptSection, SourceSection, StoryboardCanvasSection, StoryboardTableSection, StoryGraphSection, TimelineSection, VideoSection, getProjectName, getProjectSettings, loadProjectRules } from "@/pages/studio/sections";
 import { isDramaBindingsAvailable, listAssets, listEpisodes, listOpenStaleMarks, listSourceDocuments, listWorkflowRuns } from "@/services/desktop/drama";
 import { STUDIO_SECTIONS, useStudioStore, type StudioSection } from "@/stores/use-studio-store";
 import type { desktop } from "@/wailsjs/go/models";
@@ -353,6 +353,40 @@ function SectionBody(props: SectionBodyProps) {
             );
         case "storyboard-canvas":
             return <StoryboardCanvasSection projectId={projectId} />;
+        // The three media sections take the episode props the same way the production sections do,
+        // because all five follow one episode's artifacts and share the shell's episode selection:
+        // `setActiveEpisode` is what moves them together.
+        case "video":
+            return (
+                <VideoSection
+                    projectId={projectId}
+                    episodes={props.episodes}
+                    activeEpisodeId={props.activeEpisodeId}
+                    onSelectEpisode={(episodeId) => useStudioStore.getState().setActiveEpisode(episodeId)}
+                    onChanged={props.onDramaChanged}
+                />
+            );
+        case "audio":
+            return (
+                <AudioSection
+                    projectId={projectId}
+                    episodes={props.episodes}
+                    activeEpisodeId={props.activeEpisodeId}
+                    onSelectEpisode={(episodeId) => useStudioStore.getState().setActiveEpisode(episodeId)}
+                    onChanged={props.onDramaChanged}
+                />
+            );
+        case "timeline":
+            // No `projectId`: the timeline's own commands are episode-scoped, and a prop it could only
+            // ignore would be worse than the two sibling cases above that do take one.
+            return (
+                <TimelineSection
+                    episodes={props.episodes}
+                    activeEpisodeId={props.activeEpisodeId}
+                    onSelectEpisode={(episodeId) => useStudioStore.getState().setActiveEpisode(episodeId)}
+                    onChanged={props.onDramaChanged}
+                />
+            );
         case "quality":
             return (
                     <QualitySection

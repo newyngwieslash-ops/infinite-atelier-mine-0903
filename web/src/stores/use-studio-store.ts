@@ -135,9 +135,13 @@ export const STUDIO_SECTIONS: StudioSectionSpec[] = [
     { id: "director", titleKey: "studio.sections.director.title", descriptionKey: "studio.sections.director.description", available: true, workPackage: "WP-09" },
     { id: "storyboard-table", titleKey: "studio.sections.storyboardTable.title", descriptionKey: "studio.sections.storyboardTable.description", available: true, workPackage: "WP-09" },
     { id: "storyboard-canvas", titleKey: "studio.sections.storyboardCanvas.title", descriptionKey: "studio.sections.storyboardCanvas.description", available: true, workPackage: "WP-05" },
-    { id: "video", titleKey: "studio.sections.video.title", descriptionKey: "studio.sections.video.description", available: false, workPackage: "WP-11" },
-    { id: "audio", titleKey: "studio.sections.audio.title", descriptionKey: "studio.sections.audio.description", available: false, workPackage: "WP-11" },
-    { id: "timeline", titleKey: "studio.sections.timeline.title", descriptionKey: "studio.sections.timeline.description", available: false, workPackage: "WP-11" },
+    // WP-11 built the three media sections: the shots a video is generated for, the audio a
+    // dialogue line's speech lands in, and the timeline the episode is assembled and exported
+    // from. Marking them available is the same act as adding the cases in the shell's switch,
+    // and the e2e suite fails if the two disagree.
+    { id: "video", titleKey: "studio.sections.video.title", descriptionKey: "studio.sections.video.description", available: true, workPackage: "WP-11" },
+    { id: "audio", titleKey: "studio.sections.audio.title", descriptionKey: "studio.sections.audio.description", available: true, workPackage: "WP-11" },
+    { id: "timeline", titleKey: "studio.sections.timeline.title", descriptionKey: "studio.sections.timeline.description", available: true, workPackage: "WP-11" },
     { id: "quality", titleKey: "studio.sections.quality.title", descriptionKey: "studio.sections.quality.description", available: true, workPackage: "WP-05" },
     // The Agent Center is WP-07's surface: the runs the three-layer runtime produced, with
     // their messages and tool calls, and the inventory of agents this build can run.

@@ -22,6 +22,15 @@ type SubtitleRepository interface {
 	MaxTrackVersionNumber(ctx context.Context, episodeID string) (int, error)
 	CurrentApprovedTrack(ctx context.Context, episodeID string) (domainmedia.Track, bool, error)
 	ApproveTrack(ctx context.Context, trackID, episodeID, traceID string, at time.Time) error
+	// MarkTrackUnderReview moves a draft track to the state an approval requires.
+	//
+	// It is on the port for the reason the export repository's own `MarkUnderReview` is: `ApproveTrack`
+	// refuses a row that is not `under_review`, and an earlier version of this build had NO path that
+	// wrote that status for a subtitle track at all — the value lived in the schema's CHECK and in the
+	// approval's WHERE clause and nowhere else. A user could draft a track, edit it, and never approve
+	// it, with the only clue a conflict message about a status nothing could reach. An independent
+	// review found it while wiring the review control.
+	MarkTrackUnderReview(ctx context.Context, trackID string) error
 	// ReplaceCues rewrites a track's cues in one transaction, which is how an edit persists.
 	ReplaceCues(ctx context.Context, trackID string, cues []domainmedia.Cue) error
 }
@@ -434,6 +443,33 @@ func (s *SubtitleService) Export(ctx context.Context, request SubtitleExportRequ
 		return "", InvalidError("That track has no cues, so there is nothing to export.")
 	}
 	return domainmedia.Render(cues, request.Format)
+}
+
+// SubmitForReview moves a draft track to the state an approval requires.
+//
+// # Why this is a command rather than part of Approve
+//
+// `ApproveTrack` refuses a row that is not `under_review`, and before this method nothing in the
+// build could put one there for a subtitle track — see the port's comment. The two acts are kept
+// separate because they are a person's two decisions: this one asks for the track to be reviewed —
+// typically after its cues were edited — and the approval says it was. A command that did both would
+// approve a track nobody had read, which is the shape the four version families avoid by refusing an
+// approval whose expected status is wrong.
+func (s *SubtitleService) SubmitForReview(ctx context.Context, trackID, episodeID string) (domainmedia.Track, error) {
+	if !s.Available() {
+		return domainmedia.Track{}, NotAvailableError("No subtitle store is configured.")
+	}
+	track, err := s.tracks.GetTrack(ctx, strings.TrimSpace(trackID))
+	if err != nil {
+		return domainmedia.Track{}, err
+	}
+	if named := strings.TrimSpace(episodeID); named != "" && track.EpisodeID != named {
+		return domainmedia.Track{}, InvalidError("That subtitle track belongs to a different episode.")
+	}
+	if err := s.tracks.MarkTrackUnderReview(ctx, track.ID); err != nil {
+		return domainmedia.Track{}, err
+	}
+	return s.tracks.GetTrack(ctx, track.ID)
 }
 
 // Approve puts a track in force.

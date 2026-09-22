@@ -191,9 +191,15 @@ func (h *mediaHarness) draftAndApprove(t *testing.T, ctx context.Context, lineID
 	if err := h.subtitles.CreateTrackWithCues(ctx, track, cues); err != nil {
 		t.Fatalf("CreateTrackWithCues: %v", err)
 	}
-	if _, err := h.db.ExecContext(ctx,
-		`UPDATE subtitle_tracks SET status = 'under_review' WHERE id = ?`, trackID); err != nil {
-		t.Fatal(err)
+	// THE STATUS MOVES THROUGH THE SERVICE, not through a statement. The first version of this fixture
+	// ran `UPDATE subtitle_tracks SET status = 'under_review'` directly, which was the ONLY way to
+	// reach the state an approval requires — and that was the defect rather than a shortcut: no
+	// production path wrote it, so a user could draft a track, edit it, and never approve it. The
+	// service gained `SubmitForReview` for exactly that reason, and this fixture now exercises THAT
+	// path rather than a bypass around it. A fixture that reached past the service would keep passing
+	// after the service broke.
+	if _, err := h.subtitle.SubmitForReview(ctx, trackID, "drama-episode"); err != nil {
+		t.Fatalf("SubmitForReview: %v", err)
 	}
 	if _, err := h.subtitle.Approve(ctx, trackID, "drama-episode", "trace-subs"); err != nil {
 		t.Fatalf("Approve: %v", err)

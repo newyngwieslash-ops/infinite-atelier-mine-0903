@@ -50,16 +50,29 @@ const SECTION_IDS = [
     "memory",
 ] as const;
 
-/** Sections whose content is not built yet, with the package that owns each. */
-const UNAVAILABLE_SECTIONS: Record<string, string> = {
-    // WP-09 built `director` and `storyboard-table`, so the three that remain are the
-    // media and export sections WP-11 owns. The list is what the shell renders against,
-    // so removing an entry here is the same act as marking the section available — and the
-    // test fails if the two disagree.
-    video: "WP-11",
-    audio: "WP-11",
-    timeline: "WP-11",
-};
+/**
+ * Sections whose content is not built yet, with the package that owns each.
+ *
+ * CHANGED BY WP-11: this map held `video`, `audio` and `timeline` — the three media and export
+ * sections — and WP-11 built all three, so it is now EMPTY. It stays as a named map rather than
+ * being deleted because the count assertions below are phrased against it, and an empty map is the
+ * honest statement: every section the shell lists is backed by real commands.
+ *
+ * The placeholder component (`StudioEmptySection`) is still where it was and is still reachable from
+ * the shell's `default:` branch, so this map is also what would carry a section again if one were
+ * ever added to `STUDIO_SECTIONS` without a body.
+ */
+const UNAVAILABLE_SECTIONS: Record<string, string> = {};
+
+/**
+ * The three sections WP-11 built, each with the test id of the body it now renders.
+ *
+ * In a browser session the SHELL answers for an available section before reaching any body — it
+ * renders the no-core notice — so a browser-mode run cannot observe these roots. They are named here
+ * anyway because the run asserts the shell's answer is the core-backed one rather than the
+ * placeholder, and that distinction is only meaningful with the sections listed.
+ */
+const WP11_SECTIONS = ["video", "audio", "timeline"] as const;
 
 test.describe("the drama studio without a core", () => {
     test("the project list renders its heading and the desktop-only notice", async ({ page }) => {
@@ -122,8 +135,21 @@ test.describe("the drama studio without a core", () => {
         const availableCount = await nav.locator("[data-section-available='true']").count();
         expect(availableCount).toBe(SECTION_IDS.length - Object.keys(UNAVAILABLE_SECTIONS).length);
 
-        // The honest empty state is verified rather than assumed: each unbuilt
-        // section must say which package owns it when it is opened.
+        // WP-11 made `video`, `audio` and `timeline` real, so the honest assertion is that they are
+        // marked available and that opening one does NOT reach the placeholder. The old form of this
+        // test ran the loop below over those three; a loop over an empty map would assert nothing, so
+        // the replacement states the new fact directly instead of leaving a vacuous loop behind.
+        for (const id of WP11_SECTIONS) {
+            await expect(nav.locator(`[data-section='${id}']`)).toHaveAttribute("data-section-available", "true");
+            await nav.locator(`[data-section='${id}']`).click();
+            await expect(page.locator(`[data-active-section='${id}']`)).toBeVisible();
+            await expect(page.locator("[data-empty-section]")).toHaveCount(0);
+        }
+
+        // The honest empty state is verified rather than assumed: each unbuilt section must say
+        // which package owns it when it is opened. This runs over whatever the map holds, which is
+        // nothing at present — and the loop body is what keeps the check in place if a future
+        // section is added unavailable.
         for (const [id, workPackage] of Object.entries(UNAVAILABLE_SECTIONS)) {
             const entry = nav.locator(`[data-section='${id}']`);
             await expect(entry).toHaveAttribute("data-section-available", "false");
@@ -164,11 +190,19 @@ test.describe("the drama studio without a core", () => {
         // pretend the project has none.
         await nav.locator("[data-section='script']").click();
         await expect(page.locator("[data-testid='studio-section-no-core']")).toBeVisible();
-        // A section that needs no query — the unbuilt ones — still renders its
-        // empty state in the same session, so the two answers stay distinct. WP-09 built
-        // `director`, so the section that answers this way is now one of WP-11's.
+        // CHANGED BY WP-11: this case used to click `video` and assert the PLACEHOLDER, because
+        // `video` was one of WP-11's unbuilt sections. WP-11 built all three, so a media section now
+        // answers like every other core-backed one — and `video` is the section that proves it, since
+        // a media read with no core is exactly the case that must not render as "this episode has no
+        // shots". The placeholder assertion moved to the available-sections check above, where it now
+        // asserts the OPPOSITE (no placeholder) for these three ids.
         await nav.locator("[data-section='video']").click();
-        await expect(page.locator("[data-empty-section]")).toBeVisible();
+        await expect(page.locator("[data-testid='studio-section-no-core']")).toBeVisible();
+        await expect(page.locator("[data-empty-section]")).toHaveCount(0);
+        await nav.locator("[data-section='audio']").click();
+        await expect(page.locator("[data-testid='studio-section-no-core']")).toBeVisible();
+        await nav.locator("[data-section='timeline']").click();
+        await expect(page.locator("[data-testid='studio-section-no-core']")).toBeVisible();
         // And `director`, which WP-09 built, answers like the other core-backed sections
         // rather than claiming no query exists: the shell's no-core notice is the honest
         // answer for a section whose rows come from Go.

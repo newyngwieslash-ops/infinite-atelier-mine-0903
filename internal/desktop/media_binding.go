@@ -438,6 +438,50 @@ func (b *MediaBinding) ApproveSubtitleTrack(request ApproveSubtitleTrackRequest)
 	return toSubtitleTrackDTO(track), nil
 }
 
+// SubmitSubtitleTrackForReviewRequest moves a draft track to the state an approval requires.
+type SubmitSubtitleTrackForReviewRequest struct {
+	TrackID   string `json:"trackId"`
+	EpisodeID string `json:"episodeId,omitempty"`
+}
+
+// SubmitSubtitleTrackForReview moves a draft track to review.
+//
+// It is exposed because without it `ApproveSubtitleTrack` can never succeed: the approval refuses a
+// track that is not `under_review`, and nothing else in the build writes that status. A section that
+// offered only the approve button would be offering a control whose every press produced a conflict
+// message about a state the user could not reach — the "interface with no real path" shape AGENTS
+// section 12 refuses, arriving at the UI instead of in the code.
+func (b *MediaBinding) SubmitSubtitleTrackForReview(request SubmitSubtitleTrackForReviewRequest) (SubtitleTrackDTO, error) {
+	service := b.subtitleService()
+	if service == nil {
+		return SubtitleTrackDTO{}, MediaBindingUnavailable()
+	}
+	track, err := service.SubmitForReview(b.context(), request.TrackID, request.EpisodeID)
+	if err != nil {
+		return SubtitleTrackDTO{}, toDramaError(err)
+	}
+	return toSubtitleTrackDTO(track), nil
+}
+
+// SubmitExportForReviewRequest moves a draft export to the state an approval requires.
+type SubmitExportForReviewRequest struct {
+	ExportID  string `json:"exportId"`
+	EpisodeID string `json:"episodeId,omitempty"`
+}
+
+// SubmitExportForReview moves a draft export to review, for the reason the subtitle one exists.
+func (b *MediaBinding) SubmitExportForReview(request SubmitExportForReviewRequest) (ExportRecordDTO, error) {
+	service := b.exportService()
+	if service == nil {
+		return ExportRecordDTO{}, MediaBindingUnavailable()
+	}
+	record, err := service.SubmitForReview(b.context(), request.ExportID, request.EpisodeID)
+	if err != nil {
+		return ExportRecordDTO{}, toDramaError(err)
+	}
+	return toExportRecordDTO(record), nil
+}
+
 // RunExportRequest asks for one episode export.
 type RunExportRequest struct {
 	EpisodeID      string `json:"episodeId"`

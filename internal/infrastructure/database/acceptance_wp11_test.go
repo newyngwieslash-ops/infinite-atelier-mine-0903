@@ -348,8 +348,19 @@ func TestACMEDIA003AnExportIsPlayableAndTraceable(t *testing.T) {
 	}
 
 	// --- approve: the export moves through review, as the gate does.
-	if err := harness.exports.MarkUnderReview(ctx, record.ID); err != nil {
-		t.Fatalf("MarkUnderReview: %v", err)
+	//
+	// THROUGH THE SERVICE, which is the correction an independent review forced. This line used to
+	// call `harness.exports.MarkUnderReview` — the concrete repository, reached past the service —
+	// and that was the only caller in the whole build. `ApproveExport` refuses a row that is not
+	// `under_review`, so in a real build the approval was UNREACHABLE while this test passed: it was
+	// proving a bypass rather than a path. `ExportService.SubmitForReview` now exists and this walks
+	// the same two steps a user's two presses would.
+	submitted, err := harness.service.SubmitForReview(ctx, record.ID, "drama-episode")
+	if err != nil {
+		t.Fatalf("SubmitForReview: %v", err)
+	}
+	if submitted.Status != "under_review" {
+		t.Fatalf("the submitted export is %q, want under_review", submitted.Status)
 	}
 	approved, err := harness.service.Approve(ctx, record.ID, "drama-episode", "trace-1")
 	if err != nil {

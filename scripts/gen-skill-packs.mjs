@@ -66,6 +66,14 @@ const PACKS = [
             { key: "production.supervision.director_plan", layer: "supervision", skill: "supervision/director_plan.md", input: "schemas/agent/supervision-request.v1.json", output: "schemas/agent/review-report.v1.json", maxToolCalls: 14, timeoutSeconds: 300, tools: ["script.read_script_version", "script.read_shots", "storyboard.read_director_plan"] },
             { key: "production.supervision.storyboard_table", layer: "supervision", skill: "supervision/storyboard_table.md", input: "schemas/agent/supervision-request.v1.json", output: "schemas/agent/review-report.v1.json", maxToolCalls: 16, timeoutSeconds: 300, tools: ["storyboard.read_storyboard", "script.read_script_version", "script.read_shots", "asset.read_approved_assets", "asset.read_gap_report"] },
             { key: "production.supervision.storyboard_panel", layer: "supervision", skill: "supervision/storyboard_panel.md", input: "schemas/agent/supervision-request.v1.json", output: "schemas/agent/review-report.v1.json", maxToolCalls: 16, timeoutSeconds: 300, tools: ["storyboard.read_storyboard", "script.read_shots", "asset.read_approved_assets", "asset.read_gap_report"] },
+            // WP-11's two, and the inventory test in `internal/application/agentassembly` carries the
+            // full reasoning: ROADMAP item 12 asks for a Final Supervisor, FR-100 names the
+            // `final_episode` stage, and AGENT_CONTRACTS section 11.4 divides that ruleset between
+            // deterministic code and a model. The two media tools are what make the division possible —
+            // the capability read is what lets the agent say a machine cannot compose rather than
+            // writing a recipe nobody can run, and the timeline read is what it writes the recipe FROM.
+            { key: "production.execution.final_episode", layer: "execution", skill: "execution/final_episode.md", input: "schemas/agent/execution-request.v1.json", output: "schemas/agent/execution-result.v1.json", maxToolCalls: 8, timeoutSeconds: 180, tools: ["storyboard.read_storyboard", "script.read_script_version", "asset.read_approved_assets", "media.read_capability", "media.read_timeline"] },
+            { key: "production.supervision.final_episode", layer: "supervision", skill: "supervision/final_episode.md", input: "schemas/agent/supervision-request.v1.json", output: "schemas/agent/review-report.v1.json", maxToolCalls: 10, timeoutSeconds: 240, tools: ["media.read_timeline", "media.read_capability", "storyboard.read_storyboard", "script.read_script_version", "asset.read_approved_assets"] },
         ],
     },
 ];

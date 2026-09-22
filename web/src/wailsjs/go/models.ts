@@ -4949,6 +4949,20 @@ export namespace desktop {
 	        this.priority = source["priority"];
 	    }
 	}
+	export class SubmitExportForReviewRequest {
+	    exportId: string;
+	    episodeId?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SubmitExportForReviewRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.exportId = source["exportId"];
+	        this.episodeId = source["episodeId"];
+	    }
+	}
 	export class SubmitGateDecisionRequest {
 	    workflowRunId: string;
 	    stageRunId?: string;
@@ -5013,6 +5027,20 @@ export namespace desktop {
 	        this.mask = source["mask"];
 	        this.maskMime = source["maskMime"];
 	        this.priority = source["priority"];
+	    }
+	}
+	export class SubmitSubtitleTrackForReviewRequest {
+	    trackId: string;
+	    episodeId?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SubmitSubtitleTrackForReviewRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.trackId = source["trackId"];
+	        this.episodeId = source["episodeId"];
 	    }
 	}
 	export class SubmitVideoJobRequest {
