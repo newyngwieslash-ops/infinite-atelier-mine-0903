@@ -34,6 +34,10 @@ export function RebuildMemoryEmbedding(arg1) {
   return window['go']['desktop']['MemoryBinding']['RebuildMemoryEmbedding'](arg1);
 }
 
+export function RememberFact(arg1) {
+  return window['go']['desktop']['MemoryBinding']['RememberFact'](arg1);
+}
+
 export function SetMemoryLocked(arg1) {
   return window['go']['desktop']['MemoryBinding']['SetMemoryLocked'](arg1);
 }

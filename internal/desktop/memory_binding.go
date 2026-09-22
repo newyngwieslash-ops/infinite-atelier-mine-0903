@@ -266,6 +266,10 @@ func (b *MemoryBinding) ListMemoryEntityLinks(memoryID string) ([]MemoryEntityLi
 //
 // This is AC-MEM-004's "UI 可跳原始消息": the source rows come back with the memory's own role,
 // agent, time and transcript citation, so a reader can follow a summary line to the turn behind it.
+// The JUMP itself is the memory section's: it navigates to the source memory when a source row is
+// clicked. This method's half of the criterion is the data a jump needs, and it is what the section
+// renders.
+//
 // A source whose row is gone comes back marked rather than skipped, because a summary whose sources
 // do not add up is exactly what the criterion's deletion policy has to be visible in.
 func (b *MemoryBinding) ListSummarySources(summaryID string) ([]MemorySummarySourceDTO, error) {
@@ -365,6 +369,70 @@ func (b *MemoryBinding) SetMemoryLocked(request MemoryPinRequest) (bool, error) 
 		return false, toDramaError(err)
 	}
 	return changed, nil
+}
+
+// RememberFactRequest saves something the user states as a semantic memory.
+type RememberFactRequest struct {
+	ProjectID string `json:"projectId"`
+	// EpisodeID is optional: a preference about the whole project has no episode.
+	EpisodeID string `json:"episodeId,omitempty"`
+	Content   string `json:"content"`
+	// Importance is what keeps a fact in the recall after the conversation has moved on. Zero takes
+	// the domain's default rather than meaning "unimportant", which is the same convention every
+	// other caller uses.
+	Importance float64 `json:"importance,omitempty"`
+	// EntityType and EntityID link the fact to what it is about. Both are optional; a preference
+	// like "keep the dialogue terse" is about the project rather than about an entity.
+	EntityType string `json:"entityType,omitempty"`
+	EntityID   string `json:"entityId,omitempty"`
+	// CreatedByID names the user who stated it, so the fact's citation is a person.
+	CreatedByID string `json:"createdById,omitempty"`
+	// Embed also embeds it, so it becomes searchable by meaning when a provider is configured.
+	Embed bool `json:"embed,omitempty"`
+}
+
+// RememberFact saves a fact or preference the USER established.
+//
+// # Why this binding had to exist
+//
+// `RememberFact` is the only writer of `memory.TypeSemantic`, and an independent review found it had
+// NO production caller at all: the desktop binding exposed eleven methods and not one of them wrote a
+// memory, so in a composed build the semantic type was unreachable, FR-120's semantic channel could
+// only ever be empty, and the facts channel's threshold exception — which AC-MEM-003 grades — could
+// never fire, because nothing could set `locked` and `importance` on a row that did not exist.
+//
+// That is the "declared but unreachable" defect this repository's reviews keep finding, and the fix
+// is the caller rather than the declaration.
+//
+// # Why the user is the only writer
+//
+// AGENT_CONTRACTS section 12.4 lists what must not be promoted automatically — unapproved candidates,
+// supervisor suggestions, agent guesses, rejected versions, provider error text — and every item on
+// that list is something a MODEL produces. The strongest way to keep them out is for the semantic
+// write path to have no agent-facing surface, which is why the agent tool table carries no memory
+// write tool and this binding is the only caller.
+func (b *MemoryBinding) RememberFact(request RememberFactRequest) (MemoryDTO, error) {
+	service := b.memoryService()
+	if service == nil {
+		return MemoryDTO{}, MemoryBindingUnavailable()
+	}
+	if strings.TrimSpace(request.ProjectID) == "" || strings.TrimSpace(request.Content) == "" {
+		return MemoryDTO{}, bindingInvalidInput()
+	}
+	item, err := service.RememberFact(b.context(), appmemory.RememberFactRequest{
+		Scope: appmemory.ScopeFor(strings.TrimSpace(request.ProjectID),
+			strings.TrimSpace(request.EpisodeID), ""),
+		Content:     request.Content,
+		Importance:  request.Importance,
+		EntityType:  strings.TrimSpace(request.EntityType),
+		EntityID:    strings.TrimSpace(request.EntityID),
+		CreatedByID: strings.TrimSpace(request.CreatedByID),
+		Embed:       request.Embed,
+	})
+	if err != nil {
+		return MemoryDTO{}, toDramaError(err)
+	}
+	return toMemoryDTO(item), nil
 }
 
 // MemoryLinkRequest attaches a memory to a domain entity.

@@ -911,6 +911,7 @@ func (r *Runtime) callTool(ctx context.Context, runID string, spec agent.Spec, i
 		EpisodeID:     invocation.EpisodeID,
 		WorkflowRunID: invocation.WorkflowRunID,
 		StageRunID:    invocation.StageRunID,
+		AgentKey:      spec.Key,
 		AgentRunID:    runID,
 		Arguments:     request.Arguments,
 	})

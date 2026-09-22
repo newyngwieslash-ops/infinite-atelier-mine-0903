@@ -335,11 +335,12 @@ func (s *Service) RunSupervision(ctx context.Context, request SupervisionRequest
 	// dedupes on (rule, entity, field) and keeps the more severe, which is what makes the report's
 	// `source` marks a partition rather than an overlap.
 	merged := MergeIssues(deterministic, issues)
-	passed := report.Passed && len(consistency.Blockers(deterministic)) == 0
-	severity := report.Severity
-	if worst := consistency.WorstSeverity(deterministic); severityRank(worst) > severityRank(severity) {
-		severity = worst
-	}
+	// The verdict and the severity come from FUNCTIONS rather than from expressions written here, so
+	// the test that grades them calls the same code the pipeline does. A rule stated twice — once in
+	// the pipeline and once in a test that copies it — is a rule that can drift without either side
+	// noticing, which is the defect this repository's reviews keep finding in other shapes.
+	passed := ReviewPassed(report.Passed, deterministic)
+	severity := ReportSeverity(report.Severity, deterministic)
 	if !passed && report.Passed && strings.TrimSpace(report.Summary) != "" {
 		// The summary SAYS the model was happy and the report says otherwise, and a reader deserves
 		// to know which findings turned it. Appending rather than replacing keeps the model's own
@@ -758,6 +759,37 @@ func stageInput(request StageRequest) string {
 		return "{}"
 	}
 	return string(encoded)
+}
+
+// ReviewPassed decides whether a reviewed attempt passes.
+//
+// It is one function because two callers need the same answer and neither may have a second opinion:
+// the merge, which records the report, and the batch gate, which decides whether a board may go to
+// image generation. The rule is that the supervisor's verdict is NECESSARY but not sufficient — a
+// model that looked at a board and said it was fine cannot pass a stage whose rows cite a superseded
+// costume version, and a code rule that found nothing cannot rescue a model that reported a problem.
+//
+// An independent mutation review found this expression unprotected: replacing it with `report.Passed`
+// left every test green, because nothing composed a checker into a pipeline. `TestABlockingFinding-
+// OverrulesAHappySupervisor` now calls this function with the four combinations that decide it.
+func ReviewPassed(supervisorPassed bool, findings []consistency.Finding) bool {
+	if !supervisorPassed {
+		return false
+	}
+	return len(consistency.Blockers(findings)) == 0
+}
+
+// ReportSeverity is the severity a report carries: the worse of the supervisor's and the code's.
+//
+// Worse rather than the supervisor's alone, because a report whose severity is "minor" while it
+// carries a critical finding would understate what a reader has to deal with — and the display is the
+// only place the difference shows, since the verdict is ReviewPassed's.
+func ReportSeverity(supervisorSeverity workflow.Severity, findings []consistency.Finding) workflow.Severity {
+	worst := consistency.WorstSeverity(findings)
+	if severityRank(worst) > severityRank(supervisorSeverity) {
+		return worst
+	}
+	return supervisorSeverity
 }
 
 // MergeIssues combines the deterministic findings with the supervisor's.

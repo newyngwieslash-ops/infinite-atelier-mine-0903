@@ -62,6 +62,17 @@ type ToolRequest struct {
 	// workflow.
 	WorkflowRunID string
 	StageRunID    string
+	// AgentKey is the agent asking, which is the run's own key from the registry.
+	//
+	// It is here because a memory's scope is six parts and one of them is the AGENT: DOMAIN_MODEL
+	// section 14.4 makes the agent part of what a scope IS, so a recall that did not know which
+	// agent was asking could only span every agent's turns in the episode. The memory tool passed an
+	// empty key for that reason until an independent review pointed out that this made one agent's
+	// history reachable from another's.
+	//
+	// The runtime fills it from the spec it looked up, so a handler cannot invent one: the run's key
+	// is what the registry resolved, not what a model asked for.
+	AgentKey string
 	// AgentRunID is the agent run that asked for this call.
 	//
 	// It is separate from StageRunID because the two answer different questions and a

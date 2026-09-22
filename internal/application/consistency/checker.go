@@ -139,6 +139,7 @@ func (c *Checker) CheckStoryboard(ctx context.Context, storyboardVersionID strin
 	findings = append(findings, c.checkAssetApproval(ctx, items)...)
 	findings = append(findings, c.checkCostumeContinuity(ctx, version, items)...)
 	findings = append(findings, c.checkPropContinuity(ctx, version, items)...)
+	findings = append(findings, c.checkLocationContinuity(ctx, version, items)...)
 	return consistency.Sort(consistency.Dedupe(findings)), nil
 }
 
@@ -511,6 +512,113 @@ func (c *Checker) checkPropContinuity(ctx context.Context, version storyboard.St
 		}
 	}
 	return findings
+}
+
+// checkLocationContinuity is scope item 14's location clause.
+//
+// # The rule, and why it is two rules in one
+//
+// ROADMAP item 14 lists four continuity families — character, costume, prop, location — and the
+// location one has two halves, each of which is a different kind of claim:
+//
+//   - ROWS OF ONE SCENE MUST AGREE. A board whose rows for one scene cite two different locations is
+//     a board that will generate two places for one conversation. The check reads each row's
+//     location usage and compares them within the scene the row's shot belongs to.
+//   - A CITED LOCATION MUST EXISTS AND BE APPROVED. That half is already `checkAssetApproval`'s, and
+//     it is not repeated here: a rule that reported the same fault twice would make the merge's
+//     dedupe look like it was working when it was only hiding a duplicate.
+//
+// # Why the first half is a real check rather than a tautology
+//
+// A scene's location is not a column on the scene: `scenes.location_entity_id` exists and is often
+// empty, while the location a picture uses arrives as an asset usage on the row. So the row is where
+// the answer lives, and disagreement between two rows of one scene is a mistake nothing else would
+// catch — the coverage rule counts rows, the approval rule checks versions, and neither looks across
+// rows at what they depicted.
+//
+// # Why it stays silent when it finds nothing to compare
+//
+// A board with no location usages at all is the ordinary state of a project that has not created
+// location assets yet, and a row whose shot has no scene (a shot the script structure does not know)
+// cannot be grouped. Both return no findings rather than a report, which is the same discipline the
+// costume rule keeps: a deterministic check that fired on missing data would be one a user learns to
+// ignore.
+func (c *Checker) checkLocationContinuity(ctx context.Context, version storyboard.StoryboardVersion, items []storyboard.StoryboardItem) []consistency.Finding {
+	if c.assets == nil || c.scriptSource == nil {
+		return nil
+	}
+	reader := c.scriptSource.ScriptReaderFor(ctx, version.ScriptVersionID)
+	if reader == nil {
+		return nil
+	}
+	// The first location each scene is seen with, so a later row can be compared against it.
+	locationOfScene := map[string]string{}
+	locationName := map[string]string{}
+	findings := []consistency.Finding{}
+	for _, item := range items {
+		sceneID, err := reader.ShotScene(ctx, item.ShotID)
+		if err != nil || strings.TrimSpace(sceneID) == "" {
+			continue
+		}
+		usages, err := c.assets.UsagesForConsumer(ctx, asset.ConsumerShot, item.ID)
+		if err != nil {
+			continue
+		}
+		for _, usage := range usages {
+			if !isLocationRole(usage.UsageRole) {
+				continue
+			}
+			version, err := c.assets.GetVersion(ctx, usage.AssetVersionID)
+			if err != nil {
+				continue
+			}
+			record, err := c.assets.GetAsset(ctx, version.AssetID)
+			if err != nil {
+				continue
+			}
+			// The ASSET is what has to agree, not the version: two versions of one location are the
+			// same place, and reporting them would fire on every set that was re-rendered.
+			first, seen := locationOfScene[sceneID]
+			if !seen {
+				locationOfScene[sceneID] = record.ID
+				locationName[sceneID] = record.Name
+				continue
+			}
+			if first == record.ID {
+				continue
+			}
+			findings = append(findings, consistency.Finding{
+				Rule:       consistency.RuleLocationContinuity,
+				Severity:   consistency.SeverityMajor,
+				EntityType: "storyboard_item",
+				EntityID:   item.ID,
+				Field:      "assetVersionId",
+				Problem: "This row places the scene at " + record.Name + ", while another row of the " +
+					"same scene places it at " + locationName[sceneID] + ".",
+				Suggestion: "Point every row of one scene at the same location, or split the scene in " +
+					"the script if it really moves.",
+				Evidence: []consistency.Evidence{
+					{Type: "entity_ref", Ref: item.ID},
+					{Type: "entity_ref", Ref: record.ID},
+					{Type: "entity_ref", Ref: first},
+				},
+				// Not auto-fixable: which of the two is right is a decision about the scene rather
+				// than a citation to correct.
+				AutoFixable: false,
+			})
+			// One finding per scene is enough: a board that alternated between two locations would
+			// otherwise report every row after the first, and the fault is one decision.
+			break
+		}
+	}
+	return findings
+}
+
+// isLocationRole reports whether a usage role says the asset is a location.
+func isLocationRole(role string) bool {
+	lowered := strings.ToLower(strings.TrimSpace(role))
+	return strings.Contains(lowered, "location") || strings.Contains(lowered, "scene") ||
+		strings.Contains(lowered, "set")
 }
 
 // isCostumeRole reports whether a usage role says the asset is a costume.

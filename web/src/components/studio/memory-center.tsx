@@ -6,6 +6,7 @@ import { useTranslation } from "react-i18next";
 
 import {
     deleteMemory,
+    getMemory,
     isMemoryBindingsAvailable,
     isMemoryCommandsAvailable,
     isMemoryRebuildAvailable,
@@ -106,6 +107,26 @@ export function MemoryCenterSection({ projectId }: MemoryCenterSectionProps) {
             } catch {
                 setSources([]);
             }
+        }
+    };
+
+    /**
+     * openDetailById opens one memory's detail pane from its identifier.
+     *
+     * It is what makes a summary's sources and its transcript citations FOLLOWABLE rather than merely
+     * listed: the criterion AC-MEM-004 states is "UI 可跳原始消息", and a jump needs a handler. A read
+     * that fails sets the notice rather than opening an empty drawer, so a gone row is visible as gone.
+     */
+    const openDetailById = async (memoryId: string) => {
+        try {
+            const memory = await getMemory(memoryId);
+            if (!memory) {
+                setNotice(t("studio.memory.sourceGone"));
+                return;
+            }
+            await openDetail(memory);
+        } catch (error) {
+            setNotice(error instanceof Error ? error.message : t("studio.memory.commandFailed"));
         }
     };
 
@@ -500,7 +521,25 @@ export function MemoryCenterSection({ projectId }: MemoryCenterSectionProps) {
                                                 {source.missing ? (
                                                     <Tag color="red">{t("studio.memory.sourceMissing")}</Tag>
                                                 ) : null}
-                                                {source.messageId ? <code>{source.messageId}</code> : null}
+                                                {/* AC-MEM-004's "UI 可跳原始消息": the row is a
+                                                    BUTTON that opens the source memory, so a reader
+                                                    follows it rather than reading an identifier and
+                                                    looking it up. A source whose row is gone cannot be
+                                                    opened, and says so instead of offering a control
+                                                    that would fail. */}
+                                                {source.missing ? (
+                                                    <span className="text-stone-500">{t("studio.memory.sourceGone")}</span>
+                                                ) : (
+                                                    <Button
+                                                        size="small"
+                                                        type="link"
+                                                        data-memory-source-row-jump={source.memoryId}
+                                                        onClick={() => void openDetailById(source.memoryId)}
+                                                    >
+                                                        {t("studio.memory.openSource")}
+                                                        {source.messageId ? <code className="ml-2">{source.messageId}</code> : null}
+                                                    </Button>
+                                                )}
                                             </li>
                                         ))}
                                     </ul>

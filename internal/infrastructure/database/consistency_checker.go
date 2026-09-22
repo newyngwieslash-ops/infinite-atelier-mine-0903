@@ -63,12 +63,15 @@ func (c *StoryboardConsistencyChecker) Check(ctx context.Context, stage, artifac
 
 // The compile-time proof that this satisfies the pipeline's checker port.
 //
-// The pipeline's port is one method taking a stage name and a version, and this type's own
-// `Check` is that signature. The assertion is written against the CHECKER rather than the port
-// because the port lives in the app package the pipeline owns; a drift here would mean the
-// storyboard rules silently stopped running, which is the failure this package has now found four
-// times in other shapes.
-var _ = appconsistency.NewChecker
+// The first version of this assertion was `var _ = appconsistency.NewChecker` — a FUNCTION VALUE,
+// which proves nothing at all: it compiles whatever `Check`'s signature is. An independent review
+// caught it. What follows is the real assertion, against a locally declared interface with the
+// pipeline's own shape, which fails to compile the moment the two drift.
+type stageCheckerPort interface {
+	Check(ctx context.Context, stage string, artifactVersionID string) ([]consistency.Finding, error)
+}
+
+var _ stageCheckerPort = (*StoryboardConsistencyChecker)(nil)
 
 // stageCheckStages documents which stages this build has rules for, so a reader asking "is my stage
 // covered" finds the answer rather than a switch they have to read.

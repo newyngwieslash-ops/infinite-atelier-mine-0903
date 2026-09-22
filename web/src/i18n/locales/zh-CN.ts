@@ -1538,6 +1538,8 @@ export default {
             sourcesLabel: "摘要来源",
             noSources: "这条摘要没有引用任何来源,说明它的来源已被移除。",
             sourceMissing: "来源已移除",
+            sourceGone: "该来源已不存在",
+            openSource: "打开",
             previewTitle: "会召回什么",
             previewHint: "预览走的是与运行时提示词相同的四条通道——固定事实、摘要、语义候选与最近对话——并同时显示每个候选的融合分数与原始相似度,这样「低于阈值被丢弃」与「本来就没有」可以分辨。",
             previewPlaceholder: "问一句记忆会如何作答…",

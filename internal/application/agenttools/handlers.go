@@ -3,6 +3,7 @@ package agenttools
 import (
 	"context"
 	"strings"
+	"time"
 
 	agentruntime "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/agentruntime"
 	appassets "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/assets"
@@ -1607,15 +1608,33 @@ func bindCreateCandidateVersion(deps Deps) agentruntime.ToolHandler {
 // Memory
 // ---------------------------------------------------------------------------
 
-// deepRecall returns the recent messages for the run's own scope.
+// deepRecall walks from a question to the original messages, which is AGENT_CONTRACTS
+// section 12.3's Deep Recall Tool.
 //
-// WP-07's scope item 15 allows the RECENT window and no more: the semantic recall with
-// a threshold and a rerank is WP-10's. What this DOES have is the two invariants
-// DOMAIN_MODEL section 14.5 states, because a recall that broke one would leak and a
-// leak is not something a later package should have to find:
+// # What it was, and why that was a defect
 //
-//   - the scope comes from the RUN, so a model cannot widen it: there is no project,
-//     episode or agent argument;
+// WP-07 registered this key with the RECENT window and a comment promising WP-10 would deepen
+// it: "the name keeps the section's spelling so a skill does not change when WP-10 deepens it".
+// WP-10 built the deep recall — the summary search, the threshold, the rerank, the walk back to
+// the sources — as `memory.Service.DeepRecall`, and then did not connect it here. So the tool
+// whose whole purpose is history returned the last twenty turns, the two skills that grant it
+// documented the recent window, and section 12.3's flow had no caller that a model could reach.
+// An independent review found it; this is the correction.
+//
+// # The two shapes it answers
+//
+// A call WITH a query runs section 12.3's flow: summary candidates, filtered by the threshold,
+// reranked, their sources loaded, with provenance. A call with NO query keeps the recent window,
+// because that is a legitimate thing to ask a memory for and it is what every caller before this
+// change got. The `window` field says which one answered, so a model reading the result can tell
+// whether it got history or the tail of the conversation.
+//
+// # The two invariants that were already here, and stay
+//
+// DOMAIN_MODEL section 14.5's rules, which a recall that broke either of would leak:
+//
+//   - the scope comes from the RUN, so a model cannot widen it: there is no project, episode or
+//     agent argument, and the episode and agent are the run's own;
 //   - the current message is excluded, so a turn cannot recall itself.
 func bindDeepRecall(deps Deps) agentruntime.ToolHandler {
 	return func(ctx context.Context, request agentruntime.ToolRequest) (any, error) {
@@ -1623,17 +1642,79 @@ func bindDeepRecall(deps Deps) agentruntime.ToolHandler {
 			return nil, err
 		}
 		var arguments struct {
+			Query            string `json:"query"`
+			MaxSummaries     int    `json:"maxSummaries"`
+			MaxRawMessages   int    `json:"maxRawMessages"`
 			Limit            int    `json:"limit"`
 			ExcludeMessageID string `json:"excludeMessageId"`
 		}
 		if err := decodeArguments(request.Arguments, &arguments); err != nil {
 			return nil, err
 		}
+		// The run's scope, with the agent key this time: section 12.3's walk loads a summary's
+		// sources, and a summary belongs to the conversation that produced it. The recalled
+		// layer of WP-07 passed an empty agent key, which made one agent's recall span every
+		// agent's turns in the episode.
+		scope := appmemory.ScopeFor(request.ProjectID, request.EpisodeID, request.AgentKey)
+		if query := strings.TrimSpace(arguments.Query); query != "" {
+			result, err := deps.Memory.DeepRecall(ctx, appmemory.DeepRecallRequest{
+				Scope:          scope,
+				Query:          query,
+				MaxSummaries:   arguments.MaxSummaries,
+				MaxRawMessages: arguments.MaxRawMessages,
+			})
+			if err != nil {
+				return nil, err
+			}
+			summaries := make([]memorySummaryView, 0, len(result.Summaries))
+			for _, candidate := range result.Summaries {
+				summaries = append(summaries, memorySummaryView{
+					MemoryID:   candidate.Item.ID,
+					Content:    candidate.Item.Content,
+					Score:      candidate.Score,
+					Similarity: candidate.Similarity,
+					Pinned:     candidate.Pinned,
+				})
+			}
+			views := make([]memoryView, 0, len(result.Messages))
+			provenance := make([]memoryProvenanceView, 0, len(result.Provenance))
+			for index, message := range result.Messages {
+				views = append(views, memoryView{
+					Role:     string(message.Role),
+					FromRun:  message.AgentKey,
+					Content:  message.Content,
+					Recalled: true,
+				})
+				if index < len(result.Provenance) {
+					entry := result.Provenance[index]
+					provenance = append(provenance, memoryProvenanceView{
+						// The two hops section 12.3 asks to be visible: the message it came from and
+						// the summary the walk selected it through.
+						MessageID:    entry.MessageID,
+						SummarizedBy: entry.SummarizedBy,
+						Role:         entry.Role,
+						AgentKey:     entry.AgentKey,
+						CreatedAt:    entry.CreatedAt.UTC().Format(time.RFC3339),
+					})
+				}
+			}
+			return map[string]any{
+				"query":      query,
+				"summaries":  summaries,
+				"messages":   views,
+				"provenance": provenance,
+				"total":      len(views),
+				"usedTokens": result.UsedTokens,
+				"truncated":  result.Truncated,
+				"window":     "deep_recall",
+			}, nil
+		}
+		// No query: the recent window, which is what a caller that just wants the conversation
+		// so far is asking for.
 		items, err := deps.Memory.BuildContext(ctx, appmemory.RecallRequest{
-			Scope: appmemory.ScopeFor(request.ProjectID, request.EpisodeID, ""),
-			// The exclusion is the caller's to state, and the runtime supplies the
-			// message being answered. An empty one recalls everything in scope, which is
-			// what a first turn in a conversation asks for.
+			Scope: scope,
+			// The exclusion is the caller's to state, and the runtime supplies the message being
+			// answered. An empty one recalls everything in scope, which is what a first turn asks.
 			ExcludeMessageID: strings.TrimSpace(arguments.ExcludeMessageID),
 			Limit:            limitOf(arguments.Limit, appmemory.DefaultLimit, appmemory.MaxLimit),
 		})
@@ -1644,8 +1725,8 @@ func bindDeepRecall(deps Deps) agentruntime.ToolHandler {
 		for _, item := range items {
 			views = append(views, memoryView{
 				Role: string(item.Role),
-				// The provenance section 12.2 requires recalled context to carry, so a
-				// reader can tell which run a remembered message came from.
+				// The provenance section 12.2 requires recalled context to carry, so a reader can
+				// tell which run a remembered message came from.
 				FromRun:  item.Provenance,
 				Content:  item.Content,
 				Recalled: true,
@@ -1653,6 +1734,28 @@ func bindDeepRecall(deps Deps) agentruntime.ToolHandler {
 		}
 		return map[string]any{"messages": views, "total": len(views), "window": "recent"}, nil
 	}
+}
+
+// memorySummaryView is one summary the walk selected.
+//
+// The two numbers are separate here for the reason the preview separates them: the threshold
+// applies to the similarity, and a model reasoning about why a summary was selected needs the
+// number the threshold was compared against rather than only the fused score.
+type memorySummaryView struct {
+	MemoryID   string  `json:"memoryId"`
+	Content    string  `json:"content"`
+	Score      float64 `json:"score"`
+	Similarity float64 `json:"similarity"`
+	Pinned     bool    `json:"pinned,omitempty"`
+}
+
+// memoryProvenanceView is where one restored message came from.
+type memoryProvenanceView struct {
+	MessageID    string `json:"messageId,omitempty"`
+	SummarizedBy string `json:"summarizedBy,omitempty"`
+	Role         string `json:"role,omitempty"`
+	AgentKey     string `json:"agentKey,omitempty"`
+	CreatedAt    string `json:"createdAt,omitempty"`
 }
 
 type memoryView struct {

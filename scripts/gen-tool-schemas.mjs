@@ -531,9 +531,12 @@ const TOOLS = [
         key: "memory.deep_recall",
         title: "Recall remembered context",
         description:
-            "Returns recent messages for the current scope. WP-07 implements the RECENT window; semantic recall with a threshold and a rerank is WP-10's. The scope is the run's and cannot be widened by an argument.",
+            "Recalls what this project remembers. WITH a query it walks AGENT_CONTRACTS section 12.3's deep recall: summary candidates, filtered by a similarity threshold, reranked, their original messages restored with provenance. WITHOUT one it returns the recent window for the scope. The scope comes from the run and cannot be widened by an argument.",
         properties: {
-            limit: { type: "integer", description: "How many messages to recall.", minimum: 1, maximum: 200 },
+            query: str("What you are trying to remember. The summary search and the rerank use it; an empty query selects the recent window instead."),
+            maxSummaries: { type: "integer", description: "How many summaries the walk may select.", minimum: 1, maximum: 12 },
+            maxRawMessages: { type: "integer", description: "How many original messages the walk may restore.", minimum: 1, maximum: 30 },
+            limit: { type: "integer", description: "How many recent messages to return when there is no query.", minimum: 1, maximum: 200 },
             excludeMessageId: str("The message being answered, so it does not recall itself. Empty recalls everything in scope."),
         },
     },

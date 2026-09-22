@@ -2,13 +2,30 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://infinite-atelier.invalid/schemas/agent/tools/memory.deep_recall.json",
   "title": "memory.deep_recall input",
-  "description": "Returns recent messages for the current scope. WP-07 implements the RECENT window; semantic recall with a threshold and a rerank is WP-10's. The scope is the run's and cannot be widened by an argument.",
+  "description": "Recalls what this project remembers. WITH a query it walks AGENT_CONTRACTS section 12.3's deep recall: summary candidates, filtered by a similarity threshold, reranked, their original messages restored with provenance. WITHOUT one it returns the recent window for the scope. The scope comes from the run and cannot be widened by an argument.",
   "type": "object",
   "additionalProperties": false,
   "properties": {
+    "query": {
+      "type": "string",
+      "description": "What you are trying to remember. The summary search and the rerank use it; an empty query selects the recent window instead.",
+      "maxLength": 200
+    },
+    "maxSummaries": {
+      "type": "integer",
+      "description": "How many summaries the walk may select.",
+      "minimum": 1,
+      "maximum": 12
+    },
+    "maxRawMessages": {
+      "type": "integer",
+      "description": "How many original messages the walk may restore.",
+      "minimum": 1,
+      "maximum": 30
+    },
     "limit": {
       "type": "integer",
-      "description": "How many messages to recall.",
+      "description": "How many recent messages to return when there is no query.",
       "minimum": 1,
       "maximum": 200
     },

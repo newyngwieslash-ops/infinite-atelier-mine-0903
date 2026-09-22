@@ -18,6 +18,8 @@ export function PreviewMemoryRecall(arg1:desktop.RecallPreviewRequest):Promise<d
 
 export function RebuildMemoryEmbedding(arg1:desktop.RebuildMemoryEmbeddingRequest):Promise<desktop.MemoryRebuildResultDTO>;
 
+export function RememberFact(arg1:desktop.RememberFactRequest):Promise<desktop.MemoryDTO>;
+
 export function SetMemoryLocked(arg1:desktop.MemoryPinRequest):Promise<boolean>;
 
 export function SummarizeMemory(arg1:desktop.SummarizeMemoryRequest):Promise<desktop.MemorySummarizeResultDTO>;

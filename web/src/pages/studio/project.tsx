@@ -354,7 +354,15 @@ function SectionBody(props: SectionBodyProps) {
         case "storyboard-canvas":
             return <StoryboardCanvasSection projectId={projectId} />;
         case "quality":
-            return <QualitySection projectId={projectId} runs={props.workflowRuns} marks={props.staleMarks} onChanged={props.onDramaChanged} />;
+            return (
+                    <QualitySection
+                        projectId={projectId}
+                        runs={props.workflowRuns}
+                        marks={props.staleMarks}
+                        onChanged={props.onDramaChanged}
+                        onNavigate={(section) => useStudioStore.getState().setSection(section as StudioSection)}
+                    />
+                );
         case "agents":
             return <AgentCenterSection projectId={projectId} />;
         case "memory":

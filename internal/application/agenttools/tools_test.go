@@ -241,7 +241,11 @@ func TestHandlerArgumentNamesMatchTheirSchemas(t *testing.T) {
 		"asset.create_gap_report": {"episodeId", "scriptVersionId", "summary", "basedOnVersionId",
 			"items"},
 		"asset.read_gap_report": {"reportId", "episodeId"},
-		"memory.deep_recall":    {"limit", "excludeMessageId"},
+		// WP-10 deepened this tool from the recent window to AGENT_CONTRACTS section 12.3's deep
+		// recall, so the property set grew: `query` selects the walk, the two maxima bound it, and
+		// `limit`/`excludeMessageId` still serve the no-query window. The assertion is what caught the
+		// schema and the handler drifting apart when only one of them was updated.
+		"memory.deep_recall": {"query", "maxSummaries", "maxRawMessages", "limit", "excludeMessageId"},
 	}
 	registered := Keys()
 	if len(expected) != len(registered) {

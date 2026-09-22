@@ -710,9 +710,18 @@ export type QualitySectionProps = {
     runs: desktop.WorkflowRunDTO[];
     marks: desktop.StaleMarkDTO[];
     onChanged: () => void;
+    /**
+     * onNavigate moves the shell to another section.
+     *
+     * It is a PROP rather than a store import because this file is a collection of section bodies and
+     * the shell owns which one is showing: a body that reached into the store would make every section
+     * able to navigate, which is the shell's decision and not theirs. PRD FR-110's "报告问题可以在 UI
+     * 中跳转到实体" is the one place a body has a reason to ask.
+     */
+    onNavigate: (section: string) => void;
 };
 
-export function QualitySection({ projectId, runs, marks, onChanged }: QualitySectionProps) {
+export function QualitySection({ projectId, runs, marks, onChanged, onNavigate }: QualitySectionProps) {
     const { t } = useTranslation();
     const { message } = App.useApp();
     const [busyKey, setBusyKey] = useState("");
@@ -901,12 +910,24 @@ export function QualitySection({ projectId, runs, marks, onChanged }: QualitySec
                                             finding is about is shown as a jumpable reference, and
                                             the location is shown when there is no entity. */}
                                         {finding.entityId ? (
-                                            <p className="mt-1 text-xs">
-                                                {t("studio.quality.entityLabel")}:{" "}
-                                                <code data-finding-target={finding.entityId}>
+                                            <p className="mt-1 flex flex-wrap items-center gap-2 text-xs">
+                                                <span>{t("studio.quality.entityLabel")}:</span>
+                                                {/* PRD FR-110's "报告问题可以在 UI 中跳转到实体".
+                                                    The button navigates to the section that owns the
+                                                    entity — a storyboard row goes to the board, a
+                                                    shot to the script, an asset to its section — or
+                                                    reports that it has no section when the entity is
+                                                    one this shell does not show. */}
+                                                <Button
+                                                    size="small"
+                                                    type="link"
+                                                    data-finding-target={finding.entityId}
+                                                    data-finding-section={sectionForEntity(finding.entityType ?? "")}
+                                                    onClick={() => jumpToEntity(finding.entityType ?? "", onNavigate)}
+                                                >
                                                     {finding.entityType}:{finding.entityId}
-                                                </code>
-                                                {finding.field ? <span className="ml-2 text-stone-500">{finding.field}</span> : null}
+                                                </Button>
+                                                {finding.field ? <span className="text-stone-500">{finding.field}</span> : null}
                                             </p>
                                         ) : null}
                                         {finding.location ? (
@@ -1004,6 +1025,58 @@ export function QualitySection({ projectId, runs, marks, onChanged }: QualitySec
             </Modal>
         </div>
     );
+}
+
+/**
+ * jumpToEntity switches the shell to the section that owns a finding's entity.
+ *
+ * It is the second half of FR-110's "报告问题可以在 UI 中跳转到实体": the button knows which entity
+ * the finding is about, this knows where that entity is shown, and the callback's `setSection` is what
+ * moves there. An entity with no section does nothing, and the call site renders it as a plain
+ * reference rather than as a control — a button that went nowhere would be worse than a label.
+ *
+ * The navigation is deliberately SECTION-level rather than row-level. The shell carries no "selected
+ * entity" projection, and inventing one here would make the quality centre responsible for the
+ * board's or the asset list's scroll position — which is a different feature from "take me to where
+ * this lives", and is what the section's own search and filters are for.
+ */
+function jumpToEntity(entityType: string, onNavigate: (section: string) => void) {
+    const section = sectionForEntity(entityType);
+    if (section === "") return;
+    onNavigate(section);
+}
+
+/**
+ * sectionForEntity maps a finding's entity type to the studio section that owns it.
+ *
+ * The mapping is the shell's own vocabulary rather than the domain's, which is why it is a table here
+ * and not a field on the Go DTO: a section is a place in this UI, and a domain entity that has no
+ * section (a workflow run, a staleness mark) answers with the empty string — which the call site
+ * renders as a reference without a jump rather than as a button that goes nowhere.
+ */
+function sectionForEntity(entityType: string): string {
+    switch (entityType) {
+        case "storyboard_item":
+        case "storyboard_version":
+            return "storyboard-table";
+        case "shot":
+        case "scene":
+        case "script_version":
+            return "script";
+        case "asset":
+        case "asset_version":
+        case "character":
+        case "location":
+        case "prop":
+            return "characters";
+        case "director_plan_version":
+            return "director";
+        case "story_entity":
+        case "story_event":
+            return "story-graph";
+        default:
+            return "";
+    }
 }
 
 /** severityColour maps a severity to a tag colour. Text always accompanies it. */

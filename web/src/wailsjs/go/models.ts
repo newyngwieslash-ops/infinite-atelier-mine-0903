@@ -3487,6 +3487,32 @@ export namespace desktop {
 		    return a;
 		}
 	}
+	export class RememberFactRequest {
+	    projectId: string;
+	    episodeId?: string;
+	    content: string;
+	    importance?: number;
+	    entityType?: string;
+	    entityId?: string;
+	    createdById?: string;
+	    embed?: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new RememberFactRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.projectId = source["projectId"];
+	        this.episodeId = source["episodeId"];
+	        this.content = source["content"];
+	        this.importance = source["importance"];
+	        this.entityType = source["entityType"];
+	        this.entityId = source["entityId"];
+	        this.createdById = source["createdById"];
+	        this.embed = source["embed"];
+	    }
+	}
 	export class RenameProjectRequest {
 	    id: string;
 	    name: string;

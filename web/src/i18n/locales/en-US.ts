@@ -1539,6 +1539,8 @@ export default {
             sourcesLabel: "Summarised from",
             noSources: "This summary cites nothing, which means its sources were removed.",
             sourceMissing: "source removed",
+            sourceGone: "that source is gone",
+            openSource: "Open",
             previewTitle: "What would be recalled",
             previewHint: "The preview runs the same four channels a run's prompt uses — pinned facts, summaries, semantic candidates and the recent window — and shows each candidate's fused score beside its raw similarity, so a result below the threshold can be told apart from one that is absent.",
             previewPlaceholder: "Ask what the memory would answer with…",

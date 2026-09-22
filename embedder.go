@@ -43,9 +43,28 @@ import (
 // enabled: it uses a provider only when the project NAMED one for embeddings.
 //
 // The consequence is that a project which has configured no embedding provider has no semantic
-// channel, and this bridge reports that rather than silently sending its text somewhere. The
-// deterministic feature-hash adapter is the documented local answer (FR-120's "关键词降级"), and
-// a build that wants it registers it as a provider the project can name.
+// channel, and this bridge reports that rather than silently sending its text somewhere.
+//
+// # FR-120's "关键词降级" in this build, stated exactly
+//
+// The deterministic feature-hash adapter EXISTS and is registered by
+// `Registry.WithMockEmbeddingAdapter`; the `mock_embedding` branch below is therefore live for any
+// build that registers one. What this build does NOT do is create such a provider CONFIGURATION:
+// `IsUserConfigurableKind` refuses the kind, and `provider_configs.kind` CHECKs against
+// `('openai_compatible','gemini_compatible','mock_media')` — so no row can carry it and this bridge
+// will not resolve one in a composed build.
+//
+// That is the same three-guardrail treatment the text, image and media mocks have, and it is
+// deliberate rather than an omission: a kind a user can persist is a kind a project can silently
+// talk to, and an embedding call sends the project's own text. What serves FR-120's keyword fallback
+// in a real deployment is a provider the user configures — a local one, whose endpoint this bridge
+// reaches through the same `openai_compatible` arm — and the offline path for CI is the mock, which a
+// harness registers the way the batch tests register the image mock.
+//
+// The first version of this comment claimed the fallback was "the documented local answer" and that
+// "a build that wants it registers it as a provider the project can name". Both halves were false:
+// nothing registered it, and no project could name it. An independent review found the contradiction.
+// The deferral is recorded here rather than papered over, and STATUS section 0k lists it as a limit.
 type projectEmbedder struct {
 	registry *infraproviders.Registry
 	db       *sql.DB
