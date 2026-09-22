@@ -3363,6 +3363,13 @@ func toDramaError(err error) error {
 	if category, message, ok := domainExtractionError(err); ok {
 		return apperror.New("DRAMA_"+upperText(category), "drama", false, message, nil)
 	}
+	// The media errors are the application's rather than a domain's, and they are mapped here rather
+	// than falling through to the branch below because one of them is not a failure at all: "this
+	// machine has no ffmpeg" is a fact the section renders as a disabled button with a diagnostic, and
+	// the generic message would replace the sentence that names the program to install.
+	if category, message, ok := mediaError(err); ok {
+		return apperror.New("MEDIA_"+upperText(category), "media", false, message, nil)
+	}
 	return apperror.New("DRAMA_REQUEST_FAILED", "drama", false, "The drama request failed.", err)
 }
 

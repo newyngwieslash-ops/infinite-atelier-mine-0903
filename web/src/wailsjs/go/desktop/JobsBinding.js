@@ -38,6 +38,14 @@ export function RetryFailedJobs(arg1) {
   return window['go']['desktop']['JobsBinding']['RetryFailedJobs'](arg1);
 }
 
+export function SubmitAudioJob(arg1) {
+  return window['go']['desktop']['JobsBinding']['SubmitAudioJob'](arg1);
+}
+
 export function SubmitImageJob(arg1) {
   return window['go']['desktop']['JobsBinding']['SubmitImageJob'](arg1);
+}
+
+export function SubmitVideoJob(arg1) {
+  return window['go']['desktop']['JobsBinding']['SubmitVideoJob'](arg1);
 }

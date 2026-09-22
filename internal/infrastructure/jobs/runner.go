@@ -3,6 +3,7 @@ package jobs
 import (
 	"context"
 	"encoding/json"
+	"strings"
 
 	appjobs "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/jobs"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/job"
@@ -51,12 +52,29 @@ type imageInput struct {
 	MaskMIME       string   `json:"maskMime,omitempty"`
 }
 
+// videoInput is one video job's stored input.
+//
+// # The three reference fields, and why they are separate
+//
+// FR-080's "支持从 StoryboardPanel、首帧/尾帧或参考资产创建视频任务" names three KINDS of input, and a
+// provider treats them differently: a first frame anchors the opening, a last frame the close, and a
+// plain reference is style guidance. One list would lose that distinction at the boundary, and the
+// adapter would have to guess which image was which.
+//
+// `References` stays a list because a shot may cite any number of style references. The MIME types
+// travel beside them index for index, which is the same shape the image input uses.
 type videoInput struct {
-	Prompt     string `json:"prompt"`
-	Model      string `json:"model"`
-	ProviderID string `json:"providerId"`
-	Seconds    int    `json:"seconds"`
-	Size       string `json:"size"`
+	Prompt         string   `json:"prompt"`
+	Model          string   `json:"model"`
+	ProviderID     string   `json:"providerId"`
+	Seconds        int      `json:"seconds"`
+	Size           string   `json:"size"`
+	References     []string `json:"references,omitempty"`
+	ReferenceMIMEs []string `json:"referenceMimes,omitempty"`
+	FirstFrame     string   `json:"firstFrame,omitempty"`
+	FirstFrameMIME string   `json:"firstFrameMime,omitempty"`
+	LastFrame      string   `json:"lastFrame,omitempty"`
+	LastFrameMIME  string   `json:"lastFrameMime,omitempty"`
 }
 
 type audioInput struct {
@@ -257,6 +275,18 @@ func (r *Runner) downloadPending(ctx context.Context, record job.Job, urls []str
 // runVideo drives the async contract. A job with no remote ID submits; a job
 // that already has one polls. It never re-submits, which is what prevents a
 // duplicate charge after a restart.
+// defaultMIME names a reference's type when the caller did not.
+//
+// PNG rather than an empty string: the adapters put the type in a multipart part or a data URL, and an
+// empty type there is a malformed request rather than a hint. The panel images this build produces are
+// PNGs, which is why that is the default.
+func defaultMIME(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "image/png"
+	}
+	return value
+}
+
 func (r *Runner) runVideo(ctx context.Context, record job.Job) (appjobs.Outcome, error) {
 	var input videoInput
 	if err := json.Unmarshal([]byte(record.InputJSON), &input); err != nil {
@@ -275,6 +305,27 @@ func (r *Runner) runVideo(ctx context.Context, record job.Job) (appjobs.Outcome,
 	}
 
 	if record.RemoteJobID == "" {
+		// The references are handed to the adapter in the order FR-080 names them: the plain ones
+		// first, then the first frame, then the last. A provider that takes a leading image uses it as
+		// the opening frame, which is what the ordering means.
+		references := make([]appjobs.ImageInput, 0, len(input.References)+2)
+		for index, reference := range input.References {
+			mimeType := "image/png"
+			if index < len(input.ReferenceMIMEs) && input.ReferenceMIMEs[index] != "" {
+				mimeType = input.ReferenceMIMEs[index]
+			}
+			references = append(references, appjobs.ImageInput{MIMEType: mimeType, Data: reference})
+		}
+		if input.FirstFrame != "" {
+			references = append(references, appjobs.ImageInput{
+				MIMEType: defaultMIME(input.FirstFrameMIME), Data: input.FirstFrame,
+			})
+		}
+		if input.LastFrame != "" {
+			references = append(references, appjobs.ImageInput{
+				MIMEType: defaultMIME(input.LastFrameMIME), Data: input.LastFrame,
+			})
+		}
 		remote, err := adapter.Submit(ctx, appjobs.VideoRequest{
 			JobID:      record.ID,
 			ProviderID: providerID,
@@ -282,6 +333,7 @@ func (r *Runner) runVideo(ctx context.Context, record job.Job) (appjobs.Outcome,
 			Prompt:     input.Prompt,
 			Seconds:    input.Seconds,
 			Size:       input.Size,
+			References: references,
 		})
 		if err != nil {
 			return appjobs.Outcome{}, err

@@ -20,4 +20,8 @@ export function ResumeQueue():Promise<void>;
 
 export function RetryFailedJobs(arg1:Array<string>):Promise<number>;
 
+export function SubmitAudioJob(arg1:desktop.SubmitAudioJobRequest):Promise<desktop.JobDTO>;
+
 export function SubmitImageJob(arg1:desktop.SubmitImageJobRequest):Promise<desktop.JobDTO>;
+
+export function SubmitVideoJob(arg1:desktop.SubmitVideoJobRequest):Promise<desktop.JobDTO>;

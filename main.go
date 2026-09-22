@@ -68,6 +68,7 @@ func run() error {
 	// runs — the agents exist in the binary either way.
 	application.agentBinding = &desktop.AgentBinding{}
 	application.memoryBinding = &desktop.MemoryBinding{}
+	application.mediaBinding = &desktop.MediaBinding{}
 	application.assetsBinding = &desktop.AssetsBinding{}
 	application.emit = wailsruntime.EventsEmit
 	shutdown := newShutdownSequence(application.closeDatabase, logger, logCloser.Close, reportIndependent)
@@ -104,6 +105,7 @@ func run() error {
 			application.importUploadBinding,
 			application.agentBinding,
 			application.memoryBinding,
+			application.mediaBinding,
 		},
 		SingleInstanceLock: &options.SingleInstanceLock{
 			UniqueId: singleInstanceID,

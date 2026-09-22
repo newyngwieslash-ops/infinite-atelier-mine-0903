@@ -63,6 +63,12 @@ type app struct {
 	// generated client exists whether or not a database could be opened — and every method then
 	// fails closed with a stable error rather than being absent from the surface.
 	memoryBinding *desktop.MemoryBinding
+	// mediaBinding is the WP-11 surface: the timeline, the subtitles, the export — and the one
+	// thing this application had no path for before, writing a file to where the user points.
+	mediaBinding *desktop.MediaBinding
+	// mediaWiring holds the composed media stack so the save path can be supplied once startup
+	// has a context to open a dialog with.
+	mediaWiring *mediaWiring
 	// agentStack is the composed WP-07 runtime, held so a later package can reach
 	// the extraction service the runtime is the Extractor for.
 	agentStack     *agentWiring
@@ -213,6 +219,21 @@ func (a *app) startup(ctx context.Context) {
 				}
 				dramaStack.attach(ctx)
 				a.dramaWiring = dramaStack
+
+				// The WP-11 media stack, composed after the drama stack because its timeline joins
+				// tables that stack owns. A machine with no ffmpeg still composes: the engine reports
+				// itself unavailable and the binding says so with a diagnostic, because a build with no
+				// engine can still draft subtitles and read a timeline.
+				if a.mediaBinding != nil {
+					media := composeMedia(handle, dramaStack.script, store, dirs.Temp)
+					if media != nil {
+						// The save dialog needs the startup context, which exists here and not at
+						// composition, so the save path is supplied in this pass.
+						media.saveFile = saveFileWithDialog
+						media.attach(a.mediaBinding, ctx)
+						a.mediaWiring = media
+					}
+				}
 
 				// The WP-07 agent stack is composed AFTER the drama stack, because
 				// every tool's handler calls one of its services: the order here is

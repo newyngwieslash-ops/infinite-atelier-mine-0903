@@ -484,6 +484,22 @@ export namespace desktop {
 	        this.traceId = source["traceId"];
 	    }
 	}
+	export class ApproveExportRequest {
+	    exportId: string;
+	    episodeId?: string;
+	    traceId?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ApproveExportRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.exportId = source["exportId"];
+	        this.episodeId = source["episodeId"];
+	        this.traceId = source["traceId"];
+	    }
+	}
 	export class ApprovePanelImageRequest {
 	    panelVersionId: string;
 	    approvedImageAssetVersionId: string;
@@ -525,6 +541,22 @@ export namespace desktop {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.versionId = source["versionId"];
+	        this.traceId = source["traceId"];
+	    }
+	}
+	export class ApproveSubtitleTrackRequest {
+	    trackId: string;
+	    episodeId?: string;
+	    traceId?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ApproveSubtitleTrackRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.trackId = source["trackId"];
+	        this.episodeId = source["episodeId"];
 	        this.traceId = source["traceId"];
 	    }
 	}
@@ -1911,6 +1943,20 @@ export namespace desktop {
 	        this.payload = source["payload"];
 	    }
 	}
+	export class DraftSubtitlesRequest {
+	    episodeId: string;
+	    scriptVersionId: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new DraftSubtitlesRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.episodeId = source["episodeId"];
+	        this.scriptVersionId = source["scriptVersionId"];
+	    }
+	}
 	export class EditSkeletonInput {
 	    openingHook?: string;
 	    coreConflict?: string;
@@ -2019,6 +2065,56 @@ export namespace desktop {
 	        this.createdAt = source["createdAt"];
 	        this.updatedAt = source["updatedAt"];
 	        this.revision = source["revision"];
+	    }
+	}
+	export class ExportRecordDTO {
+	    id: string;
+	    episodeId: string;
+	    versionNumber: number;
+	    status: string;
+	    quality: string;
+	    width: number;
+	    height: number;
+	    durationMs: number;
+	    outputFileHash?: string;
+	    subtitleTrackId?: string;
+	    manifestJson?: string;
+	    approvalTraceId?: string;
+	    createdAt: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ExportRecordDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.episodeId = source["episodeId"];
+	        this.versionNumber = source["versionNumber"];
+	        this.status = source["status"];
+	        this.quality = source["quality"];
+	        this.width = source["width"];
+	        this.height = source["height"];
+	        this.durationMs = source["durationMs"];
+	        this.outputFileHash = source["outputFileHash"];
+	        this.subtitleTrackId = source["subtitleTrackId"];
+	        this.manifestJson = source["manifestJson"];
+	        this.approvalTraceId = source["approvalTraceId"];
+	        this.createdAt = source["createdAt"];
+	    }
+	}
+	export class ExportSubtitlesRequest {
+	    trackId: string;
+	    format: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ExportSubtitlesRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.trackId = source["trackId"];
+	        this.format = source["format"];
 	    }
 	}
 	export class ExtractChapterRequest {
@@ -2744,6 +2840,22 @@ export namespace desktop {
 	        this.upstreamId = source["upstreamId"];
 	    }
 	}
+	export class MediaCapabilityDTO {
+	    exportAvailable: boolean;
+	    diagnostic?: string;
+	    saveAvailable: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new MediaCapabilityDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.exportAvailable = source["exportAvailable"];
+	        this.diagnostic = source["diagnostic"];
+	        this.saveAvailable = source["saveAvailable"];
+	    }
+	}
 	export class MemoryDTO {
 	    id: string;
 	    type: string;
@@ -3071,6 +3183,24 @@ export namespace desktop {
 	        this.firstChapterId = source["firstChapterId"];
 	        this.secondChapterId = source["secondChapterId"];
 	        this.revision = source["revision"];
+	    }
+	}
+	export class MissingLineDTO {
+	    lineId: string;
+	    type: string;
+	    characterEntityId?: string;
+	    text: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new MissingLineDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.lineId = source["lineId"];
+	        this.type = source["type"];
+	        this.characterEntityId = source["characterEntityId"];
+	        this.text = source["text"];
 	    }
 	}
 	export class NodePositionDTO {
@@ -3666,6 +3796,32 @@ export namespace desktop {
 	        this.revision = source["revision"];
 	    }
 	}
+	export class RunExportRequest {
+	    episodeId: string;
+	    boardVersionId?: string;
+	    subtitleTrackId?: string;
+	    quality: string;
+	    width?: number;
+	    height?: number;
+	    fps?: number;
+	    subtitleMode?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new RunExportRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.episodeId = source["episodeId"];
+	        this.boardVersionId = source["boardVersionId"];
+	        this.subtitleTrackId = source["subtitleTrackId"];
+	        this.quality = source["quality"];
+	        this.width = source["width"];
+	        this.height = source["height"];
+	        this.fps = source["fps"];
+	        this.subtitleMode = source["subtitleMode"];
+	    }
+	}
 	export class RunImageBatchRequest {
 	    storyboardVersionId: string;
 	    episodeId: string;
@@ -3816,6 +3972,34 @@ export namespace desktop {
 	        this.title = source["title"];
 	        this.messagesJson = source["messagesJson"];
 	        this.revision = source["revision"];
+	    }
+	}
+	export class SaveExportRequest {
+	    storageKey: string;
+	    suggestedName: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SaveExportRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.storageKey = source["storageKey"];
+	        this.suggestedName = source["suggestedName"];
+	    }
+	}
+	export class SaveFileResultDTO {
+	    written: boolean;
+	    path?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SaveFileResultDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.written = source["written"];
+	        this.path = source["path"];
 	    }
 	}
 	export class SaveScriptStructureRequest {
@@ -4735,6 +4919,36 @@ export namespace desktop {
 	    }
 	}
 	
+	export class SubmitAudioJobRequest {
+	    projectId: string;
+	    episodeId: string;
+	    dialogueLineId: string;
+	    providerId: string;
+	    model: string;
+	    text: string;
+	    voice?: string;
+	    format?: string;
+	    speed?: string;
+	    priority?: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new SubmitAudioJobRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.projectId = source["projectId"];
+	        this.episodeId = source["episodeId"];
+	        this.dialogueLineId = source["dialogueLineId"];
+	        this.providerId = source["providerId"];
+	        this.model = source["model"];
+	        this.text = source["text"];
+	        this.voice = source["voice"];
+	        this.format = source["format"];
+	        this.speed = source["speed"];
+	        this.priority = source["priority"];
+	    }
+	}
 	export class SubmitGateDecisionRequest {
 	    workflowRunId: string;
 	    stageRunId?: string;
@@ -4801,6 +5015,149 @@ export namespace desktop {
 	        this.priority = source["priority"];
 	    }
 	}
+	export class SubmitVideoJobRequest {
+	    projectId: string;
+	    episodeId: string;
+	    shotId: string;
+	    providerId: string;
+	    model: string;
+	    prompt: string;
+	    seconds?: number;
+	    size?: string;
+	    references?: string[];
+	    referenceMimes?: string[];
+	    firstFrame?: string;
+	    firstFrameMime?: string;
+	    lastFrame?: string;
+	    lastFrameMime?: string;
+	    priority?: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new SubmitVideoJobRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.projectId = source["projectId"];
+	        this.episodeId = source["episodeId"];
+	        this.shotId = source["shotId"];
+	        this.providerId = source["providerId"];
+	        this.model = source["model"];
+	        this.prompt = source["prompt"];
+	        this.seconds = source["seconds"];
+	        this.size = source["size"];
+	        this.references = source["references"];
+	        this.referenceMimes = source["referenceMimes"];
+	        this.firstFrame = source["firstFrame"];
+	        this.firstFrameMime = source["firstFrameMime"];
+	        this.lastFrame = source["lastFrame"];
+	        this.lastFrameMime = source["lastFrameMime"];
+	        this.priority = source["priority"];
+	    }
+	}
+	export class SubtitleCueDTO {
+	    id: string;
+	    ordinal: number;
+	    startMs: number;
+	    endMs: number;
+	    text: string;
+	    characterEntityId?: string;
+	    dialogueLineId?: string;
+	    status: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SubtitleCueDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.ordinal = source["ordinal"];
+	        this.startMs = source["startMs"];
+	        this.endMs = source["endMs"];
+	        this.text = source["text"];
+	        this.characterEntityId = source["characterEntityId"];
+	        this.dialogueLineId = source["dialogueLineId"];
+	        this.status = source["status"];
+	    }
+	}
+	export class SubtitleCueEdit {
+	    id?: string;
+	    startMs: number;
+	    endMs: number;
+	    text: string;
+	    characterEntityId?: string;
+	    dialogueLineId?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SubtitleCueEdit(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.startMs = source["startMs"];
+	        this.endMs = source["endMs"];
+	        this.text = source["text"];
+	        this.characterEntityId = source["characterEntityId"];
+	        this.dialogueLineId = source["dialogueLineId"];
+	    }
+	}
+	export class SubtitleTrackDTO {
+	    id: string;
+	    episodeId: string;
+	    scriptVersionId: string;
+	    versionNumber: number;
+	    status: string;
+	    createdAt: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SubtitleTrackDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.episodeId = source["episodeId"];
+	        this.scriptVersionId = source["scriptVersionId"];
+	        this.versionNumber = source["versionNumber"];
+	        this.status = source["status"];
+	        this.createdAt = source["createdAt"];
+	    }
+	}
+	export class SubtitleDraftDTO {
+	    track: SubtitleTrackDTO;
+	    cues: SubtitleCueDTO[];
+	
+	    static createFrom(source: any = {}) {
+	        return new SubtitleDraftDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.track = this.convertValues(source["track"], SubtitleTrackDTO);
+	        this.cues = this.convertValues(source["cues"], SubtitleCueDTO);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	
 	export class SummarizeMemoryRequest {
 	    projectId: string;
 	    episodeId?: string;
@@ -4855,6 +5212,95 @@ export namespace desktop {
 		    return a;
 		}
 	}
+	export class TimelineShotDTO {
+	    ordinal: number;
+	    itemId: string;
+	    shotId: string;
+	    durationMs: number;
+	    mediaVersionId?: string;
+	    mediaHash?: string;
+	    mediaKind?: string;
+	    panelVersionId?: string;
+	    hasAudio: boolean;
+	    cueCount: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new TimelineShotDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.ordinal = source["ordinal"];
+	        this.itemId = source["itemId"];
+	        this.shotId = source["shotId"];
+	        this.durationMs = source["durationMs"];
+	        this.mediaVersionId = source["mediaVersionId"];
+	        this.mediaHash = source["mediaHash"];
+	        this.mediaKind = source["mediaKind"];
+	        this.panelVersionId = source["panelVersionId"];
+	        this.hasAudio = source["hasAudio"];
+	        this.cueCount = source["cueCount"];
+	    }
+	}
+	export class TimelineDTO {
+	    episodeId: string;
+	    boardVersionId: string;
+	    scriptVersionId: string;
+	    shots: TimelineShotDTO[];
+	    totalDurationMs: number;
+	    missingMedia: number;
+	    cueCount: number;
+	    missingLines: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new TimelineDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.episodeId = source["episodeId"];
+	        this.boardVersionId = source["boardVersionId"];
+	        this.scriptVersionId = source["scriptVersionId"];
+	        this.shots = this.convertValues(source["shots"], TimelineShotDTO);
+	        this.totalDurationMs = source["totalDurationMs"];
+	        this.missingMedia = source["missingMedia"];
+	        this.cueCount = source["cueCount"];
+	        this.missingLines = source["missingLines"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class TimelineRequest {
+	    episodeId: string;
+	    boardVersionId?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new TimelineRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.episodeId = source["episodeId"];
+	        this.boardVersionId = source["boardVersionId"];
+	    }
+	}
+	
 	export class TransitionStageRunRequest {
 	    stageRunId: string;
 	    status: string;
