@@ -1,0 +1,364 @@
+[
+  {
+    "name": "G03b-ordinal-always-one",
+    "path": "internal/application/assets/gap.go",
+    "note": "every gap line is written with ordinal 1 (index kept used so it compiles)",
+    "expect": "TestTheOrdinalsAndIdentifiersAreAssignedRatherThanAccepted",
+    "runner": "go",
+    "hash_before": "8500485445e88e577588f2f7e5ab2c84dc621f607630e5e6ac72ce22dfcd92e2",
+    "exit_code": 1,
+    "failures": [
+      "assets.TestTheOrdinalsAndIdentifiersAreAssignedRatherThanAccepted"
+    ],
+    "messages": {},
+    "seconds": 21.0,
+    "verdict": "KILLED",
+    "hash_after": "8500485445e88e577588f2f7e5ab2c84dc621f607630e5e6ac72ce22dfcd92e2",
+    "restored": true
+  },
+  {
+    "name": "B09-prompt-drops-the-items-own-fields",
+    "path": "internal/application/productionpipeline/batch.go",
+    "note": "imagePromptFor renders no clause from the item, so every shot's prompt is the suffix alone",
+    "expect": "(no test named)",
+    "runner": "go",
+    "hash_before": "ae307edca08c2abe931440893b5a45d97ade29a9f6097449badbc2b366ce0b84",
+    "exit_code": 1,
+    "failures": [
+      "infinite-atelier-mine-0903.TestACollectedJobBecomesACandidateVersion"
+    ],
+    "messages": {},
+    "seconds": 18.6,
+    "verdict": "KILLED",
+    "hash_after": "ae307edca08c2abe931440893b5a45d97ade29a9f6097449badbc2b366ce0b84",
+    "restored": true
+  },
+  {
+    "name": "B10-prompt-suffix-replaces-the-item",
+    "path": "internal/application/productionpipeline/batch.go",
+    "note": "the caller's prompt suffix REPLACES the shot's own descriptions",
+    "expect": "(no test named)",
+    "runner": "go",
+    "hash_before": "ae307edca08c2abe931440893b5a45d97ade29a9f6097449badbc2b366ce0b84",
+    "exit_code": 1,
+    "failures": [
+      "infinite-atelier-mine-0903.TestACollectedJobBecomesACandidateVersion"
+    ],
+    "messages": {},
+    "seconds": 17.3,
+    "verdict": "KILLED",
+    "hash_after": "ae307edca08c2abe931440893b5a45d97ade29a9f6097449badbc2b366ce0b84",
+    "restored": true
+  },
+  {
+    "name": "B11-per-shot-selection-ignored",
+    "path": "internal/application/productionpipeline/batch.go",
+    "note": "ShotIDs narrows nothing: every shot in the board is submitted",
+    "expect": "TestTheBatchNarrowsToOneShotForASingleShotRedo",
+    "runner": "go",
+    "hash_before": "ae307edca08c2abe931440893b5a45d97ade29a9f6097449badbc2b366ce0b84",
+    "exit_code": 1,
+    "failures": [
+      "infinite-atelier-mine-0903.TestTheBatchNarrowsToOneShotForASingleShotRedo"
+    ],
+    "messages": {},
+    "seconds": 19.7,
+    "verdict": "KILLED",
+    "hash_after": "ae307edca08c2abe931440893b5a45d97ade29a9f6097449badbc2b366ce0b84",
+    "restored": true
+  },
+  {
+    "name": "B12-batch-makes-its-own-storyboard-id",
+    "path": "internal/application/productionpipeline/batch.go",
+    "note": "the ProjectID requirement is gone, so jobs are filed under an empty project",
+    "expect": "(no test named)",
+    "runner": "go",
+    "hash_before": "ae307edca08c2abe931440893b5a45d97ade29a9f6097449badbc2b366ce0b84",
+    "exit_code": 0,
+    "failures": [],
+    "messages": {},
+    "seconds": 18.0,
+    "verdict": "SURVIVED",
+    "hash_after": "ae307edca08c2abe931440893b5a45d97ade29a9f6097449badbc2b366ce0b84",
+    "restored": true
+  },
+  {
+    "name": "B13-gate-first-arg-swapped",
+    "path": "internal/application/productionpipeline/batch.go",
+    "note": "the version-status arm of the gate is unreachable",
+    "expect": "TestTheBatchRefusesAnUnapprovedBoard",
+    "runner": "go",
+    "hash_before": "ae307edca08c2abe931440893b5a45d97ade29a9f6097449badbc2b366ce0b84",
+    "exit_code": 1,
+    "failures": [
+      "infinite-atelier-mine-0903.TestTheBatchRefusesAnUnapprovedBoard"
+    ],
+    "messages": {},
+    "seconds": 17.8,
+    "verdict": "KILLED",
+    "hash_after": "ae307edca08c2abe931440893b5a45d97ade29a9f6097449badbc2b366ce0b84",
+    "restored": true
+  },
+  {
+    "name": "C05-asset-by-item-ignored",
+    "path": "internal/application/productionpipeline/candidate.go",
+    "note": "the item\u2192asset mapping is ignored: the first asset in the map receives every candidate",
+    "expect": "(no test named)",
+    "runner": "go",
+    "hash_before": "204248073ab48f83d029659fcb67a9196058b3d946e1ccad6e22e17f898363fc",
+    "exit_code": 0,
+    "failures": [],
+    "messages": {},
+    "seconds": 17.6,
+    "verdict": "SURVIVED",
+    "hash_after": "204248073ab48f83d029659fcb67a9196058b3d946e1ccad6e22e17f898363fc",
+    "restored": true
+  },
+  {
+    "name": "C06-usage-not-written",
+    "path": "internal/application/productionpipeline/candidate.go",
+    "note": "the collection writes no usage, so no panel can find its candidates",
+    "expect": "TestACollectedJobBecomesACandidateVersion",
+    "runner": "go",
+    "hash_before": "204248073ab48f83d029659fcb67a9196058b3d946e1ccad6e22e17f898363fc",
+    "exit_code": 1,
+    "failures": [
+      "infinite-atelier-mine-0903.TestACollectedJobBecomesACandidateVersion"
+    ],
+    "messages": {},
+    "seconds": 18.5,
+    "verdict": "KILLED",
+    "hash_after": "204248073ab48f83d029659fcb67a9196058b3d946e1ccad6e22e17f898363fc",
+    "restored": true
+  },
+  {
+    "name": "C07-seed-dropped",
+    "path": "internal/application/productionpipeline/candidate.go",
+    "note": "the seed the batch recorded is dropped from the candidate version (AC-ASSET-002)",
+    "expect": "(no test named)",
+    "runner": "go",
+    "hash_before": "204248073ab48f83d029659fcb67a9196058b3d946e1ccad6e22e17f898363fc",
+    "exit_code": 0,
+    "failures": [],
+    "messages": {},
+    "seconds": 17.0,
+    "verdict": "SURVIVED",
+    "hash_after": "204248073ab48f83d029659fcb67a9196058b3d946e1ccad6e22e17f898363fc",
+    "restored": true
+  },
+  {
+    "name": "C08-prompt-dropped",
+    "path": "internal/application/productionpipeline/candidate.go",
+    "note": "the prompt is dropped from the candidate version (AC-ASSET-002)",
+    "expect": "(no test named)",
+    "runner": "go",
+    "hash_before": "204248073ab48f83d029659fcb67a9196058b3d946e1ccad6e22e17f898363fc",
+    "exit_code": 0,
+    "failures": [],
+    "messages": {},
+    "seconds": 16.8,
+    "verdict": "SURVIVED",
+    "hash_after": "204248073ab48f83d029659fcb67a9196058b3d946e1ccad6e22e17f898363fc",
+    "restored": true
+  },
+  {
+    "name": "C09-approve-ignores-the-candidate-list",
+    "path": "internal/application/productionpipeline/candidate.go",
+    "note": "approval passes a one-element candidate list, so \u00a79.5's membership rule is vacuous",
+    "expect": "impact_wiring_test.go's panel approval",
+    "runner": "go",
+    "hash_before": "204248073ab48f83d029659fcb67a9196058b3d946e1ccad6e22e17f898363fc",
+    "exit_code": 0,
+    "failures": [],
+    "messages": {},
+    "seconds": 16.0,
+    "verdict": "SURVIVED",
+    "hash_after": "204248073ab48f83d029659fcb67a9196058b3d946e1ccad6e22e17f898363fc",
+    "restored": true
+  },
+  {
+    "name": "R04-script-stage-routes-to-production",
+    "path": "internal/desktop/script_binding.go",
+    "note": "the two slots are swapped: every stage runs on the other layer's pipeline",
+    "expect": "(no test named)",
+    "runner": "go",
+    "hash_before": "42c43ed6886f63a812aeb7efa379dc6e25f447f78b910c88e5779fc312e08c6b",
+    "exit_code": 0,
+    "failures": [],
+    "messages": {},
+    "seconds": 21.3,
+    "verdict": "SURVIVED",
+    "hash_after": "42c43ed6886f63a812aeb7efa379dc6e25f447f78b910c88e5779fc312e08c6b",
+    "restored": true
+  },
+  {
+    "name": "R05-manual-edit-ignores-the-attempts-stage",
+    "path": "internal/application/stagepipeline/service.go",
+    "note": "a manual edit naming the wrong stage is accepted, so content lands in another stage's artifact",
+    "expect": "revision_test.go (partial)",
+    "runner": "go",
+    "hash_before": "bb2850e50fb6bb490a5270728331373028c2ba5ce03a4c01ed30c58f0feeb1e9",
+    "exit_code": 0,
+    "failures": [],
+    "messages": {},
+    "seconds": 29.3,
+    "verdict": "SURVIVED",
+    "hash_after": "bb2850e50fb6bb490a5270728331373028c2ba5ce03a4c01ed30c58f0feeb1e9",
+    "restored": true
+  },
+  {
+    "name": "M05-episode-scope-check-removed",
+    "path": "internal/application/stagepipeline/service.go",
+    "note": "a manual edit no longer checks the episode belongs to the project (SECURITY boundary)",
+    "expect": "(no test named)",
+    "runner": "go",
+    "hash_before": "bb2850e50fb6bb490a5270728331373028c2ba5ce03a4c01ed30c58f0feeb1e9",
+    "exit_code": 0,
+    "failures": [],
+    "messages": {},
+    "seconds": 16.0,
+    "verdict": "SURVIVED",
+    "hash_after": "bb2850e50fb6bb490a5270728331373028c2ba5ce03a4c01ed30c58f0feeb1e9",
+    "restored": true
+  },
+  {
+    "name": "M06-control-inert-comment",
+    "path": "internal/application/stagepipeline/service.go",
+    "note": "control: an inert comment, which must SURVIVE (a KILL here would be a false positive)",
+    "expect": "(control \u2014 SURVIVED is the expected and correct outcome)",
+    "runner": "go",
+    "hash_before": "bb2850e50fb6bb490a5270728331373028c2ba5ce03a4c01ed30c58f0feeb1e9",
+    "exit_code": 0,
+    "failures": [],
+    "messages": {},
+    "seconds": 16.8,
+    "verdict": "SURVIVED",
+    "hash_after": "bb2850e50fb6bb490a5270728331373028c2ba5ce03a4c01ed30c58f0feeb1e9",
+    "restored": true
+  },
+  {
+    "name": "M07-revision-with-no-decision-allowed",
+    "path": "internal/application/stagepipeline/service.go",
+    "note": "a revision naming an attempt nobody decided about is accepted, so a FIX runs with nothing to fix",
+    "expect": "TestRevisionContextReadsTheFindingsAndRefusesWithoutADecision",
+    "runner": "go",
+    "hash_before": "bb2850e50fb6bb490a5270728331373028c2ba5ce03a4c01ed30c58f0feeb1e9",
+    "exit_code": 1,
+    "failures": [
+      "stagepipeline.TestRevisionContextReadsTheFindingsAndRefusesWithoutADecision"
+    ],
+    "messages": {},
+    "seconds": 16.1,
+    "verdict": "KILLED",
+    "hash_after": "bb2850e50fb6bb490a5270728331373028c2ba5ce03a4c01ed30c58f0feeb1e9",
+    "restored": true
+  },
+  {
+    "name": "M08-no-supervisor-still-parked-for-review",
+    "path": "internal/application/stagepipeline/service.go",
+    "note": "the branch is INVERTED: a supervised stage skips its review, an unsupervised one waits for one",
+    "expect": "TestCanaryProductionStagesToAnApprovedBoard",
+    "runner": "go",
+    "hash_before": "bb2850e50fb6bb490a5270728331373028c2ba5ce03a4c01ed30c58f0feeb1e9",
+    "exit_code": 1,
+    "failures": [
+      "database.TestCanaryProductionStagesToAnApprovedBoard",
+      "database.TestCanaryScriptPipelineToApprovedScript"
+    ],
+    "messages": {},
+    "seconds": 16.8,
+    "verdict": "KILLED",
+    "hash_after": "bb2850e50fb6bb490a5270728331373028c2ba5ce03a4c01ed30c58f0feeb1e9",
+    "restored": true
+  },
+  {
+    "name": "G04-unresolved-returns-line-ids",
+    "path": "internal/application/assets/gap.go",
+    "note": "UnresolvedRequiredItems returns EVERY line, including the satisfied and optional ones",
+    "expect": "TestUnresolvedRequiredItemsRefusesWhenNothingIsApproved",
+    "runner": "go",
+    "hash_before": "8500485445e88e577588f2f7e5ab2c84dc621f607630e5e6ac72ce22dfcd92e2",
+    "exit_code": 1,
+    "failures": [
+      "assets.TestUnresolvedRequiredItemsRefusesWhenNothingIsApproved"
+    ],
+    "messages": {},
+    "seconds": 16.9,
+    "verdict": "KILLED",
+    "hash_after": "8500485445e88e577588f2f7e5ab2c84dc621f607630e5e6ac72ce22dfcd92e2",
+    "restored": true
+  },
+  {
+    "name": "I05-mock-image-rejects-nil",
+    "path": "internal/infrastructure/providers/mock_image.go",
+    "note": "a nil adapter panics instead of failing closed",
+    "expect": "(no test named)",
+    "runner": "go",
+    "hash_before": "a0cf7d584c97417986bb421257b23aca2b74e812925f56b99a934ff5559dfe54",
+    "exit_code": 0,
+    "failures": [],
+    "messages": {},
+    "seconds": 16.4,
+    "verdict": "SURVIVED",
+    "hash_after": "a0cf7d584c97417986bb421257b23aca2b74e812925f56b99a934ff5559dfe54",
+    "restored": true
+  },
+  {
+    "name": "BR05-source-check-removed",
+    "path": "web/src/services/desktop/monoform-bridge.ts",
+    "note": "the source marker check is gone",
+    "expect": "a message whose source is not the studio is refused",
+    "runner": "npm",
+    "hash_before": "9f72d4cc2e69eecb5c5281f973f3064b2616f32f7c756d16ded133d242881712",
+    "exit_code": 1,
+    "failures": [
+      "a message whose source is not the studio is refused"
+    ],
+    "seconds": 1.6,
+    "verdict": "KILLED",
+    "hash_after": "9f72d4cc2e69eecb5c5281f973f3064b2616f32f7c756d16ded133d242881712",
+    "restored": true
+  },
+  {
+    "name": "BR06-camera-focal-range-removed",
+    "path": "web/src/services/desktop/monoform-bridge.ts",
+    "note": "a camera with an unrenderable focal length is accepted",
+    "expect": "a shot_updated message requires a real camera",
+    "runner": "npm",
+    "hash_before": "9f72d4cc2e69eecb5c5281f973f3064b2616f32f7c756d16ded133d242881712",
+    "exit_code": 1,
+    "failures": [
+      "a shot_updated message requires a real camera"
+    ],
+    "seconds": 0.7,
+    "verdict": "KILLED",
+    "hash_after": "9f72d4cc2e69eecb5c5281f973f3064b2616f32f7c756d16ded133d242881712",
+    "restored": true
+  },
+  {
+    "name": "BR07-camera-finite-check-removed",
+    "path": "web/src/services/desktop/monoform-bridge.ts",
+    "note": "a camera component that is NaN or a string is accepted",
+    "expect": "a shot_updated message requires a real camera",
+    "runner": "npm",
+    "hash_before": "9f72d4cc2e69eecb5c5281f973f3064b2616f32f7c756d16ded133d242881712",
+    "exit_code": 1,
+    "failures": [
+      "a shot_updated message requires a real camera"
+    ],
+    "seconds": 0.6,
+    "verdict": "KILLED",
+    "hash_after": "9f72d4cc2e69eecb5c5281f973f3064b2616f32f7c756d16ded133d242881712",
+    "restored": true
+  },
+  {
+    "name": "BR08-host-message-posts-to-star",
+    "path": "web/src/services/desktop/monoform-bridge.ts",
+    "note": "the host posts to '*' rather than the window's own origin",
+    "expect": "the host's messages carry the envelope, and the target origin is exact",
+    "runner": "npm",
+    "hash_before": "9f72d4cc2e69eecb5c5281f973f3064b2616f32f7c756d16ded133d242881712",
+    "verdict": "DID-NOT-APPLY",
+    "detail": "anchor found 0 times, expected 1: '\\treturn selfOrigin;\\r\\n'"
+  }
+]

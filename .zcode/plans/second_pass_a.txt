@@ -1,0 +1,31 @@
+=== full-suite second pass over 20 mutations ===
+killed by the FULL suite: 2
+STILL ALIVE:              18
+invalid:                  0
+
+  killed-by-full: A38 a strategy link's ordinal is zero-based
+                  <- --- FAIL: TestLinkArgumentsReachTheService (0.00s)
+  killed-by-full: A44 the generation stage claims the skeleton family
+                  <- --- FAIL: TestCanaryScriptPipelineToApprovedScript (0.07s)
+
+  STILL ALIVE: A10 readLocks does not trim the version id
+  STILL ALIVE: A24 a draft's missing interior marking is left empty
+  STILL ALIVE: A30 a diff reads the structure lock from the wrong side
+  STILL ALIVE: A42 the generation stage's supervisor is the skeleton's
+  STILL ALIVE: A43 the generation stage names the skeleton artifact type
+  STILL ALIVE: A49 itoa renders every number as its last digit
+  STILL ALIVE: A54 a revision with no decision is silently an empty revision
+  STILL ALIVE: A55 a lock of another family is skipped rather than refused
+  STILL ALIVE: A57 entityIDOf reads the first artifact whatever its id
+  STILL ALIVE: A58 versionOfDecision accepts any tool call's result
+  STILL ALIVE: A59 a waiver is treated as an approving decision
+  STILL ALIVE: A60 a cancel is treated as an approving decision
+  STILL ALIVE: A61 the artifact is approved when the decision is a FIX
+  STILL ALIVE: A62 a manual edit is recorded as an AGENT's work
+  STILL ALIVE: A63 the episode boundary is not enforced on a manual edit
+  STILL ALIVE: A64 a review report that names no ruleset is accepted
+  STILL ALIVE: A65 a finding with an unknown severity is accepted
+  STILL ALIVE: A73 the entity reference query ignores the project boundary
+
+
+all files restored (hash-verified)

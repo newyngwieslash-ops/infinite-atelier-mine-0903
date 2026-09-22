@@ -1,0 +1,38 @@
+=== full-suite second pass over 28 mutations ===
+killed by the FULL suite: 1
+STILL ALIVE:              27
+invalid:                  0
+
+  killed-by-full: B26 the original-adaptation flag is dropped by the draft conversion
+                  <- --- FAIL: TestCanaryScriptPipelineToApprovedScript (0.07s)
+
+  STILL ALIVE: B20 the write tool writes into the episode the caller named
+  STILL ALIVE: B21 the write tool attributes the version to nobody
+  STILL ALIVE: B23 the draft conversion states no scene number
+  STILL ALIVE: B24 a line's speaker is dropped by the draft conversion
+  STILL ALIVE: B25 a scene's cited event is dropped by the draft conversion
+  STILL ALIVE: C1 the stage is matched by substring rather than by the skill title
+  STILL ALIVE: C7 the strategy defaults its mode rather than stating one
+  STILL ALIVE: C16 a complete reply keeps nextAction at wait_user
+  STILL ALIVE: C18 the script-stage branch answers a SUPERVISION prompt as a write
+  STILL ALIVE: D1 canvasProjectorFor returns an adapter over a nil canvas
+  STILL ALIVE: D4 the projector passes the entity type as the node title
+  STILL ALIVE: D5 the projector returns the entity id rather than the node id
+  STILL ALIVE: D6 the drama stack is composed but attached to nothing
+  STILL ALIVE: D7 the pipeline is composed over the wrong run reader
+  STILL ALIVE: D8 the pipeline is composed without the assembly
+  STILL ALIVE: D9 the pipeline is composed over the script service's own repository
+  STILL ALIVE: D10 a named provider is honoured without checking it is enabled
+  STILL ALIVE: D18 app.go composes the agent stack but attaches no pipeline
+  STILL ALIVE: D19 the binding drops the stage's project scope
+  STILL ALIVE: D20 the binding drops the stage's task
+  STILL ALIVE: D21 the binding reports the attempt's status as the artifact list
+  STILL ALIVE: D22 the gate binding drops the version the decision approves
+  STILL ALIVE: D23 the manual-edit binding drops the user's own structure
+  STILL ALIVE: D24 the structure DTO reports a version's own stale duration
+  STILL ALIVE: D25 the line-lock binding maps the wrong DTO field
+  STILL ALIVE: D26 the lock binding names no field
+  STILL ALIVE: D27 the unlock binding releases a different field
+
+
+all files restored (hash-verified)

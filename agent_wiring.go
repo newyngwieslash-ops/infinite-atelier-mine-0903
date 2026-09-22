@@ -108,7 +108,27 @@ func composeAgents(deps agentDeps) *agentWiring {
 		Clock:    clock,
 		IDs:      ids,
 	})
-	memoryService := appmemory.New(database.NewAgentRepository(connection))
+	// THE MEMORY STACK, both halves of it. The transcript port is what WP-07 shipped and is
+	// unchanged; the memory STORE is WP-10's, and it is built here rather than in a second
+	// composition because both halves are what `Deps.Memory` needs and because the store's
+	// absence is invisible at runtime — a service with no repository reports "no memory store is
+	// configured" and every memory command refuses, which is a state that looks like an empty
+	// project rather than like a wiring gap.
+	//
+	// The reviewer found exactly that: the port and the store did not line up, nothing failed to
+	// compile because the service takes an interface, and the whole WP-10 surface was unreachable
+	// in a composed build. The `var _ appmemory.Repository = (*database.MemoryRepository)(nil)`
+	// assertion in the repository is what refuses that shape now; this is the composition that
+	// makes the assertion load-bearing.
+	memoryRepository := database.NewMemoryRepository(connection)
+	memoryService := appmemory.NewService(appmemory.Options{
+		Store:    database.NewAgentRepository(connection),
+		Items:    memoryRepository,
+		Vectors:  database.NewMemoryVectorIndex(memoryRepository),
+		Embedder: newProjectEmbedder(deps.Providers, connection),
+		Clock:    clock,
+		IDs:      ids,
+	})
 
 	tools, err := agenttools.Build(agenttools.Deps{
 		Story:      deps.Drama.story,
@@ -117,7 +137,20 @@ func composeAgents(deps agentDeps) *agentWiring {
 		Workflow:   deps.Drama.workflow,
 		Memory:     memoryService,
 		Assets:     deps.Drama.assets,
-		Projects:   projectService,
+		// THE GAP SERVICE, which the tool table has required since WP-09 added the two gap tools
+		// and which this call never passed. `Deps.Available` checks it, so `agenttools.Build`
+		// REFUSED, `composeAgents` returned nil for that reason, and the whole agent stack was
+		// unreachable in every composed build: no stage could run, no script pipeline existed, and
+		// the application reported "the agent layer is unavailable" while every service below it was
+		// present. The wiring test added for WP-10's memory port found it, because that test is the
+		// first thing in this repository that composes the agent stack over a real database and
+		// asserts the result is non-nil.
+		//
+		// It is the third time a required dependency was missing from exactly one call site: the
+		// shape is invisible to the compiler because `Deps` is a struct of optionals that
+		// `Available` validates at runtime.
+		Gaps:     deps.Drama.gaps,
+		Projects: projectService,
 		// The chapter reader WP-06 declared: the walk from a chapter to the text it
 		// indexes, which is the same one the extraction service uses.
 		Chapters: desktop.NewChapterTextReader(deps.Drama.story, deps.Drama.importing),
@@ -153,6 +186,12 @@ func composeAgents(deps agentDeps) *agentWiring {
 		Artifacts:     database.NewArtifactVerifier(connection),
 		Clock:         clock,
 		IDs:           ids,
+		// THE MEMORY PORT, which is what makes section 12.2's order reachable at all: the runtime
+		// recalls before it writes the current turn and writes both turns afterwards, and it can only
+		// do that if it is handed something to do it with. Before this line the port existed and
+		// nothing filled it, so every prompt's memory layer was empty and no user message was ever
+		// stored — the "interface with no real path" shape this repository has now found four times.
+		Memory: newMemoryBridge(memoryService),
 	})
 	engine := agentruntime.NewEngine(agentruntime.EngineOptions{
 		Runtime: runtime,

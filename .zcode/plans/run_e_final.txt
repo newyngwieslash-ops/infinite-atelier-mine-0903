@@ -1,0 +1,59 @@
+=== 19 mutations run ===
+killed:   6
+SURVIVED: 11
+invalid:  2
+
+  killed:   E1 the nested line's lock is dropped from the diff
+              <- --- FAIL: TestDiffScriptStructureReportsNestedChanges (0.00s)
+    structure_test.go:344: the lock change was not reported
+FAIL
+FAIL	github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/script	1.074s
+FAIL
+  killed:   E4 a removed line is reported with an empty before-text
+              <- --- FAIL: TestDiffScriptStructureReportsNestedChanges (0.00s)
+    structure_test.go:377: a dropped line was not reported
+FAIL
+FAIL	github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/script	1.038s
+FAIL
+  killed:   E13 a structure with no scenes validates
+              <- --- FAIL: TestScriptStructureRefusesAnEmptyOrOversizedVersion (0.00s)
+    structure_test.go:117: a structure with no scenes was accepted
+FAIL
+FAIL	github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/script	1.613s
+FAIL
+  killed:   E15 a line nested under another scene validates
+              <- --- FAIL: TestScriptStructureRefusesAMisnestedChild (0.00s)
+    structure_test.go:104: a line naming another scene was accepted
+FAIL
+FAIL	github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/script	1.026s
+FAIL
+  killed:   E17 a field lock on a foreign family validates
+              <- --- FAIL: TestLockVocabularyIsClosedPerFamily (0.00s)
+    structure_test.go:185: a skeleton field was lockable on a script version
+FAIL
+FAIL	github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/script	1.068s
+FAIL
+  killed:   E19 a script version with an unknown status validates
+              <- --- FAIL: TestScriptVersionValidate (0.00s)
+    --- FAIL: TestScriptVersionValidate/unknown_status (0.00s)
+        script_test.go:439: a malformed script version was accepted
+FAIL
+FAIL	github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/script	1.038s
+FAIL
+
+  SURVIVED: E2 the scene's own marked-as-original flag is dropped from the diff   (ok  	github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/script	1.061s)
+  SURVIVED: E3 the scene's cited source event is dropped from the diff   (ok  	github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/script	1.080s)
+  SURVIVED: E5 Changed ignores a modification that carries no field list   (ok  	github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/script	1.068s)
+  SURVIVED: E6 the script diff is not marked with its family   (ok  	github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/script	1.067s)
+  SURVIVED: E7 an added scene's ordinal is not reported   (ok  	github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/script	1.073s)
+  SURVIVED: E8 a locked line's own flag is not carried into the diff item   (ok  	github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/script	1.100s)
+  SURVIVED: E9 the script draft's scene count counts something else   (ok  	github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/script	1.027s)
+  SURVIVED: E10 itoa in the domain drops all but the last digit   (ok  	github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/script	1.610s)
+  SURVIVED: E11 LockableFields drops the skeleton's ending hook   (ok  	github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/script	1.073s)
+  SURVIVED: E12 a strategy's risks stop being lockable   (ok  	github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/script	1.039s)
+  SURVIVED: E18 every family admits no lockable field   (ok  	github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/script	1.050s)
+
+  INVALID:  E14 the ordinals are checked against the previous scene rather than the position   (FAIL	github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/script [build failed])
+  INVALID:  E16 a shot's ordinal is not checked against its position   (FAIL	github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/script [build failed])
+
+all mutated files restored (hash-verified)
