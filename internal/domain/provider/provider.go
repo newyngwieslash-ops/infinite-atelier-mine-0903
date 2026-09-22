@@ -37,11 +37,27 @@ const (
 	// states: the three answer different capability ports, and an image job that reached a
 	// video mock would be answered by an adapter that does not implement its interface.
 	KindMockImage Kind = "mock_image"
+	// KindMockEmbedding is the deterministic in-process EMBEDDING adapter, added by WP-10
+	// for the same reason and with the same two guardrails: AC-MEM-003 and AC-MEM-005 are
+	// tests about similarity, thresholds and reranks, and PRD FR-120 forbids sending a
+	// project's text anywhere without authorisation — so CI must be able to embed without a
+	// network.
+	//
+	// A FOURTH kind rather than a reuse of KindMockText, for the reason the other three
+	// state: the ports differ. An embedding is a vector and a text completion is a document,
+	// and an adapter that answered both would be answering one of them wrongly.
+	//
+	// It doubles as FR-120's KEYWORD FALLBACK: "MVP 支持 Provider Embedding 与关键词降级".
+	// The feature-hash vectors it produces are exactly a keyword representation — two texts
+	// that share words score alike and two that share none score zero — so a build with no
+	// embedding provider can still run the semantic channel locally, on the user's machine,
+	// with nothing leaving the process.
+	KindMockEmbedding Kind = "mock_embedding"
 )
 
 // ValidKinds returns the provider kinds trusted by the current registry.
 func ValidKinds() []Kind {
-	return []Kind{KindOpenAICompatible, KindGeminiCompatible, KindMockMedia, KindMockText, KindMockImage}
+	return []Kind{KindOpenAICompatible, KindGeminiCompatible, KindMockMedia, KindMockText, KindMockImage, KindMockEmbedding}
 }
 
 // IsValidKind reports whether the kind is accepted for persisted configs.
@@ -54,7 +70,7 @@ func IsValidKind(kind Kind) bool {
 	return false
 }
 
-// Capability is a provider-callable capability. WP-02 implements text only.
+// Capability is a provider-callable capability.
 type Capability string
 
 const (
@@ -66,12 +82,24 @@ const (
 	CapabilityVideo Capability = "video"
 	// CapabilityAudio is speech synthesis.
 	CapabilityAudio Capability = "audio"
+	// CapabilityEmbedding is vector embedding, which WP-10 added.
+	//
+	// It was deliberately absent until then, and a test asserted so: "embedding is not
+	// implemented yet and must not be advertised". WP-10 implements it, so that test was
+	// rewritten rather than deleted — a capability that no adapter can serve is a promise
+	// the configuration UI makes on the build's behalf, and the assertion existed to stop
+	// the list from running ahead of the code.
+	//
+	// The schema has allowed the value since migration 000003, whose provider_requests
+	// CHECK and provider_configs capability list both carry 'embedding'. What was missing
+	// was anything that could answer one.
+	CapabilityEmbedding Capability = "embedding"
 )
 
 // IsValidCapability reports whether the capability is registered in Go.
 func IsValidCapability(capability Capability) bool {
 	switch capability {
-	case CapabilityText, CapabilityImage, CapabilityVideo, CapabilityAudio:
+	case CapabilityText, CapabilityImage, CapabilityVideo, CapabilityAudio, CapabilityEmbedding:
 		return true
 	default:
 		return false

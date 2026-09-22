@@ -50,6 +50,12 @@ type Registry struct {
 	// mockText and for the same reason: AC-BOARD-003 is a test about several image jobs,
 	// and AGENT_CONTRACTS section 18.3 forbids CI from calling a paid provider.
 	mockImage appjobs.ImagePort
+
+	// mockEmbedding is the deterministic embedding adapter, with the same guardrails
+	// again. It doubles as PRD FR-120's keyword fallback rather than serving tests alone:
+	// "MVP 支持 Provider Embedding 与关键词降级", and a project with no embedding provider
+	// configured must not have to send its text anywhere to get a semantic channel.
+	mockEmbedding providers.EmbeddingPort
 }
 
 // NewRegistry builds the provider registry.
@@ -99,6 +105,48 @@ func (r *Registry) WithMockImageAdapter(adapter appjobs.ImagePort) *Registry {
 	}
 	r.mockImage = adapter
 	return r
+}
+
+// WithMockEmbeddingAdapter registers the deterministic embedding adapter.
+//
+// It is registered separately from the others and reachable only for KindMockEmbedding, which
+// IsUserConfigurableKind refuses and the application layer therefore will not persist, so a real
+// provider configuration cannot select it. Keeping the registration at the composition root makes
+// it visible which build carries the mock, in the same way WithMockTextAdapter and
+// WithMockImageAdapter do.
+func (r *Registry) WithMockEmbeddingAdapter(adapter providers.EmbeddingPort) *Registry {
+	if r == nil {
+		return r
+	}
+	r.mockEmbedding = adapter
+	return r
+}
+
+// EmbeddingPortFor returns the embedding adapter for a provider ID.
+//
+// The mock is returned as the SAME instance it was registered as rather than built per call,
+// because its call log is state a test set up deliberately. A registry with no mock registered
+// reports "unsupported" rather than building one, so a build that did not opt in cannot be
+// answered by a mock that appeared anyway.
+func (r *Registry) EmbeddingPortFor(ctx context.Context, providerID string) (providers.EmbeddingPort, error) {
+	if r == nil || r.configs == nil {
+		return nil, provider.NewUnsupportedError()
+	}
+	config, err := r.configs.GetConfig(ctx, providerID)
+	if err != nil {
+		return nil, err
+	}
+	switch config.Kind {
+	case provider.KindOpenAICompatible:
+		return NewOpenAITextEmbeddingAdapter(r), nil
+	case provider.KindMockEmbedding:
+		if r.mockEmbedding == nil {
+			return nil, provider.NewUnsupportedError()
+		}
+		return r.mockEmbedding, nil
+	default:
+		return nil, provider.NewUnsupportedError()
+	}
 }
 
 // ImagePortFor returns the image adapter for a provider ID.

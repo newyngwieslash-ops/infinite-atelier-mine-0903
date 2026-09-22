@@ -142,13 +142,40 @@ func TestKindAndCapability(t *testing.T) {
 	if IsValidKind(Kind("anthropic")) {
 		t.Fatal("unregistered provider kind accepted")
 	}
-	for _, capability := range []Capability{CapabilityText, CapabilityImage, CapabilityVideo, CapabilityAudio} {
+	for _, capability := range []Capability{CapabilityText, CapabilityImage, CapabilityVideo, CapabilityAudio, CapabilityEmbedding} {
 		if !IsValidCapability(capability) {
 			t.Fatalf("capability %q reported invalid", capability)
 		}
 	}
-	if IsValidCapability(Capability("embedding")) {
-		t.Fatal("embedding is not implemented yet and must not be advertised")
+	// THIS ASSERTION WAS REVERSED BY WP-10, and the reversal is recorded rather than
+	// deleted because the rule it enforced still holds.
+	//
+	// It used to read: `if IsValidCapability(Capability("embedding")) { t.Fatal("embedding is
+	// not implemented yet and must not be advertised") }`. The rule was sound — a capability
+	// no adapter can serve is a promise the configuration UI makes on the build's behalf — and
+	// it was true until the adapters existed. WP-10's scope item 17 adds them
+	// (ROADMAP.md:522: "Embedding 模型 ADR；可先 Provider/Fake"), so the capability is now
+	// advertisable because it is now answerable.
+	//
+	// What replaces the old assertion is the SHARPER one: the capability is recognised AND
+	// there is a kind whose switch arm serves it, so "advertised" and "implemented" cannot
+	// drift apart in the other direction either.
+	if !IsValidCapability(CapabilityEmbedding) {
+		t.Fatal("embedding is implemented by two adapters and must be advertisable")
+	}
+	if !IsValidKind(KindOpenAICompatible) {
+		t.Fatal("the real embedding adapter resolves through the OpenAI-compatible kind")
+	}
+	// The mock kind is registered for the registry's switch arm and is deliberately NOT
+	// user-configurable, so a persisted configuration cannot select the deterministic
+	// fallback. Both halves are asserted together: a mock that became configurable would be
+	// reachable by a project, and a mock that left ValidKinds would be registered but
+	// unreachable — which is the defect WP-09's review found in WithMockImageAdapter.
+	if !IsValidKind(KindMockEmbedding) {
+		t.Fatal("the deterministic embedding kind must be resolvable")
+	}
+	if IsUserConfigurableKind(KindMockEmbedding) {
+		t.Fatal("the deterministic embedding kind must not be user-configurable")
 	}
 	if IsValidCapability(Capability("telepathy")) {
 		t.Fatal("unknown capability accepted")

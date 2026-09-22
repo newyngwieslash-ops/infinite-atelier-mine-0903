@@ -112,6 +112,24 @@ const (
 	ActorSystem ActorType = "system"
 )
 
+// ActorTypes lists the documented actors in the schema's order.
+var ActorTypes = []ActorType{ActorUser, ActorAgent, ActorSystem}
+
+// IsValidActorType reports whether an actor may act on a memory.
+//
+// The check lives here rather than at each command because an actor nobody recognises would
+// fall through CanModifyMemory's `actor != ActorUser` test and be treated as an agent — which
+// is the SAFE direction, but silently. Refusing an unknown actor makes the caller state who it
+// is.
+func IsValidActorType(value string) bool {
+	for _, candidate := range ActorTypes {
+		if string(candidate) == value {
+			return true
+		}
+	}
+	return false
+}
+
 // Importance bounds and defaults (PRD FR-120's "importance、recency、semantic、role 权重融合").
 const (
 	// DefaultImportance is what an item gets when nothing scored it. It is the middle of

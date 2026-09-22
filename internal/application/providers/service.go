@@ -117,6 +117,64 @@ type TextPortResolver interface {
 	TextPortFor(ctx context.Context, providerID string) (TextPort, error)
 }
 
+// EmbeddingRequest is a capability-checked embedding request.
+//
+// It is deliberately thin: PRD FR-120 requires the embedding provider to be replaceable and
+// the input is text, so there is nothing to carry but the model and the texts. The MODEL is
+// required rather than defaulted because DOMAIN_MODEL section 14.5 keys the memory index's
+// version on it, and a request that named none would make the caller's rows unattributable.
+type EmbeddingRequest struct {
+	ProviderID string
+	Model      string
+	Texts      []string
+}
+
+// Validate checks the request shape before it reaches infrastructure.
+func (r EmbeddingRequest) Validate() error {
+	if !provider.ValidKindlessID(r.ProviderID) {
+		return provider.NewConfigurationError()
+	}
+	if r.Model == "" {
+		return provider.NewConfigurationError()
+	}
+	if len(r.Texts) == 0 {
+		return provider.NewInvalidInputError()
+	}
+	for _, text := range r.Texts {
+		if len(text) == 0 {
+			return provider.NewInvalidInputError()
+		}
+	}
+	return nil
+}
+
+// EmbeddingResult is one batch of vectors.
+//
+// Model is the model that ACTUALLY answered, captured from the response rather than echoed
+// from the request, for the reason the text port captured `response_model` in WP-07: a
+// fallback or a provider substitution would otherwise write a provenance that lies.
+//
+// Version is the embedding RECIPE's version. The wire response has no such field — providers
+// version their models by name — so the adapter derives it from what it can observe, which for
+// a real provider is the model plus the vector width. A change to either is a change to the
+// space, and section 14.5's rebuild is what moves the rows across.
+type EmbeddingResult struct {
+	Model   string
+	Version string
+	// Vectors are in the request's order, one per text.
+	Vectors [][]float32
+}
+
+// EmbeddingPort is the capability port implemented by embedding adapters.
+type EmbeddingPort interface {
+	Embed(ctx context.Context, request EmbeddingRequest) (EmbeddingResult, error)
+}
+
+// EmbeddingPortResolver resolves a configured provider to its compiled-in embedding adapter.
+type EmbeddingPortResolver interface {
+	EmbeddingPortFor(ctx context.Context, providerID string) (EmbeddingPort, error)
+}
+
 // HealthPort is the reachability check port.
 type HealthPort interface {
 	Check(ctx context.Context, providerID string) (provider.HealthState, error)

@@ -1,28 +1,30 @@
 // Package memory is the recall port of AGENT_CONTRACTS section 12 and
-// DOMAIN_MODEL section 14, at the scope WP-07 owns.
+// DOMAIN_MODEL section 14.
 //
-// The roadmap's scope item 15 is "基础 Memory Port，暂可只 Recent" — a basic memory
-// port, recent-only for now — and this package takes that literally. It defines
-// the port, implements recent recall over the agent_messages table that the runtime
-// already writes, and deliberately does NOT build the memory store, the summary
-// chain or the vector index: those are WP-10's, and building them now would mean
-// guessing at a schema that package is meant to design.
+// WP-07 built the seam and one real implementation of it: a Recent window over the
+// agent_messages table the runtime already writes, with section 14.5's two silent
+// invariants (当前消息不召回自身 and 其他项目内容不可召回) enforced rather than left to
+// the store. WP-10 kept that and ADDED the rest the section asks for: the memory store,
+// the summary chain, the float32 vector index, the scored recall with a threshold and a
+// token budget, deep recall, and the user's view/pin/edit/delete/rebuild commands.
 //
-// So what is here is the seam plus one real implementation of it. That is enough
-// for two things the specification requires today — section 12.2's recall ORDER
-// (recall before persisting the current message, so a query never recalls itself)
-// and section 14.4's scope isolation — and nothing more.
+// # Two stores rather than one, and why
 //
-// Two invariants from section 14.5 are enforced here rather than left to the
-// store, because they are the two that a wrong implementation would violate
-// silently:
+// The Recent channel still reads agent_messages. That table is the agent RUNTIME's
+// transcript — one row per turn of one run, cascade-deleted with the run — and it is the
+// right source for "what was just said" because it is the thing that was just said. The
+// memory store (migration 000019's memory_items) is the USER's record, with a lifecycle
+// the transcript does not have: pinned, edited, deleted, re-embedded. ADR-0014 records the
+// ruling; what it means here is that `Store` below and `Repository` in ports.go are two
+// ports over two tables, and neither is an implementation of the other.
 //
-//   - 当前消息不召回自身. A recall excludes the message being answered, which is why
-//     BuildContext takes the current turn's identifier rather than trusting a
-//     caller to filter afterwards.
-//   - 其他项目内容不可召回. The scope is an exact match on the project, not a prefix
-//     of an encoded string, because section 14.4 says retrieval must filter by
-//     structure.
+// So the channels of section 12.1 are:
+//
+//	recent    -> Store.RecentMessages      (agent_messages, this file's BuildContext)
+//	summaries -> Repository + VectorIndex  (memory_items of type summary)
+//	semantic  -> Repository + VectorIndex  (memory_items of any type, thresholded)
+//	facts     -> the context builder's structured channel (NOT memory: section 12.2's
+//	             "Project Rule/Event Graph 通过结构化事实通道注入，不混作 Memory")
 package memory
 
 import (
@@ -31,58 +33,27 @@ import (
 	"time"
 
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/agent"
+	domainmemory "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/memory"
 )
 
 // Scope is one conversation's memory scope (DOMAIN_MODEL section 14.4).
 //
-// The fields are that section's, in its order, and they are separate fields rather
-// than one encoded string because section 14.4 requires retrieval to filter by
-// structure: a store that matched a prefix would return another project's messages
-// whenever one project's identifier happened to begin with another's.
-type Scope struct {
-	Tenant    string
-	Workspace string
-	Project   string
-	Episode   string
-	AgentKey  string
-	Session   string
-}
+// It is the DOMAIN's type, aliased rather than restated. A second definition here would be
+// a second place for the six parts and their order to live, and the whole point of section
+// 14.4's structural isolation is that exactly one shape decides which conversation a
+// memory belongs to.
+type Scope = domainmemory.Scope
 
-// Validate checks a scope before it is used to recall anything.
+// Error is the DOMAIN's memory error, aliased for the same reason: a caller that switches
+// on the category should be reading one taxonomy, not two that happen to agree today.
+type Error = domainmemory.Error
+
+// Item is one recalled message.
 //
-// A project is required and everything else is optional, because every drama query
-// is project-scoped: a scope without one would recall across projects, which is the
-// leak section 14.5 forbids.
-func (s Scope) Validate() error {
-	if strings.TrimSpace(s.Project) == "" {
-		return InvalidError("A memory scope must name its project.")
-	}
-	if strings.ContainsAny(s.Tenant+s.Workspace+s.Project+s.Episode+s.AgentKey+s.Session, "\x00") {
-		return InvalidError("A memory scope cannot contain a control character.")
-	}
-	return nil
-}
-
-// Key renders the scope as the stable string the schema stores.
-//
-// It is a display and indexing convenience: the parts travel as their own columns
-// and a query filters on those, so a change to this encoding cannot change what is
-// recalled. The separator cannot appear in a scope part, so two different scopes
-// cannot render to one key.
-func (s Scope) Key() string {
-	return strings.Join([]string{s.Tenant, s.Workspace, s.Project, s.Episode, s.AgentKey, s.Session}, "|")
-}
-
-// Parts returns the scope's six parts in section 14.4's order, so a repository can
-// store them without parsing the key.
-func (s Scope) Parts() [6]string {
-	return [6]string{s.Tenant, s.Workspace, s.Project, s.Episode, s.AgentKey, s.Session}
-}
-
-// Item is one recalled memory.
-//
-// Provenance is the run the message came from, which section 12.2 requires recalled
-// context to carry so a reader can tell where it came from.
+// It is a view of an agent_messages row rather than a memory item, which is why it has a
+// Provenance field and no importance: the transcript's rows are what the Recent channel
+// reads, and they carry the run they belong to (section 12.2's requirement that recalled
+// context says where it came from).
 type Item struct {
 	MessageID  string
 	Role       agent.MessageRole
@@ -105,14 +76,13 @@ type RecallRequest struct {
 // DefaultLimit is how many messages a recall returns when the caller states none.
 //
 // It is small on purpose. Section 5.3's budget puts memory seventh of nine
-// priorities, so a recent window is what fits; a larger recall belongs to WP-10's
-// scored retrieval, which will have a threshold and a token budget to spend.
+// priorities, so a recent window is what fits.
 const DefaultLimit = 20
 
 // MaxLimit bounds one recall, so a caller cannot ask for an unbounded window.
 const MaxLimit = 200
 
-// Store is the recall side: the messages a scope has.
+// Store is the recall side of the TRANSCRIPT: the messages a scope has.
 //
 // One method, and it is deliberately not a general query interface. Recall asks
 // "what did this conversation recently say", and a store that took a filter
@@ -122,22 +92,93 @@ type Store interface {
 	RecentMessages(ctx context.Context, scopeParts [6]string, excludeMessageID string, limit int) ([]Item, error)
 }
 
-// Service builds memory context for a run.
+// Service builds memory context for a run and owns the memory store's commands.
+//
+// The two capabilities have separate availability: `Available` is the Recent channel's,
+// which needs only the transcript port, and `StorageAvailable` is the memory store's. They
+// are separate because they are separate compositions: a build with a transcript and no
+// memory store can still recall what was just said — which is what WP-07 shipped — and a
+// caller that needs the second has to be able to tell that it is missing rather than get an
+// empty result that reads like "nothing is remembered".
 type Service struct {
-	store Store
+	store    Store
+	items    Repository
+	vectors  VectorIndex
+	embedder Embedder
+	clock    Clock
+	ids      IDGenerator
 }
 
-// New builds a Service.
+// Options configures the service.
+//
+// `Store` is required for the Recent channel; the rest are required for the memory store's
+// commands. That split is the composition's to state, and both halves are checked by the
+// method that needs them rather than here, because a constructor that refused a partial set
+// would make the WP-07 composition impossible.
+type Options struct {
+	Store    Store
+	Items    Repository
+	Vectors  VectorIndex
+	Embedder Embedder
+	Clock    Clock
+	IDs      IDGenerator
+}
+
+// NewService builds the full service.
+func NewService(options Options) *Service {
+	return &Service{
+		store:    options.Store,
+		items:    options.Items,
+		vectors:  options.Vectors,
+		embedder: options.Embedder,
+		clock:    options.Clock,
+		ids:      options.IDs,
+	}
+}
+
+// New builds a Service with only the transcript port, which is the WP-07 composition and
+// still a valid one: it recalls what was just said and refuses everything that needs a
+// memory store.
 func New(store Store) *Service {
-	return &Service{store: store}
+	return NewService(Options{Store: store})
 }
 
-// Available reports whether recall can run.
+// Available reports whether the Recent channel can run.
 func (s *Service) Available() bool {
 	return s != nil && s.store != nil
 }
 
-// BuildContext recalls the recent messages for a scope, oldest first.
+// StorageAvailable reports whether the memory store's commands can run.
+//
+// It requires the clock and the identifier generator as well as the repository, because
+// every command here writes a timestamp and mints an identifier, and a service that could
+// reach the store but not mint an id would fail halfway through a write.
+func (s *Service) StorageAvailable() bool {
+	return s != nil && s.items != nil && s.clock != nil && s.ids != nil
+}
+
+// SemanticAvailable reports whether the scored channels can run.
+//
+// It is a THIRD question, and the distinction is the honest one PRD FR-120 asks for:
+// "Embedding Provider 可替换；本地模式不得在未授权时上传项目文本". A project with no
+// embedding provider configured has a perfectly good recent and summary memory and no
+// semantic search, and a caller has to be able to say which of those it has rather than
+// being told the whole feature is off.
+func (s *Service) SemanticAvailable(ctx context.Context, projectID string) bool {
+	if s == nil || s.vectors == nil || s.embedder == nil {
+		return false
+	}
+	return s.embedder.Available(ctx, projectID)
+}
+
+func (s *Service) now() time.Time {
+	if s == nil || s.clock == nil {
+		return time.Now().UTC()
+	}
+	return s.clock.Now().UTC()
+}
+
+// BuildRecent recalls the recent messages for a scope, oldest first.
 //
 // The result is ordered oldest first because that is how a prompt reads a
 // conversation: newest-first is how the store retrieves, and reversing here once
@@ -148,7 +189,7 @@ func (s *Service) Available() bool {
 // or stop — and that choice is the caller's, so this does not make it. What it
 // does do is refuse a scope that would recall across projects, because that is not
 // a choice: section 14.5 forbids it.
-func (s *Service) BuildContext(ctx context.Context, request RecallRequest) ([]Item, error) {
+func (s *Service) BuildRecent(ctx context.Context, request RecallRequest) ([]Item, error) {
 	if !s.Available() {
 		return nil, UnavailableError()
 	}
@@ -173,34 +214,24 @@ func (s *Service) BuildContext(ctx context.Context, request RecallRequest) ([]It
 	return items, nil
 }
 
-// Error is a memory refusal.
-type Error struct {
-	SafeMessage string
-	Cause       error
-}
-
-func (e *Error) Error() string {
-	if e == nil {
-		return ""
-	}
-	return e.SafeMessage
-}
-
-func (e *Error) Unwrap() error {
-	if e == nil {
-		return nil
-	}
-	return e.Cause
+// BuildContext recalls the recent messages for a scope, oldest first.
+//
+// It is BuildRecent's original name, kept because it is the one AGENT_CONTRACTS section
+// 12.1 uses and the one the tool handler and the runtime are written against. WP-10's
+// multi-channel assembly is BuildMemoryContext, below, which is a different operation with
+// a different request and a different result.
+func (s *Service) BuildContext(ctx context.Context, request RecallRequest) ([]Item, error) {
+	return s.BuildRecent(ctx, request)
 }
 
 // InvalidError reports a scope or request the domain refuses.
 func InvalidError(message string) *Error {
-	return &Error{SafeMessage: message}
+	return domainmemory.InvalidError(message)
 }
 
-// UnavailableError reports that no store is composed.
+// UnavailableError reports that no transcript store is composed.
 func UnavailableError() *Error {
-	return &Error{SafeMessage: "No memory store is configured, so nothing can be recalled."}
+	return &Error{Category: domainmemory.CategoryStorage, SafeMessage: "No memory store is configured, so nothing can be recalled."}
 }
 
 // ScopeFor builds a scope from a run's identifiers.
@@ -213,3 +244,6 @@ func ScopeFor(projectID, episodeID, agentKey string) Scope {
 	// its value rather than a shape to change.
 	return Scope{Tenant: "local", Project: projectID, Episode: episodeID, AgentKey: agentKey}
 }
+
+// trimOrEmpty trims a caller-supplied identifier.
+func trimOrEmpty(value string) string { return strings.TrimSpace(value) }
