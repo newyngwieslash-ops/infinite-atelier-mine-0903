@@ -51,8 +51,10 @@ const SECTION_IDS = [
 
 /** Sections whose content is not built yet, with the package that owns each. */
 const UNAVAILABLE_SECTIONS: Record<string, string> = {
-    director: "WP-09",
-    "storyboard-table": "WP-09",
+    // WP-09 built `director` and `storyboard-table`, so the three that remain are the
+    // media and export sections WP-11 owns. The list is what the shell renders against,
+    // so removing an entry here is the same act as marking the section available — and the
+    // test fails if the two disagree.
     video: "WP-11",
     audio: "WP-11",
     timeline: "WP-11",
@@ -162,9 +164,17 @@ test.describe("the drama studio without a core", () => {
         await nav.locator("[data-section='script']").click();
         await expect(page.locator("[data-testid='studio-section-no-core']")).toBeVisible();
         // A section that needs no query — the unbuilt ones — still renders its
-        // empty state in the same session, so the two answers stay distinct.
-        await nav.locator("[data-section='director']").click();
+        // empty state in the same session, so the two answers stay distinct. WP-09 built
+        // `director`, so the section that answers this way is now one of WP-11's.
+        await nav.locator("[data-section='video']").click();
         await expect(page.locator("[data-empty-section]")).toBeVisible();
+        // And `director`, which WP-09 built, answers like the other core-backed sections
+        // rather than claiming no query exists: the shell's no-core notice is the honest
+        // answer for a section whose rows come from Go.
+        await nav.locator("[data-section='director']").click();
+        await expect(page.locator("[data-testid='studio-section-no-core']")).toBeVisible();
+        await nav.locator("[data-section='storyboard-table']").click();
+        await expect(page.locator("[data-testid='studio-section-no-core']")).toBeVisible();
     });
 
     test("the import flow and the story graph state that they need the core", async ({ page }) => {

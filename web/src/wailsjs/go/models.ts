@@ -3605,6 +3605,20 @@ export namespace desktop {
 	        this.value = source["value"];
 	    }
 	}
+	export class SetShotOverridesRequest {
+	    versionId: string;
+	    overridesJson: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SetShotOverridesRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.versionId = source["versionId"];
+	        this.overridesJson = source["overridesJson"];
+	    }
+	}
 	export class ShotDTO {
 	    id: string;
 	    sceneId: string;
@@ -4052,6 +4066,9 @@ export namespace desktop {
 	    actionDescription?: string;
 	    dialogueAudioSummary?: string;
 	    continuityNotes?: string;
+	    firstFrameDescription?: string;
+	    lastFrameDescription?: string;
+	    videoMotionDescription?: string;
 	    status: string;
 	    createdAt: string;
 	    updatedAt: string;
@@ -4075,6 +4092,9 @@ export namespace desktop {
 	        this.actionDescription = source["actionDescription"];
 	        this.dialogueAudioSummary = source["dialogueAudioSummary"];
 	        this.continuityNotes = source["continuityNotes"];
+	        this.firstFrameDescription = source["firstFrameDescription"];
+	        this.lastFrameDescription = source["lastFrameDescription"];
+	        this.videoMotionDescription = source["videoMotionDescription"];
 	        this.status = source["status"];
 	        this.createdAt = source["createdAt"];
 	        this.updatedAt = source["updatedAt"];

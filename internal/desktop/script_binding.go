@@ -2,7 +2,9 @@ package desktop
 
 import (
 	"context"
+	"strings"
 
+	appproductionpipeline "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/productionpipeline"
 	appscript "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/script"
 	appscriptpipeline "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/scriptpipeline"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/stagepipeline"
@@ -887,7 +889,14 @@ type StagePipeline interface {
 	// StartRevision begins the attempt a FIX or REDO asked for.
 	StartRevision(ctx context.Context, stageRunID string) (workflow.StageRun, error)
 	// ManualEdit writes the user's own version and passes the stage.
-	ManualEdit(ctx context.Context, request appscriptpipeline.ManualEditRequest) (stagepipeline.StageResult, error)
+	//
+	// It takes the MECHANISM's request rather than a layer's, because one binding serves
+	// both pipelines and the payload is the only part that differs: the script layer's is a
+	// structure, a skeleton or a strategy, and the production layer's would be a plan, a
+	// board or a panel. The layer asserts the payload it can use and refuses the rest, which
+	// is why the field is `any` — a compiled contract for one layer would be a second
+	// interface for every other.
+	ManualEdit(ctx context.Context, request stagepipeline.ManualEditRequest) (stagepipeline.StageResult, error)
 }
 
 // AttachPipeline supplies the stage pipeline. A nil one leaves the stage commands failing closed.
@@ -941,7 +950,7 @@ type ScriptStageResultDTO struct {
 
 // RunScriptStage runs one attempt at one script stage.
 func (b *DramaBinding) RunScriptStage(request RunScriptStageRequest) (ScriptStageResultDTO, error) {
-	pipeline := b.stagePipeline()
+	pipeline := b.pipelineFor(request.Stage)
 	if pipeline == nil {
 		return ScriptStageResultDTO{}, bindingUnavailable()
 	}
@@ -994,7 +1003,7 @@ type RunScriptSupervisionRequest struct {
 
 // RunScriptSupervision reviews one attempt and applies the report to the stage.
 func (b *DramaBinding) RunScriptSupervision(request RunScriptSupervisionRequest) (ReviewReportDTO, error) {
-	pipeline := b.stagePipeline()
+	pipeline := b.pipelineForStageRun(request.StageRunID)
 	if pipeline == nil {
 		return ReviewReportDTO{}, bindingUnavailable()
 	}
@@ -1036,7 +1045,7 @@ type ApplyScriptGateRequest struct {
 
 // ApplyScriptGate records a user's decision and moves the stage.
 func (b *DramaBinding) ApplyScriptGate(request ApplyScriptGateRequest) (StageRunDTO, error) {
-	pipeline := b.stagePipeline()
+	pipeline := b.pipelineForStageRun(request.StageRunID)
 	if pipeline == nil {
 		return StageRunDTO{}, bindingUnavailable()
 	}
@@ -1061,7 +1070,7 @@ func (b *DramaBinding) ApplyScriptGate(request ApplyScriptGateRequest) (StageRun
 // It is separate from the gate because it runs a model: a user who decided to fix something has not
 // thereby decided to spend a run, and a UI that submitted a decision should not silently start one.
 func (b *DramaBinding) StartScriptRevision(stageRunID string) (StageRunDTO, error) {
-	pipeline := b.stagePipeline()
+	pipeline := b.pipelineForStageRun(stageRunID)
 	if pipeline == nil {
 		return StageRunDTO{}, bindingUnavailable()
 	}
@@ -1121,24 +1130,30 @@ type EditStrategyInput struct {
 
 // ManualEditScript writes the user's own version and passes the stage.
 func (b *DramaBinding) ManualEditScript(request ManualEditScriptRequest) (ScriptStageResultDTO, error) {
-	pipeline := b.stagePipeline()
+	pipeline := b.pipelineFor(request.Stage)
 	if pipeline == nil {
 		return ScriptStageResultDTO{}, bindingUnavailable()
 	}
-	edit := appscriptpipeline.ManualEditRequest{
-		StageRunID:        request.StageRunID,
-		Stage:             appscriptpipeline.Stage(request.Stage),
-		ProjectID:         request.ProjectID,
-		EpisodeID:         request.EpisodeID,
-		BasedOnVersionID:  request.BasedOnVersionID,
+	// The payload travels as the SCRIPT layer's own struct, carried in the mechanism's
+	// opaque field: `appscriptpipeline.ManualEdit` is what knows how to build it, and this
+	// binding is what knows which DTO the form supplied.
+	payload := appscriptpipeline.ManualEditPayload{
 		SkeletonVersionID: request.SkeletonVersionID,
 		StrategyVersionID: request.StrategyVersionID,
-		Summary:           request.Summary,
-		ChangeReason:      request.ChangeReason,
-		CreatedByID:       request.CreatedByID,
+	}
+	edit := stagepipeline.ManualEditRequest{
+		StageRunID:       request.StageRunID,
+		Stage:            appscriptpipeline.Stage(request.Stage),
+		ProjectID:        request.ProjectID,
+		EpisodeID:        request.EpisodeID,
+		BasedOnVersionID: request.BasedOnVersionID,
+		Summary:          request.Summary,
+		ChangeReason:     request.ChangeReason,
+		CreatedByID:      request.CreatedByID,
+		Payload:          payload,
 	}
 	if request.Skeleton != nil {
-		edit.Skeleton = &appscript.CreateStorySkeletonVersionRequest{
+		skeleton := &appscript.CreateStorySkeletonVersionRequest{
 			EpisodeID:                request.EpisodeID,
 			OpeningHook:              request.Skeleton.OpeningHook,
 			CoreConflict:             request.Skeleton.CoreConflict,
@@ -1148,6 +1163,7 @@ func (b *DramaBinding) ManualEditScript(request ManualEditScriptRequest) (Script
 			EstimatedDurationSeconds: request.Skeleton.EstimatedDurationSeconds,
 			SelectedEventIDs:         request.Skeleton.SelectedEventIDs,
 		}
+		payload.Skeleton = skeleton
 	}
 	if request.Strategy != nil {
 		links := make([]scriptdomain.StrategyEventLink, 0, len(request.Strategy.EventLinks))
@@ -1157,7 +1173,7 @@ func (b *DramaBinding) ManualEditScript(request ManualEditScriptRequest) (Script
 				Treatment:    scriptdomain.EventTreatment(link.Treatment),
 			})
 		}
-		edit.Strategy = &appscript.CreateAdaptationStrategyVersionRequest{
+		strategy := &appscript.CreateAdaptationStrategyVersionRequest{
 			EpisodeID:             request.EpisodeID,
 			StrategySummary:       request.Strategy.StrategySummary,
 			AdaptationMode:        scriptdomain.AdaptationMode(request.Strategy.AdaptationMode),
@@ -1167,10 +1183,15 @@ func (b *DramaBinding) ManualEditScript(request ManualEditScriptRequest) (Script
 			Risks:                 request.Strategy.Risks,
 			EventLinks:            links,
 		}
+		payload.Strategy = strategy
 	}
 	if len(request.Scenes) > 0 {
-		edit.Structure = scriptdomain.ScriptStructureDraft{Scenes: sceneDraftsFromInput(request.Scenes)}
+		payload.Structure = scriptdomain.ScriptStructureDraft{Scenes: sceneDraftsFromInput(request.Scenes)}
 	}
+	// The payload is attached AFTER the three branches, because which one was populated is
+	// what the layer reads: assigning it inside a branch would leave the other two unable to
+	// reach it, and the layer refuses a stage whose payload is missing.
+	edit.Payload = payload
 	result, err := pipeline.ManualEdit(b.context(), edit)
 	if err != nil {
 		return ScriptStageResultDTO{}, toDramaError(err)
@@ -1189,6 +1210,71 @@ func (b *DramaBinding) stagePipeline() StagePipeline {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	return b.pipeline
+}
+
+// productionStagePipeline returns the production layer's pipeline, or nil.
+func (b *DramaBinding) productionStagePipeline() StagePipeline {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return b.productionPipeline
+}
+
+// AttachProductionPipeline supplies the production layer's pipeline.
+//
+// It is a separate attachment from `AttachPipeline` because the two answer for disjoint
+// stage sets: WP-09's extraction made them share a MECHANISM, not a stage list, and a
+// binding that held one slot would route a production stage to the script layer — which
+// refuses it, so the caller would see a refusal that names the wrong problem.
+func AttachProductionPipeline(binding *DramaBinding, ctx context.Context, pipeline StagePipeline) {
+	if binding == nil {
+		return
+	}
+	binding.mu.Lock()
+	binding.ctx = ctx
+	binding.productionPipeline = pipeline
+	binding.mu.Unlock()
+}
+
+// pipelineForStageRun returns the pipeline that drives the stage an attempt belongs to.
+//
+// The three attempt-scoped commands (`RunSupervision`, `ApplyUserGate`, `StartRevision`)
+// name a STAGE RUN rather than a stage, so the layer has to be discovered from the record.
+// The read is the workflow service's own, which is already attached; a failure to read it
+// yields nil and the command then refuses with the binding's usual message.
+//
+// The alternative — remembering which pipeline started the attempt — would be a second
+// answer to a question the database already holds, and it would be wrong after a restart.
+func (b *DramaBinding) pipelineForStageRun(stageRunID string) StagePipeline {
+	workflow := b.workflowService()
+	if workflow == nil {
+		return nil
+	}
+	attempt, err := workflow.GetStage(b.context(), strings.TrimSpace(stageRunID))
+	if err != nil {
+		return nil
+	}
+	return b.pipelineFor(string(attempt.Stage))
+}
+
+// pipelineFor returns the pipeline that drives a stage, or nil when neither does.
+//
+// THE STAGE DECIDES, not the caller and not the order things were attached in. A stage
+// neither layer drives yields nil, and the command then refuses with the binding's usual
+// message rather than running the wrong layer's stage machine.
+func (b *DramaBinding) pipelineFor(stage string) StagePipeline {
+	if appscriptpipeline.IsScriptStage(stage) {
+		return b.stagePipeline()
+	}
+	if appproductionpipeline.IsProductionStage(stage) {
+		return b.productionStagePipeline()
+	}
+	// An unknown stage goes to the SCRIPT pipeline when it exists, so the refusal names the
+	// stage rather than a missing pipeline: a caller that misspelled a stage should learn
+	// that, not that the build has no agent stack.
+	if pipeline := b.stagePipeline(); pipeline != nil {
+		return pipeline
+	}
+	return b.productionStagePipeline()
 }
 
 // sceneDraftsFromInput converts the binding's scene inputs into the domain's drafts.

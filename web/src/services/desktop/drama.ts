@@ -844,3 +844,108 @@ function bytesToBase64(bytes: Uint8Array): string {
     }
     return btoa(binary);
 }
+
+// --- The production stages (WP-09) ---
+//
+// These are the reads and commands the Director and Storyboard Table sections make. Each
+// one names what it is about in its own arguments rather than relying on a UI selection:
+// a call that resolved "the current episode" from a store would be a command whose subject
+// is a piece of local state, and a reload would change it.
+
+export async function listDirectorPlanVersions(episodeId: string): Promise<desktop.DirectorPlanVersionDTO[]> {
+    if (!isDramaBindingsAvailable()) return [];
+    const { ListDirectorPlanVersions } = await loadDramaBinding();
+    return ListDirectorPlanVersions(episodeId);
+}
+
+export async function getDirectorPlanVersion(id: string): Promise<desktop.DirectorPlanVersionDTO> {
+    if (!isDramaBindingsAvailable()) throw unavailableError();
+    const { GetDirectorPlanVersion } = await loadDramaBinding();
+    return GetDirectorPlanVersion(id);
+}
+
+export async function approveDirectorPlanVersion(
+    request: desktop.ApproveDirectorPlanVersionRequest,
+): Promise<desktop.DirectorPlanVersionDTO> {
+    if (!isDramaBindingsAvailable()) throw unavailableError();
+    const { ApproveDirectorPlanVersion } = await loadDramaBinding();
+    return ApproveDirectorPlanVersion(request);
+}
+
+export async function listStoryboardVersions(storyboardId: string): Promise<desktop.StoryboardVersionDTO[]> {
+    if (!isDramaBindingsAvailable()) return [];
+    const { ListStoryboardVersions } = await loadDramaBinding();
+    return ListStoryboardVersions(storyboardId);
+}
+
+export async function getStoryboardVersion(id: string): Promise<desktop.StoryboardVersionDTO> {
+    if (!isDramaBindingsAvailable()) throw unavailableError();
+    const { GetStoryboardVersion } = await loadDramaBinding();
+    return GetStoryboardVersion(id);
+}
+
+export async function approveStoryboardVersion(
+    request: desktop.ApproveStoryboardVersionRequest,
+): Promise<desktop.StoryboardVersionDTO> {
+    if (!isDramaBindingsAvailable()) throw unavailableError();
+    const { ApproveStoryboardVersion } = await loadDramaBinding();
+    return ApproveStoryboardVersion(request);
+}
+
+export async function approvedStoryboardVersionId(storyboardId: string): Promise<string> {
+    if (!isDramaBindingsAvailable()) return "";
+    const { ApprovedStoryboardVersionID } = await loadDramaBinding();
+    return ApprovedStoryboardVersionID(storyboardId);
+}
+
+export async function updateStoryboardItem(
+    request: desktop.UpdateStoryboardItemRequest,
+): Promise<desktop.StoryboardItemDTO> {
+    if (!isDramaBindingsAvailable()) throw unavailableError();
+    const { UpdateStoryboardItem } = await loadDramaBinding();
+    return UpdateStoryboardItem(request);
+}
+
+export async function listPanelVersions(storyboardItemId: string): Promise<desktop.StoryboardPanelVersionDTO[]> {
+    if (!isDramaBindingsAvailable()) return [];
+    const { ListPanelVersions } = await loadDramaBinding();
+    return ListPanelVersions(storyboardItemId);
+}
+
+// The production stages go through the SAME binding the script ones do, and the claim that
+// makes that true was verified rather than assumed: the binding holds BOTH pipelines in
+// separate slots and routes on the stage a command names, so a production stage cannot reach
+// the script layer — and if it did, the layer would refuse it with the stage named.
+export const runStoryboardStage = runScriptStage;
+export const runStoryboardSupervision = runScriptSupervision;
+
+// The per-shot overrides document, which is where a previs camera goes.
+//
+// Section 9.1 puts a per-shot camera override in the plan's `shot_overrides_json`, so this
+// is the command a camera write-back uses — not the item update, which has no column for a
+// camera and would have to borrow an unrelated field to carry one.
+export async function setShotOverrides(
+    request: desktop.SetShotOverridesRequest,
+): Promise<desktop.DirectorPlanVersionDTO> {
+    if (!isDramaBindingsAvailable()) throw unavailableError();
+    const { SetShotOverrides } = await loadDramaBinding();
+    return SetShotOverrides(request);
+}
+
+// --- Asset versions, usages and the approval impact (WP-09) ---
+//
+// The impact is the READ the approval dialog makes, and section 8.2 requires it BEFORE the
+// switch: `approveAssetVersion` refuses without the caller's acknowledgement, so a UI that
+// could not ask this question could only send the acknowledgement blind.
+
+export async function listAssetUsages(versionId: string): Promise<desktop.AssetUsageDTO[]> {
+    if (!isAssetsBindingsAvailable()) return [];
+    const { ListUsages } = await loadAssetsBinding();
+    return ListUsages(versionId);
+}
+
+export async function getApprovalImpact(versionId: string): Promise<desktop.ApprovalImpactDTO> {
+    if (!isAssetsBindingsAvailable()) throw unavailableError();
+    const { GetApprovalImpact } = await loadAssetsBinding();
+    return GetApprovalImpact(versionId);
+}

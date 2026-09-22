@@ -126,6 +126,13 @@ func AgentsForStage(stage Stage) (stagepipeline.StageAgents, bool) {
 	return agents, true
 }
 
+// IsProductionStage reports whether this layer drives a stage, for the reason
+// `scriptpipeline.IsScriptStage` states.
+func IsProductionStage(stage string) bool {
+	_, ok := stageAgents[Stage(stage)]
+	return ok
+}
+
 // Layer adapts this package's knowledge to the generic mechanism.
 //
 // It holds the three services whose APPROVALS are the real ones, because a stage's gate

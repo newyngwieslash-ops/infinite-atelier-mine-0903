@@ -11,7 +11,9 @@ import (
 	agenttools "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/agenttools"
 	appextraction "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/extraction"
 	appfiles "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/files"
+	appjobs "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/jobs"
 	appmemory "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/memory"
+	appproductionpipeline "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/productionpipeline"
 	appprojects "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/projects"
 	appproviders "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/providers"
 	appscriptpipeline "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/scriptpipeline"
@@ -65,7 +67,8 @@ type agentWiring struct {
 	// because it needs the runtime and the ENGINE, which are composed here, and the drama stack's
 	// services, which `agentDeps` already carries. Composing it in the drama stack would mean passing
 	// the runtime and the engine across a module boundary to reach a package that needs both.
-	pipeline *appscriptpipeline.Service
+	pipeline   *appscriptpipeline.Service
+	production *appproductionpipeline.Service
 }
 
 // agentDeps are what composeAgents needs from the other composition roots.
@@ -76,6 +79,10 @@ type agentDeps struct {
 	Providers *infraproviders.Registry
 	// Files stores the packs' documents.
 	Files *appfiles.Service
+	// Jobs submits the generation work the production pipeline's image batch drives. It is
+	// optional: a build without it still runs the five agent stages, and the batch refuses
+	// with a reason rather than reporting a submission that never happened.
+	Jobs *appjobs.Service
 }
 
 // composeAgents builds the agent stack over a writable database.
@@ -181,12 +188,43 @@ func composeAgents(deps agentDeps) *agentWiring {
 			Runs:     repository,
 		})
 	}
+	// The production pipeline, over the same runtime and engine and the drama stack's other
+	// services. It is composed HERE for the reason the script one is: every dependency it
+	// drives is in scope, and until it exists the five production stages have no caller —
+	// the "interface with no real path" shape this repository's reviews have found twice.
+	//
+	// It is a separate OPTIONAL composition because its batch needs more than the stages do:
+	// `Jobs` and `Gaps` are what the image batch and its gate read, so a build without them
+	// still drives the five agent stages and refuses the batch with a reason.
+	var production *appproductionpipeline.Service
+	if deps.Drama != nil && deps.Drama.storyboard != nil && deps.Drama.workflow != nil {
+		production = appproductionpipeline.New(appproductionpipeline.Options{
+			Engine:     engine,
+			Runtime:    runtime,
+			Storyboard: deps.Drama.storyboard,
+			Workflow:   deps.Drama.workflow,
+			Assembly:   assembly,
+			Runs:       repository,
+			Assets:     deps.Drama.assets,
+			Gaps:       deps.Drama.gaps,
+			Jobs:       deps.Jobs,
+		})
+	}
 	return &agentWiring{
 		runtime: runtime, assembly: assembly, tools: tools,
 		projectService: projectService, memoryService: memoryService,
-		engine:   engine,
-		pipeline: pipeline,
+		engine:     engine,
+		pipeline:   pipeline,
+		production: production,
 	}
+}
+
+// Production returns the production pipeline, or nil when this stack is not composed.
+func (w *agentWiring) Production() *appproductionpipeline.Service {
+	if w == nil {
+		return nil
+	}
+	return w.production
 }
 
 // Pipeline returns the script pipeline, or nil when this stack is not composed.

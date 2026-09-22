@@ -8,6 +8,7 @@ import (
 	agentruntime "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/agentruntime"
 	appfiles "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/files"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/health"
+	appjobs "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/jobs"
 	appprojects "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/projects"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/buildinfo"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/desktop"
@@ -211,9 +212,17 @@ func (a *app) startup(ctx context.Context) {
 				// The WP-07 agent stack is composed AFTER the drama stack, because
 				// every tool's handler calls one of its services: the order here is
 				// the dependency direction, made visible in one place.
+				// The job service is passed so the production pipeline's image batch can
+				// submit: the batch is a Job command rather than an agent stage, and the
+				// job stack is composed above this point.
+				var jobService *appjobs.Service
+				if jobStack := a.jobWiring; jobStack != nil {
+					jobService = jobStack.service
+				}
 				agentStack := composeAgents(agentDeps{
 					Handle: handle, Drama: dramaStack,
 					Providers: wiring.registry, Files: a.files,
+					Jobs: jobService,
 				})
 				if agentStack != nil {
 					if a.agentBinding != nil {
@@ -247,6 +256,11 @@ func (a *app) startup(ctx context.Context) {
 					// commands had no caller, which is the same shape of gap as the canvas projector.
 					if dramaStack != nil && a.dramaBinding != nil {
 						desktop.AttachPipeline(a.dramaBinding, ctx, agentStack.Pipeline())
+						// The production pipeline goes to the SAME binding, in its own
+						// slot: the two answer for disjoint stage sets and the commands
+						// route by the stage they were given, so one surface serves both
+						// layers.
+						desktop.AttachProductionPipeline(a.dramaBinding, ctx, agentStack.Production())
 					}
 					a.agentStack = agentStack
 				}

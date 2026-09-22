@@ -116,6 +116,16 @@ var stageAgents = map[Stage]LiveStageAgents{
 	},
 }
 
+// IsScriptStage reports whether this layer drives a stage.
+//
+// It is what the desktop binding routes on: a caller names a stage, and which layer answers
+// for it is the LAYER's statement rather than a list the binding keeps. A second list in the
+// binding would be a second answer to the same question, and the two would drift.
+func IsScriptStage(stage string) bool {
+	_, ok := stageAgents[Stage(stage)]
+	return ok
+}
+
 // AgentsForStage returns the agents that serve one stage.
 //
 // The boolean is false for a stage this pipeline does not drive, and callers REFUSE rather

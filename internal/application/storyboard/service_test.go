@@ -812,6 +812,18 @@ func (r *memoryRepo) ApproveStoryboardVersion(_ context.Context, versionID, stor
 	return nil
 }
 
+func (r *memoryRepo) UpdateDirectorPlanOverrides(_ context.Context, versionID string, overridesJSON string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	version, ok := r.plans[versionID]
+	if !ok {
+		return storyboard.NotFoundError()
+	}
+	version.ShotOverridesJSON = overridesJSON
+	r.plans[versionID] = version
+	return nil
+}
+
 func (r *memoryRepo) ListDirectorPlanVersions(_ context.Context, episodeID string) ([]storyboard.DirectorPlanVersion, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

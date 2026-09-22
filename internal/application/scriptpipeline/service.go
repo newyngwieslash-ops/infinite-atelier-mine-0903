@@ -124,11 +124,27 @@ func (s *Service) StartRevision(ctx context.Context, stageRunID string) (workflo
 
 // ManualEdit writes the user's own version and passes the stage.
 //
-// The caller supplies this layer's payload, which travels to `Layer.WriteVersion` through
-// the mechanism's opaque field. It is a type assertion rather than a compiled contract,
-// which is the cost of one generic command for two layers' artifacts; a caller that
-// supplied the wrong payload gets the layer's refusal naming what the stage needs.
-func (s *Service) ManualEdit(ctx context.Context, request ManualEditRequest) (stagepipeline.StageResult, error) {
+// It takes the MECHANISM's request, with this layer's payload in the opaque field, because
+// one desktop binding serves both pipelines and the payload is the only part that differs.
+// `ManualEditScript` is the DTO-shaped convenience a caller with a form uses; this is the
+// command that satisfies the shared interface.
+//
+// The payload is a TYPE ASSERTION rather than a compiled contract, which is the cost of one
+// generic command for two layers' artifacts; a caller that supplied the wrong payload gets
+// the layer's refusal naming what the stage needs.
+func (s *Service) ManualEdit(ctx context.Context, request stagepipeline.ManualEditRequest) (stagepipeline.StageResult, error) {
+	if !s.Available() {
+		return stagepipeline.StageResult{}, agent.UnavailableError()
+	}
+	return s.stages.ManualEdit(ctx, request)
+}
+
+// ManualEditScript writes the user's own version from a form's DTOs.
+//
+// The conversion is this layer's because the shape is: a skeleton, a strategy and a
+// structure are the three artifacts the SCRIPT stages produce, and a caller holding one of
+// those payloads is asking this pipeline rather than the mechanism.
+func (s *Service) ManualEditScript(ctx context.Context, request ManualEditRequest) (stagepipeline.StageResult, error) {
 	if !s.Available() {
 		return stagepipeline.StageResult{}, agent.UnavailableError()
 	}

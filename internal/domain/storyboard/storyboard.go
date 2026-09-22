@@ -79,6 +79,16 @@ type DirectorPlanVersion struct {
 	ChangeReason      string
 	LegacyMetadata    string
 	CreatedAt         time.Time
+	// There is deliberately NO UpdatedAt and NO Revision here, and the reason is the
+	// schema rather than a preference: migration 000010 gives `director_plan_versions` a
+	// `created_at` and nothing else, so a field would be one nothing could store. The
+	// `revision` column that migration does declare belongs to `storyboards`.
+	//
+	// WP-09's first attempt at the shot-overrides write added both and guarded on the
+	// revision — and then this table's DDL was read, which is the check that caught it. A
+	// guarded write needs a guard to read; a plan version has none, so its overrides write
+	// replaces the document without one. The concurrency the plan versions DO have is their
+	// uniqueness per episode, which is what versioning by number gives them.
 }
 
 // Validate checks a director plan version before it is stored.

@@ -326,6 +326,10 @@ export function SetDialogueLineLocked(arg1) {
   return window['go']['desktop']['DramaBinding']['SetDialogueLineLocked'](arg1);
 }
 
+export function SetShotOverrides(arg1) {
+  return window['go']['desktop']['DramaBinding']['SetShotOverrides'](arg1);
+}
+
 export function SplitChapter(arg1) {
   return window['go']['desktop']['DramaBinding']['SplitChapter'](arg1);
 }

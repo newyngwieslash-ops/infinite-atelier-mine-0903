@@ -47,6 +47,14 @@ type DramaBinding struct {
 	workflow   *appworkflow.Service
 	staleness  *appstaleness.Service
 	events     *appevents.Service
+	// productionPipeline drives the five production stages. It is a SECOND field rather than
+	// the same one, because the two pipelines answer for disjoint stage sets and a stage
+	// names the layer it belongs to: a single slot would let the last one attached win, and
+	// a script stage would then be run by the production layer, which refuses it.
+	//
+	// The commands route by stage through `pipelineFor`, so a caller does not choose a layer
+	// — the stage it named does.
+	productionPipeline StagePipeline
 	// pipeline drives the three script stages. It is attached by the agent stack, which is where the
 	// runtime and the engine are composed, and a nil one leaves the stage commands failing closed.
 	pipeline StagePipeline
@@ -1631,10 +1639,17 @@ type StoryboardItemDTO struct {
 	ActionDescription    string `json:"actionDescription,omitempty"`
 	DialogueAudioSummary string `json:"dialogueAudioSummary,omitempty"`
 	ContinuityNotes      string `json:"continuityNotes,omitempty"`
-	Status               string `json:"status"`
-	CreatedAt            string `json:"createdAt"`
-	UpdatedAt            string `json:"updatedAt"`
-	Revision             int64  `json:"revision"`
+	// FR-070's remaining three, added by migration 000018: what a video model is given to
+	// render the shot's two ends and its motion. They are the SHOOTING decision rather than
+	// a fact about the script's shot, which is why they live on the row and why they had
+	// nowhere to be stored before WP-09.
+	FirstFrameDescription  string `json:"firstFrameDescription,omitempty"`
+	LastFrameDescription   string `json:"lastFrameDescription,omitempty"`
+	VideoMotionDescription string `json:"videoMotionDescription,omitempty"`
+	Status                 string `json:"status"`
+	CreatedAt              string `json:"createdAt"`
+	UpdatedAt              string `json:"updatedAt"`
+	Revision               int64  `json:"revision"`
 }
 
 // StoryboardPanelVersionDTO is the transport view of one panel version.
@@ -1967,6 +1982,33 @@ func (b *DramaBinding) ApprovedStoryboardVersionID(storyboardID string) (string,
 		return "", toDramaError(err)
 	}
 	return versionID, nil
+}
+
+// SetShotOverridesRequest writes a plan's per-shot overrides document.
+type SetShotOverridesRequest struct {
+	VersionID string `json:"versionId"`
+	// OverridesJSON replaces the stored document rather than merging into it.
+	OverridesJSON string `json:"overridesJson"`
+}
+
+// SetShotOverrides writes the per-shot overrides of one plan version.
+//
+// It is how a previs camera reaches the shot it belongs to: the studio reports the camera,
+// this binding composes the document, and this command stores it. FR-060's "保存后可在 Shot 中
+// 看到摄像机参数" is the round trip this closes.
+func (b *DramaBinding) SetShotOverrides(request SetShotOverridesRequest) (DirectorPlanVersionDTO, error) {
+	service := b.storyboardService()
+	if service == nil {
+		return DirectorPlanVersionDTO{}, bindingUnavailable()
+	}
+	record, err := service.SetShotOverrides(b.context(), appstoryboard.SetShotOverridesRequest{
+		VersionID:     request.VersionID,
+		OverridesJSON: request.OverridesJSON,
+	})
+	if err != nil {
+		return DirectorPlanVersionDTO{}, toDramaError(err)
+	}
+	return toDirectorPlanVersionDTO(record), nil
 }
 
 // ApproveStoryboardVersion switches which board version is in force.
@@ -2920,10 +2962,16 @@ func toStoryboardItemDTO(record storyboard.StoryboardItem) StoryboardItemDTO {
 		DurationSeconds: record.DurationSeconds, VisualDescription: record.VisualDescription,
 		ActionDescription:    record.ActionDescription,
 		DialogueAudioSummary: record.DialogueAudioSummary,
-		ContinuityNotes:      record.ContinuityNotes, Status: string(record.Status),
-		CreatedAt: record.CreatedAt.UTC().Format(rfc3339),
-		UpdatedAt: record.UpdatedAt.UTC().Format(rfc3339),
-		Revision:  record.Revision,
+		ContinuityNotes:      record.ContinuityNotes,
+		// FR-070's three, which the mapper would otherwise drop on the way out — the same
+		// shape of gap the asset mapper had with five columns.
+		FirstFrameDescription:  record.FirstFrameDescription,
+		LastFrameDescription:   record.LastFrameDescription,
+		VideoMotionDescription: record.VideoMotionDescription,
+		Status:                 string(record.Status),
+		CreatedAt:              record.CreatedAt.UTC().Format(rfc3339),
+		UpdatedAt:              record.UpdatedAt.UTC().Format(rfc3339),
+		Revision:               record.Revision,
 	}
 }
 

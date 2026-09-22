@@ -2504,6 +2504,18 @@ func (s *dramaStore) ApproveStoryboardVersion(_ context.Context, versionID, stor
 	return nil
 }
 
+func (s *dramaStore) UpdateDirectorPlanOverrides(_ context.Context, versionID string, overridesJSON string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	version, ok := s.plans[versionID]
+	if !ok {
+		return storyboard.NotFoundError()
+	}
+	version.ShotOverridesJSON = overridesJSON
+	s.plans[versionID] = version
+	return nil
+}
+
 func (s *dramaStore) ListDirectorPlanVersions(_ context.Context, episodeID string) ([]storyboard.DirectorPlanVersion, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

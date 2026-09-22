@@ -177,8 +177,13 @@ func TestStartRevisionRefusesWithoutTheServices(t *testing.T) {
 	if _, err := service.StartRevision(context.Background(), "stage-1"); err == nil {
 		t.Fatal("a revision was started with no engine")
 	}
-	if _, err := service.ManualEdit(context.Background(), ManualEditRequest{StageRunID: "stage-1"}); err == nil {
+	if _, err := service.ManualEdit(context.Background(), stagepipeline.ManualEditRequest{StageRunID: "stage-1"}); err == nil {
 		t.Fatal("a manual edit was applied with no services")
+	}
+	// The DTO-shaped convenience refuses for the same reason: it is the same command with
+	// the payload already converted.
+	if _, err := service.ManualEditScript(context.Background(), ManualEditRequest{StageRunID: "stage-1"}); err == nil {
+		t.Fatal("a script manual edit was applied with no services")
 	}
 	if _, err := service.RunStage(context.Background(), stagepipeline.StageRequest{Stage: StageStorySkeleton}); err == nil {
 		t.Fatal("a stage ran with no services")

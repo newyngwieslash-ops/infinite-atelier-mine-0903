@@ -164,6 +164,8 @@ export function SaveScriptStructure(arg1:desktop.SaveScriptStructureRequest):Pro
 
 export function SetDialogueLineLocked(arg1:desktop.SetDialogueLineLockedRequest):Promise<desktop.DialogueLineDTO>;
 
+export function SetShotOverrides(arg1:desktop.SetShotOverridesRequest):Promise<desktop.DirectorPlanVersionDTO>;
+
 export function SplitChapter(arg1:desktop.SplitChapterRequest):Promise<Array<desktop.ChapterDTO>>;
 
 export function StartScriptRevision(arg1:string):Promise<desktop.StageRunDTO>;

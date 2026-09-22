@@ -93,6 +93,38 @@ func (r *StoryboardRepository) GetDirectorPlanVersion(ctx context.Context, id st
 
 // MaxDirectorPlanVersionNumber reports the highest version number an episode's
 // plans have, or zero when the episode has none.
+// UpdateDirectorPlanOverrides replaces one plan version's shot overrides document.
+//
+// The revision guard is the point: a camera write-back reads the plan, composes an edit and
+// writes it, and a second window doing the same would otherwise overwrite the first. The
+// column is the ONE this command touches, so a camera from the previs studio cannot carry
+// the plan's prose along with it.
+func (r *StoryboardRepository) UpdateDirectorPlanOverrides(ctx context.Context, versionID string, overridesJSON string) error {
+	conn := r.conn()
+	if conn == nil {
+		return storageError("STORYBOARD_STORE_UNAVAILABLE", "The storyboard store is unavailable.", nil)
+	}
+	result, err := conn.ExecContext(ctx,
+		`UPDATE director_plan_versions SET shot_overrides_json = ? WHERE id = ?`,
+		overridesJSON, versionID)
+	if err != nil {
+		return storageError("STORYBOARD_WRITE_FAILED", "The plan's shot overrides could not be saved.", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return storageError("STORYBOARD_WRITE_FAILED", "The plan's shot overrides could not be saved.", err)
+	}
+	if affected == 0 {
+		// Nothing moved, and the only reason is that no such version exists: this table has
+		// no revision column, so a lost update is not a state it can reach.
+		if _, readErr := r.GetDirectorPlanVersion(ctx, versionID); readErr != nil {
+			return readErr
+		}
+		return storageError("STORYBOARD_WRITE_FAILED", "The plan's shot overrides could not be saved.", nil)
+	}
+	return nil
+}
+
 // ListDirectorPlanVersions returns an episode's plan versions newest first.
 //
 // WP-09 added it for the director plan UI: a user looking at an episode's plans needs the

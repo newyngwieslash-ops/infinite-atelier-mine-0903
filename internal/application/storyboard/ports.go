@@ -47,6 +47,19 @@ type DirectorPlanRepository interface {
 	// reason ListStoryboardVersions exists: a user looking at a plan needs its history,
 	// and reading each version by an id they do not have is a query nobody can make.
 	ListDirectorPlanVersions(ctx context.Context, episodeID string) ([]storyboard.DirectorPlanVersion, error)
+	// UpdateDirectorPlanOverrides replaces one plan version's shot overrides document.
+	//
+	// It is a NARROW write rather than a full update, and that is section 9.1's shape: a
+	// per-shot camera override lives in `shot_overrides_json`, and replacing that document
+	// is the only thing this command does. A full update would let a caller that read a
+	// plan write back its prose too, and a camera write-back has no business touching the
+	// camera language.
+	//
+	// There is no revision guard because the TABLE has no revision column: migration 000010
+	// gives `director_plan_versions` a `created_at` and nothing else. A guard needs a value
+	// to guard on, and inventing one here would be a check that reads like a protection and
+	// protects nothing.
+	UpdateDirectorPlanOverrides(ctx context.Context, versionID string, overridesJSON string) error
 	// ProjectOfEpisode returns the project an episode belongs to.
 	//
 	// It exists because the storyboard tables have no project column: a director
