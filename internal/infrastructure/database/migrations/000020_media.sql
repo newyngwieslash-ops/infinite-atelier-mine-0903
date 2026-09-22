@@ -92,6 +92,13 @@ CREATE TABLE subtitle_cues (
     -- user may have edited by hand. The write path checks the line exists, and a cue whose
     -- line is gone is a cue the user wrote or kept, not one the generator invented.
     dialogue_line_id TEXT NOT NULL DEFAULT '',
+    -- Whether a person has touched this cue. It is what makes a REGENERATION safe: a track rebuilt
+    -- from a revised script must not silently replace a line somebody typed, and a cue that records
+    -- nothing about its own origin cannot tell the difference between the two.
+    --
+    -- The two values are deliberately few. A richer vocabulary — reviewed, rejected, needs-work —
+    -- would be a workflow, and AC-MEDIA-002 asks for an EDITABLE subtitle rather than a reviewed one.
+    status TEXT NOT NULL DEFAULT 'generated' CHECK (status IN ('generated', 'edited')),
     created_at TEXT NOT NULL,
     UNIQUE (track_id, ordinal),
     CHECK (end_ms > start_ms)

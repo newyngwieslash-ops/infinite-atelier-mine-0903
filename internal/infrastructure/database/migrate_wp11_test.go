@@ -94,6 +94,27 @@ func TestWP11MediaConstraintsEnforceDocumentedValues(t *testing.T) {
 		VALUES ('cue-4', 'track-1', 2, -1, 2000, 'x', '2026-01-01T00:00:00Z')`); err == nil {
 		t.Fatal("a cue starting before zero was accepted")
 	}
+	// The cue's status is the closed pair a regeneration reads: a cue is either the generator's or a
+	// person's, and the column is what keeps the first from being replaced by a second draft.
+	if _, err := db.ExecContext(context.Background(), `INSERT INTO subtitle_cues
+		(id, track_id, ordinal, start_ms, end_ms, text, status, created_at)
+		VALUES ('cue-5', 'track-1', 2, 2000, 3000, 'x', 'reviewed', '2026-01-01T00:00:00Z')`); err == nil {
+		t.Fatal("an unknown cue status was accepted")
+	}
+	for _, status := range []string{"generated", "edited"} {
+		if _, err := db.ExecContext(context.Background(), `INSERT INTO subtitle_cues
+			(id, track_id, ordinal, start_ms, end_ms, text, status, created_at)
+			VALUES (?, 'track-1', ?, 2000, 3000, 'x', ?, '2026-01-01T00:00:00Z')`,
+			"cue-"+status, 10+len(status), status); err != nil {
+			t.Fatalf("the documented status %q was refused: %v", status, err)
+		}
+	}
+	// And the column defaults to the generator's, so a row written without one is not a row no
+	// regeneration knows about.
+	if queryInt(t, db,
+		"SELECT COUNT(*) FROM pragma_table_info('subtitle_cues') WHERE name='status' AND dflt_value='''generated'''") != 1 {
+		t.Fatal("subtitle_cues.status does not default to 'generated'")
+	}
 	// An export's size and quality are closed the same way.
 	if _, err := db.ExecContext(context.Background(), `INSERT INTO episode_exports
 		(id, episode_id, version_number, quality, width, height, created_at)
