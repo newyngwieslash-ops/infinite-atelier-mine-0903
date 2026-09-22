@@ -50,6 +50,7 @@ func wp05Migrations(t *testing.T) fstest.MapFS {
 		"000017_script_field_locks.sql":          {Data: wp05SQL(t, "000017_script_field_locks.sql")},
 		"000018_production.sql":                  {Data: wp05SQL(t, "000018_production.sql")},
 		"000019_memory_and_consistency.sql":      {Data: wp05SQL(t, "000019_memory_and_consistency.sql")},
+		"000020_media.sql":                       {Data: wp05SQL(t, "000020_media.sql")},
 	}
 }
 
@@ -57,8 +58,8 @@ func wp05Migrations(t *testing.T) fstest.MapFS {
 //
 // The helper keeps its wp05 name because every test calls it by that name and
 // the set is the same set; only its head moves as migrations are added. It is 19
-// since WP-10 added the memory tables and the review issue's source mark.
-const wp05HeadVersion = 19
+// since WP-11 added the subtitle tracks and the episode export record.
+const wp05HeadVersion = 20
 
 // applyMigrationFileSplits runs one migration file the way the runner does:
 // splitSQL on the raw text, then execute each fragment in order. It returns the
