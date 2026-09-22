@@ -54,6 +54,9 @@ type Options struct {
 	// MaxImageConcurrency bounds the batch's submissions in flight. Zero takes
 	// `DefaultMaxImageConcurrency`.
 	MaxImageConcurrency int
+	// Checks is the deterministic half of a review, forwarded to the shared mechanism. It is
+	// optional and a build without one runs the supervisor alone.
+	Checks stagepipeline.StageChecker
 }
 
 // New builds the pipeline.
@@ -71,6 +74,7 @@ func New(options Options) *Service {
 			Runs:     options.Runs,
 			Layer:    NewLayer(options.Storyboard, options.Gaps, options.Assets),
 			Episodes: episodes,
+			Checks:   options.Checks,
 		}),
 		storyboard:          options.Storyboard,
 		gaps:                options.Gaps,

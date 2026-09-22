@@ -47,6 +47,7 @@ const SECTION_IDS = [
     "timeline",
     "quality",
     "agents",
+    "memory",
 ] as const;
 
 /** Sections whose content is not built yet, with the package that owns each. */
@@ -214,6 +215,28 @@ test.describe("the drama studio without a core", () => {
         // The section resets to the default on reload, which is the documented
         // behaviour: the section is UI state and the store is not persisted.
         await expect(page.locator("[data-section='overview']")).toHaveAttribute("aria-current", "true");
+    });
+
+    test("the memory section is reachable and states that its records need the core", async ({ page }) => {
+        // The memory center is WP-10's surface. Without a core it must say so rather than render an
+        // empty list: "the core could not be reached" and "nothing is remembered" are different
+        // situations, and only one of them is true here — which is the rule every section keeps.
+        // A project route, because the section nav renders inside a project's shell rather than on
+        // the list: the memory center reads one project's memories, so the shell it lives in is the
+        // one that has a project.
+        await page.goto("/studio/example-project");
+        const nav = page.getByTestId("studio-section-nav");
+        await expect(nav).toBeVisible();
+        await nav.locator("[data-section='memory']").click();
+
+        await expect(page.locator("[data-active-section='memory']")).toBeVisible();
+        // The SHELL's no-core notice, because the shell answers for any available section before the
+        // section's own body runs. The section carries its own guard for the partial case — a build
+        // with the drama binding and no memory binding — which this browser-mode run cannot reach,
+        // and asserting the wrong one of the two would leave that case untested while looking tested.
+        await expect(page.getByTestId("studio-section-no-core")).toBeVisible();
+        // No table, because there is nothing to put in one.
+        await expect(page.getByTestId("studio-memory-table")).toHaveCount(0);
     });
 
     test("the agents section is reachable and states that its records need the core", async ({ page }) => {

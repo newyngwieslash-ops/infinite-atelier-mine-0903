@@ -32,7 +32,8 @@ export type StudioSection =
     | "audio"
     | "timeline"
     | "quality"
-    | "agents";
+    | "agents"
+    | "memory";
 
 export type StudioState = {
     /** The section the shell is showing. */
@@ -141,4 +142,9 @@ export const STUDIO_SECTIONS: StudioSectionSpec[] = [
     // The Agent Center is WP-07's surface: the runs the three-layer runtime produced, with
     // their messages and tool calls, and the inventory of agents this build can run.
     { id: "agents", titleKey: "studio.sections.agents.title", descriptionKey: "studio.sections.agents.description", available: true, workPackage: "WP-07" },
+    // The Memory Center is WP-10's surface. PRD section 8 lists 记忆中心 among the GLOBAL modules
+    // rather than among a studio's sections, and this build places it here anyway — for the reason
+    // the Agent Center is here: it is reached per project, a memory's scope names a project, and the
+    // studio is where a project's surface lives. ADR-0014 records the ruling.
+    { id: "memory", titleKey: "studio.sections.memory.title", descriptionKey: "studio.sections.memory.description", available: true, workPackage: "WP-10" },
 ];

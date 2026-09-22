@@ -216,6 +216,23 @@ func composeAgents(deps agentDeps) *agentWiring {
 	// boundary — and until this existed the package was reachable only from tests, so no user command
 	// could run a script stage. That is the same shape of gap as the canvas projector: a package with a
 	// real implementation and no production caller.
+	// THE DETERMINISTIC CHECKER, which the two pipelines' supervisors consult.
+	//
+	// It is composed HERE because every read its rules make is a repository over this connection,
+	// and it is handed to BOTH pipelines: the stage name decides which ruleset runs, and a checker
+	// that only knew about storyboards would report nothing for a script stage — which is the correct
+	// answer today, since AGENT_CONTRACTS section 11.1's script rules have no mechanical half this
+	// build can check without inventing vocabulary the specification does not give.
+	//
+	// Composing it is what makes section 11.4's "硬规则应尽量用确定性代码先检查" true in a real build
+	// rather than only in tests. Until this existed the rules were reachable from nowhere, which is
+	// the "interface with no real path" shape this repository's reviews have found five times.
+	checker := database.NewStoryboardConsistencyChecker(
+		database.NewStoryboardRepository(connection),
+		database.NewAssetRepository(connection),
+		newScriptReaderSource(database.NewScriptRepository(connection)),
+		database.NewStoryRepository(connection),
+	)
 	var pipeline *appscriptpipeline.Service
 	if deps.Drama != nil && deps.Drama.script != nil && deps.Drama.workflow != nil {
 		pipeline = appscriptpipeline.New(appscriptpipeline.Options{
@@ -225,6 +242,7 @@ func composeAgents(deps agentDeps) *agentWiring {
 			Workflow: deps.Drama.workflow,
 			Assembly: assembly,
 			Runs:     repository,
+			Checks:   checker,
 		})
 	}
 	// The production pipeline, over the same runtime and engine and the drama stack's other
@@ -247,6 +265,7 @@ func composeAgents(deps agentDeps) *agentWiring {
 			Assets:     deps.Drama.assets,
 			Gaps:       deps.Drama.gaps,
 			Jobs:       deps.Jobs,
+			Checks:     checker,
 		})
 	}
 	return &agentWiring{
@@ -256,6 +275,19 @@ func composeAgents(deps agentDeps) *agentWiring {
 		pipeline:   pipeline,
 		production: production,
 	}
+}
+
+// Memory returns the memory service this stack composed.
+//
+// It exists because the memory center's binding and the runtime's memory port must be the SAME
+// service: a second composition would be a second store, and a memory a user pinned in the memory
+// center would not be the memory a run recalls. The accessor is what makes that a property of the
+// wiring rather than of two call sites agreeing.
+func (w *agentWiring) Memory() *appmemory.Service {
+	if w == nil {
+		return nil
+	}
+	return w.memoryService
 }
 
 // Production returns the production pipeline, or nil when this stack is not composed.

@@ -9,6 +9,7 @@ import (
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/asset"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/script"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/storyboard"
+	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/infrastructure/database"
 )
 
 // consistency_ports.go adapts the services the deterministic checks read to the checker's ports.
@@ -143,6 +144,129 @@ func (r *scriptConsistencyReader) ShotScene(ctx context.Context, shotID string) 
 		}
 	}
 	return "", nil
+}
+
+// scriptRepositorySource adapts the SCRIPT REPOSITORY to the checker's reader source.
+//
+// It is a second source beside scriptConsistencySource, and the two exist because the two callers
+// have different things in hand: the composition root has the repository, and it is the one the
+// wiring can build without a service. The translation is the same four questions, so the repository
+// and the service answer them identically — which the compile-time assertions below are what keep
+// true.
+func newScriptReaderSource(repo *database.ScriptRepository) appconsistency.ScriptReaderSource {
+	return scriptRepositorySource{repo: repo}
+}
+
+type scriptRepositorySource struct {
+	repo *database.ScriptRepository
+}
+
+func (s scriptRepositorySource) ScriptReaderFor(ctx context.Context, scriptVersionID string) appconsistency.ScriptReader {
+	if s.repo == nil || trimWhitespace(scriptVersionID) == "" {
+		return nil
+	}
+	return &scriptRepositoryReader{repo: s.repo, version: scriptVersionID}
+}
+
+var _ appconsistency.ScriptReaderSource = scriptRepositorySource{}
+
+// scriptRepositoryReader answers the four questions from one structure read.
+type scriptRepositoryReader struct {
+	repo    *database.ScriptRepository
+	version string
+	// loaded guards the cached read, because the rules ask four questions of the same structure and
+	// re-reading it per question would make a check cost a multiple of its own data.
+	structure *script.ScriptStructure
+	loaded    bool
+}
+
+func (r *scriptRepositoryReader) load(ctx context.Context) *script.ScriptStructure {
+	if r.loaded {
+		return r.structure
+	}
+	r.loaded = true
+	if r.repo == nil || r.version == "" {
+		return nil
+	}
+	structure, err := r.repo.GetScriptStructure(ctx, r.version)
+	if err != nil {
+		return nil
+	}
+	r.structure = &structure
+	return r.structure
+}
+
+func (r *scriptRepositoryReader) ShotIDs(ctx context.Context) ([]string, error) {
+	structure := r.load(ctx)
+	if structure == nil {
+		return nil, nil
+	}
+	ids := []string{}
+	for _, scene := range structure.Scenes {
+		for _, shot := range scene.Shots {
+			ids = append(ids, shot.ID)
+		}
+	}
+	return ids, nil
+}
+
+func (r *scriptRepositoryReader) Duration(ctx context.Context) (int, error) {
+	_ = r.load(ctx)
+	if r.repo == nil {
+		return 0, nil
+	}
+	version, err := r.repo.GetScriptVersion(ctx, r.version)
+	if err != nil {
+		return 0, err
+	}
+	return version.EstimatedDurationSeconds, nil
+}
+
+func (r *scriptRepositoryReader) SceneEventOf(ctx context.Context, sceneID string) (string, error) {
+	structure := r.load(ctx)
+	if structure == nil {
+		return "", nil
+	}
+	for _, scene := range structure.Scenes {
+		if scene.ID == sceneID {
+			return scene.SourceStoryEventID, nil
+		}
+	}
+	return "", nil
+}
+
+func (r *scriptRepositoryReader) ShotScene(ctx context.Context, shotID string) (string, error) {
+	structure := r.load(ctx)
+	if structure == nil {
+		return "", nil
+	}
+	for _, scene := range structure.Scenes {
+		for _, shot := range scene.Shots {
+			if shot.ID == shotID {
+				return scene.ID, nil
+			}
+		}
+	}
+	return "", nil
+}
+
+var _ appconsistency.ScriptReader = (*scriptRepositoryReader)(nil)
+
+// trimWhitespace reports whether a string is empty or only spaces.
+func trimWhitespace(value string) string {
+	start := 0
+	end := len(value)
+	for start < end && isSpace(value[start]) {
+		start++
+	}
+	for end > start && isSpace(value[end-1]) {
+		end--
+	}
+	return value[start:end]
+}
+
+func isSpace(symbol byte) bool {
+	return symbol == ' ' || symbol == '\t' || symbol == '\n' || symbol == '\r'
 }
 
 // The compile-time proof that the adapter satisfies the checker's script port.

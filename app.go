@@ -58,6 +58,11 @@ type app struct {
 	// exists on the binding surface, and its services are attached only when the
 	// agent stack composes.
 	agentBinding *desktop.AgentBinding
+	// memoryBinding is the WP-10 surface: the memory center's reads and FR-120's five user
+	// commands. It is declared before Wails starts, like every other binding, so the frontend's
+	// generated client exists whether or not a database could be opened — and every method then
+	// fails closed with a stable error rather than being absent from the surface.
+	memoryBinding *desktop.MemoryBinding
 	// agentStack is the composed WP-07 runtime, held so a later package can reach
 	// the extraction service the runtime is the Extractor for.
 	agentStack     *agentWiring
@@ -265,6 +270,13 @@ func (a *app) startup(ctx context.Context) {
 						// store, which neither pipeline does, so a build can run the five agent
 						// stages without it and say so when a batch is asked for.
 						desktop.AttachProductionBatch(a.dramaBinding, ctx, agentStack.Production())
+					}
+					// The memory center's surface. It is attached from the SAME stack that composes
+					// the service, so the binding and the runtime's memory port are the one object:
+					// a second composition would be a second store, and a memory a user pinned in
+					// the memory center would not be the memory a run recalls.
+					if a.memoryBinding != nil {
+						desktop.AttachMemory(a.memoryBinding, ctx, agentStack.Memory())
 					}
 					a.agentStack = agentStack
 				}

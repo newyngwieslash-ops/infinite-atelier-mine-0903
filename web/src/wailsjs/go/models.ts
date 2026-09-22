@@ -1771,6 +1771,22 @@ export namespace desktop {
 	        this.revision = source["revision"];
 	    }
 	}
+	export class DeleteMemoryRequest {
+	    memoryId: string;
+	    invalidateSummaries?: boolean;
+	    confirm: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new DeleteMemoryRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.memoryId = source["memoryId"];
+	        this.invalidateSummaries = source["invalidateSummaries"];
+	        this.confirm = source["confirm"];
+	    }
+	}
 	export class DialogueLineDTO {
 	    lineId: string;
 	    sceneId: string;
@@ -2728,6 +2744,303 @@ export namespace desktop {
 	        this.upstreamId = source["upstreamId"];
 	    }
 	}
+	export class MemoryDTO {
+	    id: string;
+	    type: string;
+	    scopeProject: string;
+	    scopeEpisode?: string;
+	    scopeAgent?: string;
+	    role?: string;
+	    agentKey?: string;
+	    content: string;
+	    importance: number;
+	    confidence: number;
+	    embedded: boolean;
+	    embeddingModel?: string;
+	    embeddingVersion?: string;
+	    embeddedAt?: string;
+	    summarized: boolean;
+	    locked: boolean;
+	    sourceType?: string;
+	    sourceId?: string;
+	    deletedAt?: string;
+	    createdAt: string;
+	    updatedAt: string;
+	    revision: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new MemoryDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.type = source["type"];
+	        this.scopeProject = source["scopeProject"];
+	        this.scopeEpisode = source["scopeEpisode"];
+	        this.scopeAgent = source["scopeAgent"];
+	        this.role = source["role"];
+	        this.agentKey = source["agentKey"];
+	        this.content = source["content"];
+	        this.importance = source["importance"];
+	        this.confidence = source["confidence"];
+	        this.embedded = source["embedded"];
+	        this.embeddingModel = source["embeddingModel"];
+	        this.embeddingVersion = source["embeddingVersion"];
+	        this.embeddedAt = source["embeddedAt"];
+	        this.summarized = source["summarized"];
+	        this.locked = source["locked"];
+	        this.sourceType = source["sourceType"];
+	        this.sourceId = source["sourceId"];
+	        this.deletedAt = source["deletedAt"];
+	        this.createdAt = source["createdAt"];
+	        this.updatedAt = source["updatedAt"];
+	        this.revision = source["revision"];
+	    }
+	}
+	export class MemoryDeleteResultDTO {
+	    deleted: boolean;
+	    invalidatedSummaries: string[];
+	    keptSummaries: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new MemoryDeleteResultDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.deleted = source["deleted"];
+	        this.invalidatedSummaries = source["invalidatedSummaries"];
+	        this.keptSummaries = source["keptSummaries"];
+	    }
+	}
+	export class MemoryEditRequest {
+	    memoryId: string;
+	    content: string;
+	    confirm: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new MemoryEditRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.memoryId = source["memoryId"];
+	        this.content = source["content"];
+	        this.confirm = source["confirm"];
+	    }
+	}
+	export class MemoryEntityLinkDTO {
+	    entityType: string;
+	    entityId: string;
+	    relationType: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new MemoryEntityLinkDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.entityType = source["entityType"];
+	        this.entityId = source["entityId"];
+	        this.relationType = source["relationType"];
+	    }
+	}
+	export class MemoryPinRequest {
+	    memoryId: string;
+	    locked: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new MemoryPinRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.memoryId = source["memoryId"];
+	        this.locked = source["locked"];
+	    }
+	}
+	export class MemoryQuery {
+	    projectId: string;
+	    types?: string[];
+	    includeDeleted?: boolean;
+	    limit?: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new MemoryQuery(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.projectId = source["projectId"];
+	        this.types = source["types"];
+	        this.includeDeleted = source["includeDeleted"];
+	        this.limit = source["limit"];
+	    }
+	}
+	export class MemoryRebuildResultDTO {
+	    model: string;
+	    version: string;
+	    rebuilt: number;
+	    failed: number;
+	    remaining: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new MemoryRebuildResultDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.model = source["model"];
+	        this.version = source["version"];
+	        this.rebuilt = source["rebuilt"];
+	        this.failed = source["failed"];
+	        this.remaining = source["remaining"];
+	    }
+	}
+	export class MemoryRecallItemDTO {
+	    messageId: string;
+	    role?: string;
+	    content: string;
+	    provenance?: string;
+	    createdAt?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new MemoryRecallItemDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.messageId = source["messageId"];
+	        this.role = source["role"];
+	        this.content = source["content"];
+	        this.provenance = source["provenance"];
+	        this.createdAt = source["createdAt"];
+	    }
+	}
+	export class MemoryScoredItemDTO {
+	    memoryId: string;
+	    type: string;
+	    content: string;
+	    score: number;
+	    similarity: number;
+	    channel: string;
+	    pinned: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new MemoryScoredItemDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.memoryId = source["memoryId"];
+	        this.type = source["type"];
+	        this.content = source["content"];
+	        this.score = source["score"];
+	        this.similarity = source["similarity"];
+	        this.channel = source["channel"];
+	        this.pinned = source["pinned"];
+	    }
+	}
+	export class MemoryRecallPreviewDTO {
+	    recent: MemoryRecallItemDTO[];
+	    facts: MemoryScoredItemDTO[];
+	    summaries: MemoryScoredItemDTO[];
+	    semantic: MemoryScoredItemDTO[];
+	    usedTokens: number;
+	    truncated: boolean;
+	    semanticSearched: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new MemoryRecallPreviewDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.recent = this.convertValues(source["recent"], MemoryRecallItemDTO);
+	        this.facts = this.convertValues(source["facts"], MemoryScoredItemDTO);
+	        this.summaries = this.convertValues(source["summaries"], MemoryScoredItemDTO);
+	        this.semantic = this.convertValues(source["semantic"], MemoryScoredItemDTO);
+	        this.usedTokens = source["usedTokens"];
+	        this.truncated = source["truncated"];
+	        this.semanticSearched = source["semanticSearched"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	
+	export class MemorySummarizeResultDTO {
+	    created: boolean;
+	    summary?: MemoryDTO;
+	
+	    static createFrom(source: any = {}) {
+	        return new MemorySummarizeResultDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.created = source["created"];
+	        this.summary = this.convertValues(source["summary"], MemoryDTO);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class MemorySummarySourceDTO {
+	    memoryId: string;
+	    order: number;
+	    role?: string;
+	    agentKey?: string;
+	    createdAt?: string;
+	    messageId?: string;
+	    missing?: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new MemorySummarySourceDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.memoryId = source["memoryId"];
+	        this.order = source["order"];
+	        this.role = source["role"];
+	        this.agentKey = source["agentKey"];
+	        this.createdAt = source["createdAt"];
+	        this.messageId = source["messageId"];
+	        this.missing = source["missing"];
+	    }
+	}
 	export class MergeChapterRequest {
 	    firstChapterId: string;
 	    secondChapterId: string;
@@ -3044,6 +3357,42 @@ export namespace desktop {
 	        this.totalRunes = source["totalRunes"];
 	    }
 	}
+	export class RebuildMemoryEmbeddingRequest {
+	    projectId: string;
+	    limit?: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new RebuildMemoryEmbeddingRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.projectId = source["projectId"];
+	        this.limit = source["limit"];
+	    }
+	}
+	export class RecallPreviewRequest {
+	    projectId: string;
+	    episodeId?: string;
+	    agentKey?: string;
+	    query?: string;
+	    threshold?: number;
+	    tokenBudget?: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new RecallPreviewRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.projectId = source["projectId"];
+	        this.episodeId = source["episodeId"];
+	        this.agentKey = source["agentKey"];
+	        this.query = source["query"];
+	        this.threshold = source["threshold"];
+	        this.tokenBudget = source["tokenBudget"];
+	    }
+	}
 	export class ReviewIssueInputRequest {
 	    rule?: string;
 	    severity: string;
@@ -3167,6 +3516,7 @@ export namespace desktop {
 	    suggestion?: string;
 	    evidenceJson?: string;
 	    autoFixable: boolean;
+	    source: string;
 	    status: string;
 	    resolvedBy?: string;
 	    resolvedAt?: string;
@@ -3190,6 +3540,7 @@ export namespace desktop {
 	        this.suggestion = source["suggestion"];
 	        this.evidenceJson = source["evidenceJson"];
 	        this.autoFixable = source["autoFixable"];
+	        this.source = source["source"];
 	        this.status = source["status"];
 	        this.resolvedBy = source["resolvedBy"];
 	        this.resolvedAt = source["resolvedAt"];
@@ -4406,6 +4757,26 @@ export namespace desktop {
 	        this.mask = source["mask"];
 	        this.maskMime = source["maskMime"];
 	        this.priority = source["priority"];
+	    }
+	}
+	export class SummarizeMemoryRequest {
+	    projectId: string;
+	    episodeId?: string;
+	    agentKey?: string;
+	    level?: number;
+	    embed?: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new SummarizeMemoryRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.projectId = source["projectId"];
+	        this.episodeId = source["episodeId"];
+	        this.agentKey = source["agentKey"];
+	        this.level = source["level"];
+	        this.embed = source["embed"];
 	    }
 	}
 	export class TextRequestDTO {

@@ -45,6 +45,10 @@ type Options struct {
 	Assembly stagepipeline.SkillSource
 	Runs     stagepipeline.RunReader
 	Episodes stagepipeline.EpisodeProjectLookup
+	// Checks is the deterministic half of a review, forwarded to the shared mechanism. It is
+	// optional and a build without one runs the supervisor alone, which is what this layer shipped
+	// with: a checker that cannot run leaves the review exactly as it was rather than failing it.
+	Checks stagepipeline.StageChecker
 }
 
 // New builds the pipeline.
@@ -62,6 +66,7 @@ func New(options Options) *Service {
 			Runs:     options.Runs,
 			Layer:    NewLayer(options.Script),
 			Episodes: episodes,
+			Checks:   options.Checks,
 		}),
 		script: options.Script,
 	}

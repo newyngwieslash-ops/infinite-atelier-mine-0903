@@ -5,6 +5,7 @@ import { FilePlus2, Plus, ShieldAlert, UserPlus } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import {
+    getReviewReport,
     approveAssetVersion,
     clearStaleMark,
     createAsset,
@@ -718,6 +719,10 @@ export function QualitySection({ projectId, runs, marks, onChanged }: QualitySec
     const [waiving, setWaiving] = useState<desktop.StaleMarkDTO | null>(null);
     const [reason, setReason] = useState("");
     const [decisionId, setDecisionId] = useState("");
+    const [findings, setFindings] = useState<desktop.ReviewReportDTO | null>(null);
+    const [findingsKey, setFindingsKey] = useState("");
+    const [findingsError, setFindingsError] = useState("");
+    const [stageRunId, setStageRunId] = useState("");
 
     const clear = async (mark: desktop.StaleMarkDTO) => {
         setBusyKey(`${mark.artifactType}:${mark.artifactId}`);
@@ -755,6 +760,48 @@ export function QualitySection({ projectId, runs, marks, onChanged }: QualitySec
         }
     };
 
+    /**
+     * findingsFor loads a stage run's review report.
+     *
+     * It is the read WP-07 built and nothing called until now: `getReviewReport` has existed since
+     * the review tables did, with the evidence column WP-09 repaired, and no component fetched it. A
+     * quality centre that showed only the runs and the stale marks would be showing the workflow's
+     * bookkeeping and not its JUDGEMENT, which is what PRD FR-110's report shape is for.
+     */
+    const findingsFor = async (stageRunId: string) => {
+        setFindingsKey(stageRunId);
+        setFindingsError("");
+        try {
+            const report = await getReviewReport(stageRunId);
+            setFindings(report);
+        } catch (error) {
+            setFindings(null);
+            setFindingsError(error instanceof Error ? error.message : t("studio.quality.findingsFailed"));
+        } finally {
+            setFindingsKey("");
+        }
+    };
+
+    /**
+     * evidenceOf renders a finding's references.
+     *
+     * The column holds the review schema's array of {type, ref}, and it is parsed here rather than
+     * sent as a nested document because that is the shape the supervisor's evidence has always been
+     * stored in. A parse that fails shows the raw text rather than nothing: a reader is better served
+     * by an unparsed column than by a finding whose evidence silently disappeared, which is the exact
+     * defect WP-09 found in the writer.
+     */
+    const evidenceOf = (finding: desktop.ReviewIssueDTO): string[] => {
+        if (!finding.evidenceJson) return [];
+        try {
+            const parsed = JSON.parse(finding.evidenceJson) as { type?: string; ref?: string }[];
+            if (!Array.isArray(parsed)) return [finding.evidenceJson];
+            return parsed.map((entry) => (entry.ref ? `${entry.type ?? "ref"}:${entry.ref}` : JSON.stringify(entry)));
+        } catch {
+            return [finding.evidenceJson];
+        }
+    };
+
     const runColumns: ColumnsType<desktop.WorkflowRunDTO> = [
         { title: t("studio.quality.workflowLabel"), dataIndex: "workflowType", key: "workflowType" },
         {
@@ -776,6 +823,109 @@ export function QualitySection({ projectId, runs, marks, onChanged }: QualitySec
                     <Empty description={t("studio.quality.noRuns")} />
                 ) : (
                     <Table<desktop.WorkflowRunDTO> rowKey="id" size="small" pagination={false} columns={runColumns} dataSource={runs} data-testid="studio-runs-table" />
+                )}
+            </section>
+
+            <section>
+                <h2 className="text-lg font-medium">{t("studio.quality.findings")}</h2>
+                <Typography.Paragraph className="text-xs text-stone-500">
+                    {t("studio.quality.findingsHint")}
+                </Typography.Paragraph>
+                <Space.Compact className="mb-3 w-full max-w-2xl">
+                    <Input
+                        value={stageRunId}
+                        data-testid="studio-findings-stage-run"
+                        placeholder={t("studio.quality.findingsStageRun")}
+                        onChange={(event) => setStageRunId(event.target.value)}
+                        onPressEnter={() => void findingsFor(stageRunId.trim())}
+                    />
+                    <Button
+                        type="primary"
+                        loading={findingsKey !== ""}
+                        data-testid="studio-findings-load"
+                        onClick={() => void findingsFor(stageRunId.trim())}
+                    >
+                        {t("studio.quality.findingsLoad")}
+                    </Button>
+                </Space.Compact>
+                {findingsError ? (
+                    <Alert className="mb-3" type="error" showIcon message={findingsError} data-testid="studio-findings-error" />
+                ) : null}
+                {findings === null ? null : (
+                    <div data-testid="studio-findings" data-findings-passed={findings.passed ? "true" : "false"}>
+                        <div className="mb-2 flex flex-wrap items-center gap-2 text-sm">
+                            <Tag color={findings.passed ? "green" : "red"}>
+                                {findings.passed ? t("studio.quality.passed") : t("studio.quality.failed")}
+                            </Tag>
+                            <span>{t("studio.quality.severityLabel")}: {findings.severity || "—"}</span>
+                            <span className="text-stone-500">{findings.rulesetVersion}</span>
+                        </div>
+                        {findings.summary ? <p className="mb-3 text-sm">{findings.summary}</p> : null}
+                        {findings.issues.length === 0 ? (
+                            <Empty description={t("studio.quality.noFindings")} />
+                        ) : (
+                            <ul className="space-y-2" data-testid="studio-findings-list">
+                                {findings.issues.map((finding) => (
+                                    <li
+                                        key={finding.id}
+                                        data-finding={finding.id}
+                                        data-finding-rule={finding.rule}
+                                        data-finding-source={finding.source}
+                                        data-finding-entity={finding.entityId}
+                                        data-finding-field={finding.field}
+                                        className="rounded-xl border border-stone-200 p-4 dark:border-stone-800"
+                                    >
+                                        <div className="flex flex-wrap items-center gap-2">
+                                            <Tag color={severityColour(finding.severity)}>
+                                                {t(`studio.severity.${finding.severity}`, { defaultValue: finding.severity })}
+                                            </Tag>
+                                            {/* The mark AGENT_CONTRACTS section 11.4 requires: which
+                                                half of the review found this. A reader deciding what
+                                                to do about a finding needs to know whether it is a
+                                                computation over stored rows or a model's reading. */}
+                                            <Tag color={finding.source === "deterministic" ? "blue" : "purple"}>
+                                                {t(`studio.quality.source.${finding.source}`, { defaultValue: finding.source })}
+                                            </Tag>
+                                            <code className="text-xs">{finding.rule}</code>
+                                            {finding.autoFixable ? (
+                                                <Tag color="cyan">{t("studio.quality.autoFixable")}</Tag>
+                                            ) : null}
+                                        </div>
+                                        <p className="mt-2 text-sm">{finding.problem}</p>
+                                        {finding.suggestion ? (
+                                            <p className="mt-1 text-sm text-stone-600 dark:text-stone-400">
+                                                {t("studio.quality.suggestion")}: {finding.suggestion}
+                                            </p>
+                                        ) : null}
+                                        {/* PRD FR-110's "报告问题可以在 UI 中跳转到实体": the entity a
+                                            finding is about is shown as a jumpable reference, and
+                                            the location is shown when there is no entity. */}
+                                        {finding.entityId ? (
+                                            <p className="mt-1 text-xs">
+                                                {t("studio.quality.entityLabel")}:{" "}
+                                                <code data-finding-target={finding.entityId}>
+                                                    {finding.entityType}:{finding.entityId}
+                                                </code>
+                                                {finding.field ? <span className="ml-2 text-stone-500">{finding.field}</span> : null}
+                                            </p>
+                                        ) : null}
+                                        {finding.location ? (
+                                            <p className="mt-1 text-xs text-stone-500">{finding.location}</p>
+                                        ) : null}
+                                        {evidenceOf(finding).length > 0 ? (
+                                            <ul className="mt-2 space-y-1" data-testid="studio-finding-evidence">
+                                                {evidenceOf(finding).map((entry) => (
+                                                    <li key={entry} className="text-xs text-stone-500">
+                                                        {t("studio.quality.evidence")}: <code>{entry}</code>
+                                                    </li>
+                                                ))}
+                                            </ul>
+                                        ) : null}
+                                    </li>
+                                ))}
+                            </ul>
+                        )}
+                    </div>
                 )}
             </section>
 

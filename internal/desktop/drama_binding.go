@@ -2431,10 +2431,14 @@ type ReviewIssueDTO struct {
 	Suggestion   string `json:"suggestion,omitempty"`
 	EvidenceJSON string `json:"evidenceJson,omitempty"`
 	AutoFixable  bool   `json:"autoFixable"`
-	Status       string `json:"status"`
-	ResolvedBy   string `json:"resolvedBy,omitempty"`
-	ResolvedAt   string `json:"resolvedAt,omitempty"`
-	CreatedAt    string `json:"createdAt"`
+	// Source marks which half of the review found this: a deterministic code rule, or a supervisor.
+	// AGENT_CONTRACTS section 11.4 requires the mark, and the quality centre groups by it: a reader
+	// deciding what to do about a finding needs to know whether it is a computation or a reading.
+	Source     string `json:"source"`
+	Status     string `json:"status"`
+	ResolvedBy string `json:"resolvedBy,omitempty"`
+	ResolvedAt string `json:"resolvedAt,omitempty"`
+	CreatedAt  string `json:"createdAt"`
 }
 
 // ReviewReportDTO is the transport view of one review of a stage attempt,
@@ -3248,12 +3252,34 @@ func toReviewIssueDTOs(records []workflow.ReviewIssue) []ReviewIssueDTO {
 			EntityID: record.EntityID, Location: record.Location, Field: record.Field,
 			Problem: record.Problem, Suggestion: record.Suggestion,
 			EvidenceJSON: record.EvidenceJSON, AutoFixable: record.AutoFixable,
+			// An empty source is read as the supervisor's, which is what every finding written
+			// before the column existed was. The default is stated here as well as in the service
+			// and the repository so a reader of this DTO cannot receive an empty mark and have to
+			// guess which half produced the finding.
+			Source: sourceOrLLM(record.Source),
 			Status: string(record.Status), ResolvedBy: record.ResolvedBy,
 			ResolvedAt: rfc3339OrEmpty(record.ResolvedAt),
 			CreatedAt:  record.CreatedAt.UTC().Format(rfc3339),
 		})
 	}
 	return issues
+}
+
+// sourceOrLLM defaults a finding's source mark.
+//
+// The check is written out rather than calling strings.TrimSpace because this file does not import
+// strings, and adding an import to one package for a four-character test would be a bigger change
+// than the test. A mark that is only whitespace is empty, which is the case this exists for.
+func sourceOrLLM(source string) string {
+	for _, symbol := range source {
+		switch symbol {
+		case ' ', '\t', '\n', '\r':
+			continue
+		default:
+			return source
+		}
+	}
+	return string(appworkflow.IssueSourceLLM)
 }
 
 // toUserGateDecisionDTO converts a domain gate decision.
