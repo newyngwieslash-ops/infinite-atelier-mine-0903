@@ -57,6 +57,11 @@ func (r *DocumentFactsReader) EpisodeFacts(ctx context.Context, episodeID string
 		return appmedia.DocumentEpisode{}, documentStoreUnavailable()
 	}
 	var episode appmedia.DocumentEpisode
+	// `current_script_version_id` is READ but not relied on, and the distinction matters: NOTHING in
+	// this build writes that column — see `FinalFactsReader.readEpisodeScript` for the full account —
+	// so a document that resolved its version through it would find no script for every episode. It is
+	// carried on the struct because a caller may want to know what the episode POINTS at, and every
+	// decision below goes through `approved_script`, which is the version a build actually produces.
 	err := r.db.QueryRowContext(ctx, `
 		SELECT e.id, p.name, e.title, e.season_number, e.episode_number,
 		       e.current_script_version_id,

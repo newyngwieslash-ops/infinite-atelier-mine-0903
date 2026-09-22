@@ -36,10 +36,15 @@ type stubVideoAdapter struct {
 	mediaErr    error
 	polls       []appjobs.RemoteStatus
 	remoteID    string
+	// submits records what each call was given, so a test can assert the REFERENCES that reached the
+	// adapter rather than only that it was called. An earlier version discarded the request, which
+	// meant the reference pipeline could be deleted without a test noticing.
+	submits []appjobs.VideoRequest
 }
 
-func (s *stubVideoAdapter) Submit(_ context.Context, _ appjobs.VideoRequest) (appjobs.RemoteJob, error) {
+func (s *stubVideoAdapter) Submit(_ context.Context, request appjobs.VideoRequest) (appjobs.RemoteJob, error) {
 	s.submitCalls++
+	s.submits = append(s.submits, request)
 	if s.submitErr != nil {
 		return appjobs.RemoteJob{}, s.submitErr
 	}
@@ -410,3 +415,97 @@ func TestRunnerNeverCommitsDisallowedContent(t *testing.T) {
 
 // Ensure the fake downloader satisfies the runner's port.
 var _ DownloaderPort = (*fakeDownloader)(nil)
+
+// TestRunnerVideoCarriesReferencesAndFrames covers FR-080's "首帧/尾帧/参考资产" over the real runner.
+//
+// ROADMAP WP-11 item 2 is "首帧/尾帧/参考资产", and the pipeline that carries them — `videoInput`'s
+// three fields, `runVideo`'s assembly, and the ORDER the adapter is given them in — had no test
+// that put anything in them. The stub discarded its request, so the whole pipeline could have been
+// deleted with the suite green.
+//
+// THE ORDER IS THE ASSERTION. FR-080 lists plain references first, then the first frame, then the
+// last, and `runVideo`'s comment says a provider that takes a leading image uses it as the opening
+// frame. A build that appended them in another order would send a different film to the same
+// provider, and nothing else in the repository would notice.
+func TestRunnerVideoCarriesReferencesAndFrames(t *testing.T) {
+	video := &stubVideoAdapter{
+		media: appjobs.MediaOutcome{Data: base64.StdEncoding.EncodeToString(minimalMP4()), MIMEType: "video/mp4"},
+		polls: []appjobs.RemoteStatus{{Done: true}},
+	}
+	store := NewResultStore(newFakeContentStore(), newFakeMetadataStore(), &recordingReferences{})
+	runner := runnerFor(t, stubAdapters{video: video}, store)
+
+	record := jobRecord(job.JobTypeVideoGeneration, map[string]any{
+		"providerId": "prov-1", "model": "video-1", "prompt": "a clip", "seconds": 5,
+		"references":     []string{"cmVm", "cmVmMg=="},
+		"referenceMimes": []string{"image/jpeg", "image/webp"},
+		"firstFrame":     "Zmlyc3Q=", "firstFrameMime": "image/png",
+		"lastFrame": "bGFzdA==", "lastFrameMime": "image/gif",
+	})
+	if _, err := runner.Run(context.Background(), record); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(video.submits) != 1 {
+		t.Fatalf("the adapter was given %d submissions, want one", len(video.submits))
+	}
+	references := video.submits[0].References
+	if len(references) != 4 {
+		t.Fatalf("the adapter received %d references, want two plain ones and two frames: %+v",
+			len(references), references)
+	}
+	expected := []struct{ data, mime string }{
+		{"cmVm", "image/jpeg"},
+		{"cmVmMg==", "image/webp"},
+		{"Zmlyc3Q=", "image/png"},
+		{"bGFzdA==", "image/gif"},
+	}
+	for index, want := range expected {
+		if references[index].Data != want.data {
+			t.Fatalf("reference %d carries %q, want %q — the ORDER is FR-080's", index, references[index].Data, want.data)
+		}
+		if references[index].MIMEType != want.mime {
+			t.Fatalf("reference %d is %q, want %q", index, references[index].MIMEType, want.mime)
+		}
+	}
+}
+
+// TestRunnerVideoDefaultsAReferenceMIME covers the fallback, which is what makes a caller that omits
+// the type produce a submission rather than a refusal.
+func TestRunnerVideoDefaultsAReferenceMIME(t *testing.T) {
+	video := &stubVideoAdapter{media: appjobs.MediaOutcome{}, polls: []appjobs.RemoteStatus{{Done: true}}}
+	store := NewResultStore(newFakeContentStore(), newFakeMetadataStore(), &recordingReferences{})
+	runner := runnerFor(t, stubAdapters{video: video}, store)
+
+	// A first frame with no MIME, and a reference whose MIME list is SHORTER than the reference list:
+	// both fall back to PNG rather than leaving an empty type for the adapter to send.
+	record := jobRecord(job.JobTypeVideoGeneration, map[string]any{
+		"providerId": "prov-1", "model": "video-1", "prompt": "a clip", "seconds": 5,
+		"references": []string{"cmVm", "cmVmMg=="}, "referenceMimes": []string{"image/jpeg"},
+		"firstFrame": "Zmlyc3Q=",
+	})
+	if _, err := runner.Run(context.Background(), record); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	references := video.submits[0].References
+	if len(references) != 3 {
+		t.Fatalf("the adapter received %d references, want three", len(references))
+	}
+	if references[0].MIMEType != "image/jpeg" {
+		t.Fatalf("the stated MIME was replaced by %q", references[0].MIMEType)
+	}
+	for index := 1; index < len(references); index++ {
+		if references[index].MIMEType != "image/png" {
+			t.Fatalf("reference %d fell back to %q rather than PNG", index, references[index].MIMEType)
+		}
+	}
+}
+
+// minimalMP4 is the smallest ftyp box Go's sniffer reports as video/mp4: the four-byte-aligned "mp41"
+// brand at offset 16 is what it reads.
+func minimalMP4() []byte {
+	return []byte{
+		0x00, 0x00, 0x00, 0x18, 'f', 't', 'y', 'p',
+		'i', 's', 'o', 'm', 0x00, 0x00, 0x02, 0x00,
+		'm', 'p', '4', '1', 'i', 's', 'o', 'm',
+	}
+}

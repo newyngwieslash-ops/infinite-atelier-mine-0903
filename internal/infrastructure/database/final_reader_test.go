@@ -49,14 +49,17 @@ func TestFinalFactsReaderReadsTheRealSchema(t *testing.T) {
 	ctx := context.Background()
 	reader, harness := finalReaderHarness(t)
 	versionID := harness.approvedBoard(t, 2, 4)
-	// A script version the reader's own duration comparison can find: `episodes.current_script_version_id`
-	// is what it joins through, and the fixture writes the version without pointing the episode at it.
+	// APPROVE the script version, which is what the reader joins through.
+	//
+	// An earlier version of this fixture set `episodes.current_script_version_id` instead, and that
+	// was the defect rather than the fix: NOTHING in this build writes that column — `UpdateEpisode`
+	// carries it but its only caller preserves the value it read — so the production join found no
+	// rows and this test passed against a state no build can produce. The duration rule then reported
+	// nothing in production while reporting here, which is the kind of divergence a fixture that
+	// hand-writes its own columns produces.
 	if _, err := harness.db.ExecContext(ctx,
-		`UPDATE episodes SET current_script_version_id = 'drama-script-version' WHERE id = 'drama-episode'`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := harness.db.ExecContext(ctx,
-		`UPDATE script_versions SET estimated_duration_seconds = 8 WHERE id = 'drama-script-version'`); err != nil {
+		`UPDATE script_versions SET status = 'approved', estimated_duration_seconds = 8
+		 WHERE id = 'drama-script-version'`); err != nil {
 		t.Fatal(err)
 	}
 
@@ -330,9 +333,11 @@ func TestTheFinalRulesetRunsOverTheAdapter(t *testing.T) {
 	ctx := context.Background()
 	reader, harness := finalReaderHarness(t)
 	harness.approvedBoard(t, 2, 4)
-	// The episode's script version, so the duration comparison has something to read.
+	// An APPROVED script version, so the duration comparison has something to read. The approval is
+	// the path a build produces; see `TestFinalFactsReaderReadsTheRealSchema` for why the episode's
+	// pointer is not.
 	if _, err := harness.db.ExecContext(ctx,
-		`UPDATE episodes SET current_script_version_id = 'drama-script-version' WHERE id = 'drama-episode'`); err != nil {
+		`UPDATE script_versions SET status = 'approved' WHERE id = 'drama-script-version'`); err != nil {
 		t.Fatal(err)
 	}
 
@@ -411,7 +416,7 @@ func TestTheCheckerDispatchesTheFinalStageToTheFinalRuleset(t *testing.T) {
 	harness := newMediaHarness(t)
 	boardVersionID := harness.approvedBoard(t, 2, 4)
 	if _, err := harness.db.ExecContext(ctx,
-		`UPDATE episodes SET current_script_version_id = 'drama-script-version' WHERE id = 'drama-episode'`); err != nil {
+		`UPDATE script_versions SET status = 'approved' WHERE id = 'drama-script-version'`); err != nil {
 		t.Fatal(err)
 	}
 

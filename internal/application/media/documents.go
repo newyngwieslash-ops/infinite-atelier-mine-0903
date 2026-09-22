@@ -61,7 +61,10 @@ type DocumentEpisode struct {
 	Title         string
 	SeasonNumber  int
 	EpisodeNumber int
-	// CurrentScriptVersionID is the episode's own pointer, empty when none is approved.
+	// CurrentScriptVersionID is the episode's own pointer at a script version, which in THIS build is
+	// always empty: no production path writes `episodes.current_script_version_id` — see
+	// `FinalFactsReader.readEpisodeScript` for the account. It is carried so an adapter that has one can
+	// report it, and it is deliberately NOT what a document resolves its version through.
 	CurrentScriptVersionID string
 	// ApprovedScriptVersionID is the script version whose status is `approved`, which is what a
 	// document renders: the pointer and the approval are two facts, and a build that trusted the

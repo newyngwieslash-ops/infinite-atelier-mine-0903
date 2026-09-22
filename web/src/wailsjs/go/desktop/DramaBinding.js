@@ -202,6 +202,10 @@ export function ListScriptFieldLocks(arg1) {
   return window['go']['desktop']['DramaBinding']['ListScriptFieldLocks'](arg1);
 }
 
+export function ListScriptVersions(arg1) {
+  return window['go']['desktop']['DramaBinding']['ListScriptVersions'](arg1);
+}
+
 export function ListShots(arg1) {
   return window['go']['desktop']['DramaBinding']['ListShots'](arg1);
 }

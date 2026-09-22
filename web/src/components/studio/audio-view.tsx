@@ -5,6 +5,7 @@ import { Mic, RefreshCw } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { listJobs, submitAudioJob } from "@/services/desktop/jobs";
+import { getScriptStructure, isDramaBindingsAvailable, listScriptVersions, listStoryEntities } from "@/services/desktop/drama";
 import { isMediaBindingsAvailable, readTimeline } from "@/services/desktop/media";
 import { channelIdForModel, decodeModelSelection } from "@/services/desktop/model-selection";
 import { useEffectiveConfig } from "@/stores/use-config-store";
@@ -13,35 +14,36 @@ import type { desktop } from "@/wailsjs/go/models";
 /**
  * AudioSection is WP-11's audio surface: which shots have speech, and where a line's TTS is missing.
  *
- * # What it reads, and the read that does NOT exist
+ * # The two reads this section picks from, and the one that does not exist
  *
- * The per-line state FR-080 asks for — "TTS Voice/Dialogue mapping" — is not reachable from this
- * build's binding, and the section says so rather than guessing:
+ * The per-line STATE FR-080 asks for — "TTS Voice/Dialogue mapping" — is not reachable from this
+ * build's binding, and the section says so rather than guessing. What IS reachable is the script:
  *
- *  - There is NO method that lists a script version's dialogue lines. `DramaBinding` exposes
- *    `GetScriptStructure`, which needs a script version id, and nothing lists a script's versions:
- *    `ListScriptVersions` exists on the repository interface and on a TEST store, but no service
- *    method, no binding method and no DTO returns a version list — `ApproveScriptVersion`,
- *    `CreateScriptVersion` and `SaveScriptStructure` are the only three that name a version, and
- *    each takes one rather than returning a list. `ScriptDTO.currentVersionId` is a column nothing
- *    writes (`CreateScript` writes it empty and no statement updates it), so it is not a route
- *    either.
+ *  - `ListScriptVersions(episodeId)` returns the episode's script versions, newest first. It is the
+ *    read that was missing, and an earlier version of this comment overstated the gap. The SCRIPT
+ *    family was the one of four whose history had no BINDING: `ListStorySkeletonVersions` and
+ *    `ListAdaptationStrategyVersions` have had theirs since WP-08, while the repository method behind
+ *    the script family was unreachable from the webview. With no way to enumerate versions, this
+ *    section asked the user to TYPE a dialogue line id — which is what this picker replaces.
+ *  - `GetScriptStructure(scriptVersionId)` returns a version's scenes with their `dialogueLines`,
+ *    each carrying `lineId`, `type`, `characterEntityId` and `text`. This read has always existed,
+ *    so the claim that "no method lists a script version's dialogue lines" was FALSE. The version
+ *    LIST was the only thing missing.
  *  - There is NO method that reads a line's approved audio. The audio join lives in the timeline
- *    read's audio column, which is per SHOT ("whether audio is approved for any line in this
- *    row's scene"), and `SubmitAudioJob` names a `dialogueLineId` whose value no read here can
- *    supply.
+ *    read's audio column, which is per SHOT ("whether audio is approved for any line in this row's
+ *    scene"), so the status table above reports at that granularity and invents no per-line status.
  *
- * So the section reports the audio state at the granularity the core actually answers — the shot,
- * from `ReadTimeline`'s `hasAudio` — and it submits a TTS job for a shot whose audio is missing,
- * carrying the character and line text the user states. It does NOT render a fabricated per-line
- * list, and it does not call a method that does not exist.
- *
- * # The dialogue line identifier
+ * # The dialogue line the request names
  *
  * `SubmitAudioJob` requires a non-empty `dialogueLineId` — the core refuses the request without one
- * — and it is the job's entity. Since this interface cannot enumerate lines, the field is an INPUT:
- * the user names the line they are voicing, and what is created is honest about what it is — a
- * request about a line the user identified, not one this interface looked up.
+ * — and it is the job's entity. The line is CHOSEN here rather than typed: the picker offers the
+ * selected version's lines that a person hears, filtered by the domain's own rule
+ * (`IsSpoken` in `internal/domain/media/subtitle.go`: "dialogue" or "narration"), and choosing one
+ * fills the id and the text the request carries.
+ *
+ * The line ID carries the character, which is why no character field is sent: `SubmitAudioJobRequest`
+ * has none, and the core resolves the character from the line. The character shown beside the picker
+ * is a caption derived from the same line, not a second field.
  */
 export type AudioSectionProps = {
     projectId: string;
@@ -54,6 +56,45 @@ export type AudioSectionProps = {
 /** The job types this section lists: one line's speech, and nothing else. */
 const AUDIO_JOB_TYPES = ["audio_generation"];
 
+/**
+ * SPOKEN_LINE_TYPES is the domain's IsSpoken rule (`internal/domain/media/subtitle.go`).
+ *
+ * It is written out here rather than inferred from the structure, because a picker that offered
+ * action lines would let a user submit a TTS job for a line nobody hears. The subtitle service
+ * applies the same two values when it decides which lines a cue must cover, so a line offered here
+ * and a line counted as missing there are the same set.
+ */
+const SPOKEN_LINE_TYPES = ["dialogue", "narration"] as const;
+
+/** A spoken line flattened out of its scenes, which is the shape a picker needs. */
+type SpokenLine = {
+    lineId: string;
+    type: string;
+    characterEntityId: string;
+    text: string;
+    /** The scene's own label, so two lines with the same text are distinguishable. */
+    sceneLabel: string;
+};
+
+/** flattenSpokenLines pulls the lines a person hears out of a structure, in scene then line order. */
+function flattenSpokenLines(structure: desktop.ScriptStructureDTO): SpokenLine[] {
+    const out: SpokenLine[] = [];
+    for (const scene of structure.scenes) {
+        const label = scene.slugline || scene.sceneNumber || String(scene.ordinal);
+        for (const line of scene.dialogueLines) {
+            if (!(SPOKEN_LINE_TYPES as readonly string[]).includes(line.type)) continue;
+            out.push({
+                lineId: line.lineId,
+                type: line.type,
+                characterEntityId: line.characterEntityId ?? "",
+                text: line.text,
+                sceneLabel: label,
+            });
+        }
+    }
+    return out;
+}
+
 export function AudioSection({ projectId, episodes, activeEpisodeId, onSelectEpisode, onChanged }: AudioSectionProps) {
     const { t } = useTranslation();
     const { message } = App.useApp();
@@ -65,18 +106,41 @@ export function AudioSection({ projectId, episodes, activeEpisodeId, onSelectEpi
     const [refreshing, setRefreshing] = useState(false);
     const [error, setError] = useState("");
     const [selectedShotId, setSelectedShotId] = useState("");
+    /**
+     * The script history and the structure of the version picked from it.
+     *
+     * `versions` is `null` until the read has answered, so "could not read" and "the episode has no
+     * script version yet" stay distinguishable — the same rule the timeline section keeps.
+     */
+    const [versions, setVersions] = useState<desktop.ScriptVersionDTO[] | null>(null);
+    const [versionId, setVersionId] = useState("");
+    const [structure, setStructure] = useState<desktop.ScriptStructureDTO | null>(null);
+    const [structureLoading, setStructureLoading] = useState(false);
     const [lineId, setLineId] = useState("");
+    const [entities, setEntities] = useState<desktop.StoryEntityDTO[]>([]);
     const [text, setText] = useState("");
     const [submitting, setSubmitting] = useState(false);
 
     const activeEpisode = useMemo(() => episodes.find((episode) => episode.id === activeEpisodeId) || null, [episodes, activeEpisodeId]);
 
     const bindingsAvailable = isMediaBindingsAvailable();
+    /**
+     * The script reads below go through the DRAMA binding, which a media-only build does not carry.
+     *
+     * That is a third availability question, and it is asked here rather than folded into
+     * `bindingsAvailable` because the answers differ: a build with both surfaces is the normal case,
+     * and a build with the media surface alone can still show the shot table while the version picker
+     * has nothing to read. In that case the section says WHICH read is missing instead of reporting
+     * "no script version", which would be a claim about the episode's content drawn from an absent
+     * binding.
+     */
+    const scriptBindingsAvailable = isDramaBindingsAvailable();
 
     const reload = useCallback(async () => {
         if (!activeEpisodeId) {
             setTimeline(null);
             setJobs([]);
+            setVersions(null);
             return;
         }
         setLoading(true);
@@ -92,14 +156,101 @@ export function AudioSection({ projectId, episodes, activeEpisodeId, onSelectEpi
             setError(failure instanceof Error ? failure.message : t("studio.audio.loadFailed"));
             setTimeline(null);
             setJobs([]);
-        } finally {
-            setLoading(false);
         }
-    }, [activeEpisodeId, projectId, t]);
+        // The script history is read OUTSIDE the block above, for two reasons that both matter. It is
+        // a DRAMA read while the pair above are media reads, so a failure here must not null a
+        // timeline that answered — a user would lose a working shot list to a picker. And it is read
+        // only when its own binding is present: the query answers `[]` for an absent binding, and an
+        // empty list ("this episode has no script version") is a different fact from a missing
+        // binding ("this build cannot read the script"), which one `[]` cannot tell apart.
+        if (!scriptBindingsAvailable) {
+            setVersions(null);
+        } else {
+            try {
+                setVersions(await listScriptVersions(activeEpisodeId));
+            } catch (failure) {
+                setVersions(null);
+                // The first failure on screen wins: the media block above has already reported the
+                // more consequential problem if there was one.
+                setError((current) => current || (failure instanceof Error ? failure.message : t("studio.audio.versionsUnread")));
+            }
+        }
+        setLoading(false);
+    }, [activeEpisodeId, projectId, scriptBindingsAvailable, t]);
 
     useEffect(() => {
         void reload();
     }, [reload]);
+
+    /**
+     * The project's entities, read so a line's character can be NAMED rather than shown as a uuid.
+     *
+     * It is a separate, best-effort read rather than a fourth member of `reload`'s `Promise.all`,
+     * because it is a caption rather than a fact this section acts on: a project whose entities
+     * cannot be read still has script versions and lines, and the detail line below falls back to
+     * the identifier instead of the section failing. The read itself answers `[]` when the drama
+     * binding is absent, so a media-only build degrades the same way.
+     */
+    useEffect(() => {
+        if (!projectId || !scriptBindingsAvailable) {
+            setEntities([]);
+            return;
+        }
+        let cancelled = false;
+        void listStoryEntities(projectId)
+            .then((found) => {
+                if (!cancelled) setEntities(found);
+            })
+            .catch(() => {
+                if (!cancelled) setEntities([]);
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [projectId, scriptBindingsAvailable]);
+
+    /**
+     * loadStructure reads the picked version's lines.
+     *
+     * Everything below the picker is reset with it: a line id from the previous version would name
+     * a line this version may not have, and submitting it would create a job about a line the user
+     * is no longer looking at.
+     */
+    const loadStructure = useCallback(
+        async (nextVersionId: string) => {
+            setVersionId(nextVersionId);
+            setLineId("");
+            setText("");
+            setStructure(null);
+            if (!nextVersionId) return;
+            setStructureLoading(true);
+            try {
+                setStructure(await getScriptStructure(nextVersionId));
+            } catch (failure) {
+                setError(failure instanceof Error ? failure.message : t("studio.audio.structureFailed"));
+                setStructure(null);
+            } finally {
+                setStructureLoading(false);
+            }
+        },
+        [t],
+    );
+
+    // The newest version is not selected automatically, and that is the choice the version's own
+    // status makes for us: `listScriptVersions` returns newest first, but the newest is not
+    // necessarily the one in force, and a TTS job submitted against a draft would be work for a
+    // script nobody approved. The picker states which status each version carries and lets the user
+    // decide — the same ruling the subtitle section's draft picker makes, except that its picker has
+    // an approved version to prefer and this one has no equivalent rule: a voice is recorded line by
+    // line, and a user re-recording one line of a draft is an ordinary thing to do.
+    useEffect(() => {
+        if (versions === null) return;
+        // A version that has gone (or an episode switch) clears the selection AND its structure,
+        // rather than leaving lines on screen that belong to another episode's script.
+        if (versionId && !versions.some((version) => version.id === versionId)) {
+            void loadStructure("");
+        }
+    }, [versions, versionId, loadStructure]);
 
     /** refreshJobs re-reads only the job list: a TTS job's status is the thing that changes. */
     const refreshJobs = useCallback(async () => {
@@ -116,6 +267,28 @@ export function AudioSection({ projectId, episodes, activeEpisodeId, onSelectEpi
 
     const shots = timeline?.shots ?? [];
     const withoutAudio = shots.filter((shot) => !shot.hasAudio).length;
+    const spokenLines = useMemo(() => (structure ? flattenSpokenLines(structure) : []), [structure]);
+
+    /**
+     * chooseLine fills the request from a picked line.
+     *
+     * The text is filled rather than fixed: TTS is billed by the character and a line's wording is
+     * sometimes adjusted before synthesis (a name's pronunciation, a number spelled out), so the
+     * field stays editable and this only seeds it.
+     *
+     * Only the line ID is remembered as state. `SubmitAudioJobRequest` has no character field — the
+     * core resolves the character FROM the line, which is what AC-MEDIA-002's "audio linked to
+     * character/line" means — so the character below is derived from the picked line for display
+     * rather than stored as a second copy that could drift from it.
+     */
+    const chooseLine = (picked: string) => {
+        const line = spokenLines.find((candidate) => candidate.lineId === picked);
+        setLineId(picked);
+        setText(line?.text ?? "");
+    };
+
+    /** The picked line, which is what supplies the scene and character the detail line shows. */
+    const chosenLine = useMemo(() => spokenLines.find((line) => line.lineId === lineId) ?? null, [spokenLines, lineId]);
 
     /**
      * submit sends one line's TTS request.
@@ -263,6 +436,16 @@ export function AudioSection({ projectId, episodes, activeEpisodeId, onSelectEpi
             <section className="rounded-xl border border-stone-200 p-4 dark:border-stone-800">
                 <h2 className="text-base font-medium">{t("studio.audio.requestTitle")}</h2>
                 <Typography.Paragraph className="mt-1 text-xs text-stone-500">{t("studio.audio.requestHint")}</Typography.Paragraph>
+
+                {!scriptBindingsAvailable ? (
+                    <Alert className="mb-3" type="info" showIcon data-testid="studio-audio-no-script-core" message={t("studio.audio.noScriptCoreTitle")} description={t("studio.audio.noScriptCoreBody")} />
+                ) : versions !== null && versions.length === 0 ? (
+                    // The reason AND the step that produces one: a disabled control with no
+                    // explanation reads as a broken build, and the version a TTS request needs comes
+                    // from a stage the user can go and run.
+                    <Alert className="mb-3" type="info" showIcon data-testid="studio-audio-no-version" message={t("studio.audio.noVersionTitle")} description={t("studio.audio.noVersionBody")} />
+                ) : null}
+
                 <Space wrap align="end">
                     <label>
                         <span className="mb-1 block text-sm">{t("studio.audio.shotLabel")}</span>
@@ -279,13 +462,65 @@ export function AudioSection({ projectId, episodes, activeEpisodeId, onSelectEpi
                         />
                     </label>
                     <label>
+                        <span className="mb-1 block text-sm">{t("studio.audio.versionLabel")}</span>
+                        <Select
+                            className="min-w-56"
+                            value={versionId || undefined}
+                            placeholder={scriptBindingsAvailable ? t("studio.audio.selectVersion") : t("studio.audio.scriptCoreMissing")}
+                            loading={loading}
+                            disabled={!scriptBindingsAvailable || versions === null || versions.length === 0}
+                            data-testid="studio-audio-script-version"
+                            onChange={(value: string) => void loadStructure(value)}
+                            options={(versions ?? []).map((version) => ({
+                                value: version.id,
+                                label: `v${version.versionNumber} · ${t(`studio.versionStatus.${version.status}`, { defaultValue: version.status })}`,
+                            }))}
+                        />
+                    </label>
+                    <label>
                         <span className="mb-1 block text-sm">{t("studio.audio.lineLabel")}</span>
-                        <Input className="w-64" value={lineId} maxLength={120} data-testid="studio-audio-line" placeholder={t("studio.audio.linePlaceholder")} onChange={(event) => setLineId(event.target.value)} />
+                        <Select
+                            className="min-w-80"
+                            value={lineId || undefined}
+                            placeholder={t("studio.audio.selectLine")}
+                            loading={structureLoading}
+                            disabled={!versionId || spokenLines.length === 0}
+                            data-testid="studio-audio-line"
+                            onChange={(value: string) => chooseLine(value)}
+                            options={spokenLines.map((line) => ({
+                                value: line.lineId,
+                                label: `${t(`studio.lineType.${line.type}`, { defaultValue: line.type })} · ${line.text.slice(0, 24)}${line.text.length > 24 ? "…" : ""}`,
+                            }))}
+                        />
                     </label>
                     <Button type="primary" icon={<Mic className="size-4" />} loading={submitting} data-testid="studio-audio-submit" onClick={() => void submit()}>
                         {t("studio.audio.submit")}
                     </Button>
                 </Space>
+
+                {/* What the picked line is, said out loud: which scene it sits in and whose line it
+                    is. The scene label and the character ID both come from the structure the core
+                    returned — no second call decides them — and the ID is turned into a name only
+                    through the project's own entity list. A line citing an entity this project does
+                    not list keeps its raw ID on screen, which is the honest rendering: inventing a
+                    name for it would be a claim about a fact nobody read. */}
+                {versionId && structure ? (
+                    <div className="mt-2 text-xs text-stone-500" data-testid="studio-audio-line-detail">
+                        {spokenLines.length === 0 ? (
+                            <span>{t("studio.audio.noSpokenLines")}</span>
+                        ) : lineId ? (
+                            <span>
+                                {t("studio.audio.lineDetail", {
+                                    scene: chosenLine?.sceneLabel ?? "—",
+                                    character: characterName(chosenLine?.characterEntityId ?? "", entities) || t("studio.audio.noCharacter"),
+                                })}
+                            </span>
+                        ) : (
+                            <span>{t("studio.audio.lineHint", { count: spokenLines.length })}</span>
+                        )}
+                    </div>
+                ) : null}
+
                 <label className="mt-3 block">
                     <span className="mb-1 block text-sm">{t("studio.audio.textLabel")}</span>
                     <Input.TextArea rows={3} value={text} maxLength={2000} data-testid="studio-audio-text" placeholder={t("studio.audio.textPlaceholder")} onChange={(event) => setText(event.target.value)} />
@@ -346,6 +581,24 @@ export function AudioSection({ projectId, episodes, activeEpisodeId, onSelectEpi
             </section>
         </div>
     );
+}
+
+/**
+ * characterName resolves a line's `characterEntityId` against the project's entities.
+ *
+ * It returns the empty string rather than the identifier when nothing matches, so the caller
+ * decides what to show: a name when there is one, the core's own identifier when the entity list
+ * does not carry it, and a "no character" note when the line names none at all. `narration` is the
+ * common case for the last of those — a narrator's line is not attributed to a character — and the
+ * three cases are different facts about the line rather than one fallback.
+ *
+ * A DELETED entity is still resolved: `deletedAt` is a soft delete, and a line whose character was
+ * removed still names an id a reader needs to see identified rather than as a bare uuid.
+ */
+function characterName(characterEntityId: string, entities: desktop.StoryEntityDTO[]): string {
+    if (characterEntityId.trim() === "") return "";
+    const found = entities.find((entity) => entity.id === characterEntityId);
+    return found ? found.canonicalName : characterEntityId;
 }
 
 /** audioStatusColour maps a job status to a tag colour. Text always accompanies it. */

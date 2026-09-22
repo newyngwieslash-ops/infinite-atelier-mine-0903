@@ -328,9 +328,10 @@ func seedScriptForDocuments(t *testing.T, harness *mediaHarness) {
 			estimated_duration_seconds, visual_description, created_at, updated_at, revision)
 		 VALUES ('doc-shot-1', 'doc-scene', 1, '1', 'MS', 'eye level', 'static', 4,
 			'煤灯在画面左侧。', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 1)`,
+		// The APPROVAL is what the readers join through: `current_script_version_id` is written by no
+		// production path, so a fixture that set it would be testing a state no build produces.
 		`UPDATE script_versions SET status = 'approved', estimated_duration_seconds = 4
 		 WHERE id = 'drama-script-version'`,
-		`UPDATE episodes SET current_script_version_id = 'drama-script-version' WHERE id = 'drama-episode'`,
 		`UPDATE episodes SET title = '试点' WHERE id = 'drama-episode'`,
 		`UPDATE projects SET name = '渡口' WHERE id = 'drama-project'`,
 	)

@@ -388,12 +388,16 @@ what found it, which is the argument for item 14 existing at all.
 2. **ROADMAP item 1's video provider is a complete Mock, which the item permits** ("或完整 Mock").
    Its payload is a twenty-four byte container header rather than decodable video, which is why
    ADR-0015 section 2 composes exports from panel frames instead. A real adapter is not built.
-3. **ROADMAP item 4, "TTS Voice/Dialogue mapping", is PARTIAL.** `SubmitAudioJob` maps to a dialogue
-   line; no read enumerates a script version's lines, so the section asks the user to type the line
-   id rather than offering a picker.
+3. **ROADMAP item 4, "TTS Voice/Dialogue mapping", is PARTIAL, and the reason first recorded here was
+   wrong.** It said "no read enumerates a script version's lines". `GetScriptStructure` has always
+   listed them; what was missing was the version HISTORY — `ListScriptVersions` was on the repository
+   and dispatched by `Service.ListVersions` since WP-08, with no binding. It has one now, and the audio
+   section resolves both the version and the line by picking. What remains PARTIAL is a read of a
+   LINE's approved audio: the timeline's audio column is per shot, so the section still reports the
+   shot's state.
 4. **The document exports have no `versionId` picker.** Each accepts one and the core honours it, but
-   no read enumerates an episode's versions for the UI to offer, so a user exports the version in
-   force. It is the same gap the audio section records.
+   nothing feeds the UI a list to choose from — the same `ListScriptVersions` shape, now available for
+   scripts and still absent for a BOARD version. A user exports the version in force.
 
 ## The two AGENT_CONTRACTS section 11.4 clauses this build does not fully answer
 

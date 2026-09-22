@@ -28,6 +28,7 @@ import {
     submitExportForReview,
     submitSubtitleTrackForReview,
 } from "@/services/desktop/media";
+import { isDramaBindingsAvailable, listScriptVersions } from "@/services/desktop/drama";
 import type { desktop } from "@/wailsjs/go/models";
 
 /**
@@ -61,9 +62,14 @@ import type { desktop } from "@/wailsjs/go/models";
  *     approve a film whose review step does not exist. `ExportRepository.MarkUnderReview` had existed
  *     all along and was on no port, and the subtitle side had nothing; both are now service commands
  *     with binding methods, so the controls work.
- *  5. NOTHING IS SENT THAT THE CORE CANNOT ATTRIBUTE. A subtitle draft needs a script version id
- *     and no read here can enumerate one (see `scriptVersionId` below), so the field is an INPUT the
- *     user fills rather than a value this interface guessed.
+ *  5. NOTHING IS SENT THAT THE CORE CANNOT ATTRIBUTE. A subtitle draft needs a script version id,
+ *     and the id comes from a PICKER over the episode's own versions — `ListScriptVersions` was the
+ *     missing binding, not the read: the repository method existed and was dispatched the whole time,
+ *     and two sections worked around its absence by asking the user to type an identifier. The
+ *     picker pre-selects the APPROVED version when there is one, because a subtitle track is part of
+ *     an episode in force and drafting against a draft script is how a caption ends up disagreeing
+ *     with the picture. The version's status is shown beside every option, so the choice a user makes
+ *     is the one they can see.
  *  6. A DOCUMENT IS READ BEFORE IT IS WRITTEN. ROADMAP item 11's script, shot list and manifest are
  *     the same shape as the subtitle document: the core returns the TEXT and `SaveDocument` is the
  *     separate act that writes it, so each of the three is previewed here and saved from the preview.
@@ -144,6 +150,14 @@ export function TimelineSection({ episodes, activeEpisodeId, onSelectEpisode, on
     const [missing, setMissing] = useState<desktop.MissingLineDTO[]>([]);
     const [exports, setExports] = useState<desktop.ExportRecordDTO[] | null>(null);
     const [selectedTrackId, setSelectedTrackId] = useState("");
+    /**
+     * The episode's script versions, and the one a subtitle draft will render from.
+     *
+     * `scriptVersions` is `null` until the read has answered, so "could not read" stays
+     * distinguishable from "this episode has no script version yet" — the same distinction the
+     * timeline, track and export lists keep in this file.
+     */
+    const [scriptVersions, setScriptVersions] = useState<desktop.ScriptVersionDTO[] | null>(null);
     const [scriptVersionId, setScriptVersionId] = useState("");
     const [format, setFormat] = useState<string>("srt");
     const [document, setDocument] = useState("");
@@ -180,6 +194,16 @@ export function TimelineSection({ episodes, activeEpisodeId, onSelectEpisode, on
      * disabled rather than left to fail on a press — the same ruling the export button follows.
      */
     const documentExportAvailable = isDocumentExportAvailable();
+    /**
+     * The script version read goes through the DRAMA binding, which is a surface of its own.
+     *
+     * The question is separate from `bindingsAvailable` because the answers differ: a build with both
+     * surfaces is the normal case, and a build with the media surface alone still reads the timeline,
+     * drafts and exports. In that build the version picker has nothing to fill from, and the section
+     * says WHICH read is missing rather than reporting "no script version" — a claim about the
+     * episode's content drawn from an absent binding.
+     */
+    const scriptBindingsAvailable = isDramaBindingsAvailable();
 
     /**
      * reload reads the timeline, the machine's capability, the tracks and the exports.
@@ -193,6 +217,7 @@ export function TimelineSection({ episodes, activeEpisodeId, onSelectEpisode, on
             setTimeline(null);
             setTracks(null);
             setExports(null);
+            setScriptVersions(null);
             setMissing([]);
             setDrafts([]);
             return;
@@ -209,14 +234,51 @@ export function TimelineSection({ episodes, activeEpisodeId, onSelectEpisode, on
             setTimeline(null);
             setTracks(null);
             setExports(null);
-        } finally {
-            setLoading(false);
         }
-    }, [activeEpisodeId, t]);
+        // The version history is read OUTSIDE the block above, and on its own binding's probe. Both
+        // halves of that matter: this section's other four reads are media reads that a media-only
+        // build can answer, so a failure from a different surface must not null them — a user would
+        // lose a working timeline to a picker that could not load. `null` is what renders as "could
+        // not read", which is the distinction the picker's empty state depends on.
+        if (!scriptBindingsAvailable) {
+            setScriptVersions(null);
+        } else {
+            try {
+                setScriptVersions(await listScriptVersions(activeEpisodeId));
+            } catch (failure) {
+                setScriptVersions(null);
+                // The first failure on screen wins: the media block above has already reported the
+                // more consequential problem if there was one, and a second message would replace it
+                // with a detail about a picker.
+                setError((current) => current || (failure instanceof Error ? failure.message : t("studio.timeline.scriptVersionsUnread")));
+            }
+        }
+        setLoading(false);
+    }, [activeEpisodeId, scriptBindingsAvailable, t]);
 
     useEffect(() => {
         void reload();
     }, [reload]);
+
+    /**
+     * The script version the draft form starts on, resolved once per list of versions.
+     *
+     * APPROVED first, and the newest otherwise. The two rules are different answers to "which script
+     * does this track caption": an approved version is the one in force, so a caption drafted from it
+     * describes the picture the export will render, while a draft version is the only script there is
+     * on an episode nobody has approved yet — where refusing to pre-select would leave a form the
+     * user has to fill before it can do anything.
+     *
+     * A user's own choice is kept for as long as it names a version in the list, so a reload does not
+     * overwrite what they picked; a version that has gone (or an episode switch) is replaced rather
+     * than left pointing at a row the list no longer carries.
+     */
+    useEffect(() => {
+        if (scriptVersions === null) return;
+        if (scriptVersionId && scriptVersions.some((version) => version.id === scriptVersionId)) return;
+        const preferred = scriptVersions.find((version) => version.status === "approved") ?? scriptVersions[0];
+        setScriptVersionId(preferred?.id ?? "");
+    }, [scriptVersions, scriptVersionId]);
 
     /**
      * loadTrack reads one track's cues and the spoken lines it does not cover.
@@ -275,12 +337,11 @@ export function TimelineSection({ episodes, activeEpisodeId, onSelectEpisode, on
     /** draft asks the core for a starting track from a script version. */
     const draft = async () => {
         if (!activeEpisode) return;
-        // The core requires BOTH ids and refuses a draft with either empty. The script version is
-        // typed by the user because no read in this build enumerates a script's versions: the
-        // repository has `ListScriptVersions`, but it is not on any service method, binding method
-        // or DTO — `ApproveScriptVersion`, `CreateScriptVersion` and `SaveScriptStructure` each take
-        // a version id and none returns a list, and `ScriptDTO.currentVersionId` is a column no
-        // statement writes. Asking is the honest form of an unavailable read.
+        // The core requires BOTH ids and refuses a draft with either empty. The script version comes
+        // from the picker above, which reads the episode's own history through `ListScriptVersions`
+        // and pre-selects the approved version; this guard is what remains of the typed field, kept
+        // because a picker with no versions in it leaves the id empty and the core would refuse the
+        // request rather than explain why.
         if (scriptVersionId.trim() === "") {
             message.error(t("studio.timeline.scriptVersionRequired"));
             return;
@@ -708,13 +769,21 @@ export function TimelineSection({ episodes, activeEpisodeId, onSelectEpisode, on
                     />
                     <label>
                         <span className="mb-1 block text-sm">{t("studio.timeline.scriptVersionLabel")}</span>
-                        <Input
-                            className="w-56"
-                            value={scriptVersionId}
-                            maxLength={120}
+                        <Select
+                            className="min-w-56"
+                            value={scriptVersionId || undefined}
+                            placeholder={scriptBindingsAvailable ? t("studio.timeline.scriptVersionPlaceholder") : t("studio.timeline.scriptCoreMissing")}
+                            loading={loading}
+                            disabled={!scriptBindingsAvailable || scriptVersions === null || scriptVersions.length === 0}
                             data-testid="studio-timeline-script-version"
-                            placeholder={t("studio.timeline.scriptVersionPlaceholder")}
-                            onChange={(event) => setScriptVersionId(event.target.value)}
+                            onChange={(value: string) => setScriptVersionId(value)}
+                            options={(scriptVersions ?? []).map((version) => ({
+                                value: version.id,
+                                // The status is part of the label rather than decoration around it: a
+                                // draft and an approved version can carry the same number, and which
+                                // one a caption is drafted from is the choice being made here.
+                                label: `v${version.versionNumber} · ${t(`studio.versionStatus.${version.status}`, { defaultValue: version.status })}`,
+                            }))}
                         />
                     </label>
                     <Button loading={busy === "draft"} data-testid="studio-timeline-draft" onClick={() => void draft()}>
@@ -739,6 +808,17 @@ export function TimelineSection({ episodes, activeEpisodeId, onSelectEpisode, on
                         {t("studio.timeline.renderSubtitles")}
                     </Button>
                 </Space>
+
+                {/* Why the version picker has nothing to offer, and which of the two reasons it is.
+                    A disabled Select would otherwise be the only signal: "this episode has no script
+                    version" is a state a user can act on — the script section's generation stage
+                    creates one — while "this build cannot read the script" is not, and reporting the
+                    second as the first would be a claim about the episode drawn from an absent read. */}
+                {!scriptBindingsAvailable ? (
+                    <Alert className="mb-3" type="info" showIcon data-testid="studio-timeline-no-script-core" message={t("studio.timeline.noScriptCoreTitle")} description={t("studio.timeline.noScriptCoreBody")} />
+                ) : scriptVersions !== null && scriptVersions.length === 0 ? (
+                    <Alert className="mb-3" type="info" showIcon data-testid="studio-timeline-no-script-version" message={t("studio.timeline.noScriptVersionTitle")} description={t("studio.timeline.noScriptVersionBody")} />
+                ) : null}
 
                 {/* The selected track's status, said out loud, so a disabled button is never the
                     only clue about which step comes next. */}
@@ -1050,9 +1130,10 @@ export function TimelineSection({ episodes, activeEpisodeId, onSelectEpisode, on
  * each take their own request.
  *
  * No `versionId` is sent: the core renders the version IN FORCE, and a version id this interface
- * invented would render someone else's draft as "my script". The subtitle engine's known gap —
- * `scriptVersionId` is a field a user fills because no read enumerates versions — does not apply here,
- * because these three documents are defined as the approved versions.
+ * invented would render someone else's draft as "my script". That is a different question from the
+ * subtitle engine's `scriptVersionId`, which is a version a user PICKS: a draft is a new artifact a
+ * user asks for, and the core lets them choose which script it renders from, while these three
+ * documents are defined as the approved versions and have no parameter to choose with.
  */
 async function renderByKind(
     kind: DocumentKind,

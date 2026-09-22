@@ -102,6 +102,8 @@ export function ListScenes(arg1:string):Promise<Array<desktop.SceneDTO>>;
 
 export function ListScriptFieldLocks(arg1:string):Promise<Array<desktop.FieldLockDTO>>;
 
+export function ListScriptVersions(arg1:string):Promise<Array<desktop.ScriptVersionDTO>>;
+
 export function ListShots(arg1:string):Promise<Array<desktop.ShotDTO>>;
 
 export function ListSourceDocuments(arg1:string):Promise<Array<desktop.SourceDocumentDTO>>;

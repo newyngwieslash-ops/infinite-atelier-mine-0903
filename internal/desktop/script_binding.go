@@ -544,6 +544,47 @@ func (b *DramaBinding) SaveScriptStructure(request SaveScriptStructureRequest) (
 	return toScriptVersionDTO(version), nil
 }
 
+// ListScriptVersions returns an episode's script versions newest first.
+//
+// # Why this existed as an asymmetry rather than as a gap
+//
+// `ListStorySkeletonVersions` and `ListAdaptationStrategyVersions` have been here since WP-08, and the
+// SCRIPT family's equivalent was not — so the one version family a user spends most of their time in
+// was the one whose history no interface could read. `ScriptRepository.ListScriptVersions` existed the
+// whole time, and `Service.ListVersions` has dispatched `FamilyScript` to it the whole time; only the
+// binding was missing.
+//
+// What that cost is worth recording, because it was paid twice. The audio section's comment claimed
+// "no read enumerates a script version's dialogue lines" and cited this absence as the reason a user
+// had to TYPE a line identifier — the first half was false (`GetScriptStructure` lists lines) and the
+// second was true only because this method did not exist. And a subtitle draft's script version was a
+// text input for the same reason. The read is here now, so those two sections can resolve a version
+// the way a person would: by picking one.
+func (b *DramaBinding) ListScriptVersions(episodeID string) ([]ScriptVersionDTO, error) {
+	service := b.scriptService()
+	if service == nil {
+		return nil, bindingUnavailable()
+	}
+	// The family's parent is the EPISODE, not the script row: `Service.ListVersions` resolves the
+	// script from the episode itself, which is what the two sibling methods do and why a caller never
+	// has to know a script's identifier.
+	history, err := service.ListVersions(b.context(), scriptdomain.FamilyScript, episodeID)
+	if err != nil {
+		return nil, toDramaError(err)
+	}
+	versions, ok := history.([]scriptdomain.ScriptVersion)
+	if !ok {
+		// A type that is not the family's own is a wiring fault rather than an empty history, and
+		// answering with an empty list would show a user "no versions" for a script that has several.
+		return nil, bindingUnavailable()
+	}
+	out := make([]ScriptVersionDTO, 0, len(versions))
+	for _, version := range versions {
+		out = append(out, toScriptVersionDTO(version))
+	}
+	return out, nil
+}
+
 // GetScriptStructure returns a version's whole content.
 func (b *DramaBinding) GetScriptStructure(scriptVersionID string) (ScriptStructureDTO, error) {
 	service := b.scriptService()

@@ -337,6 +337,21 @@ export async function approveAdaptationStrategyVersion(
 
 // Script structure.
 
+/**
+ * listScriptVersions reads an episode's script history, newest first.
+ *
+ * It exists because the SCRIPT family was the one of four whose history had no binding: the skeleton
+ * and strategy families have had theirs since WP-08, and `ListScriptVersions` was on the repository and
+ * dispatched by `Service.ListVersions` the whole time. Two sections worked around the absence — a
+ * subtitle draft and a TTS submission each asked the user to TYPE a script version or dialogue line
+ * identifier — and they resolve it by picking now.
+ */
+export async function listScriptVersions(episodeId: string): Promise<desktop.ScriptVersionDTO[]> {
+    if (!isDramaBindingsAvailable()) return [];
+    const { ListScriptVersions } = await loadDramaBinding();
+    return ListScriptVersions(episodeId);
+}
+
 export async function getScriptStructure(scriptVersionId: string): Promise<desktop.ScriptStructureDTO> {
     // A QUERY with no honest empty answer: the structure is the artifact, and an empty script
     // structure would read as a version with no scenes. So this throws when the core is absent,

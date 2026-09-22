@@ -106,23 +106,41 @@ func (r *FinalFactsReader) FinalFacts(ctx context.Context, episodeID string) (ap
 	return facts, nil
 }
 
-// readEpisodeScript records the episode's own script version and the duration it estimates.
+// readEpisodeScript records the script version the episode is being made from, and the duration it
+// estimates.
+//
+// # Why this reads the APPROVED version rather than the episode's pointer
+//
+// `episodes.current_script_version_id` looks like the field to join through and is not: **nothing in
+// this build ever writes it.** `UpdateEpisode` carries it, but the only caller that reaches that
+// statement is `UpdateEpisodeStatus`, which sets the STATUS and preserves the pointer it read — so the
+// column holds the empty string its migration defaulted to, and a join through it finds no rows for
+// every episode. `ApproveScriptVersion` does not touch the episode at all.
+//
+// The consequence is worth stating because it was silent: a version of this method joined through the
+// pointer, so the estimate was never read and the duration rule reported NOTHING — a rule that never
+// fires looks exactly like a rule with nothing to say. The `final_episode` walk's assertion that the
+// ruleset reports nothing about the walk's own work is what surfaced it, because the duration finding
+// appeared where the fixture expected none.
+//
+// The approved version is what the rule actually wants — "the script this episode is being made
+// from" — and it is reachable: `script_versions.status = 'approved'`, which the four version families
+// all maintain. An episode with no approved script is the ordinary state before a gate, so a miss is
+// not an error.
 func (r *FinalFactsReader) readEpisodeScript(ctx context.Context, episodeID string, facts *appconsistency.FinalFacts) error {
 	// `script_versions.estimated_duration_seconds` is the estimate the storyboard ruleset also
-	// compares a board's total against, so the two rulesets agree about what the script says. The
-	// join goes through the episode's CURRENT script version when one is recorded, which is the
-	// version the episode is being made from.
+	// compares a board's total against, so the two rulesets agree about what the script says.
 	var estimate sql.NullInt64
 	err := r.db.QueryRowContext(ctx, `
 		SELECT sv.estimated_duration_seconds
 		FROM episodes e
-		JOIN script_versions sv ON sv.id = e.current_script_version_id
+		JOIN scripts s ON s.episode_id = e.id
+		JOIN script_versions sv ON sv.script_id = s.id AND sv.status = 'approved'
 		WHERE e.id = ?`, episodeID).Scan(&estimate)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			// An episode with no current script version is a state an episode is in before a script
-			// is approved. It is not an error here: the duration rule reports nothing when it has no
-			// estimate to compare against, which is the honest answer.
+			// No approved script is a state an episode is in before its gate. The duration rule
+			// reports nothing when it has no estimate to compare against, which is the honest answer.
 			return nil
 		}
 		return mediaStorageError(err)
