@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, App, Button, Empty, Form, Input, InputNumber, Modal, Popconfirm, Select, Space, Table, Tag, Tooltip, Typography } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { CheckCircle2, Pencil, Play } from "lucide-react";
+import { CheckCircle2, Download, Pencil, Play } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import {
@@ -16,6 +16,7 @@ import {
     runScriptSupervision,
     updateStoryboardItem,
 } from "@/services/desktop/drama";
+import { exportShotList, isDocumentExportAvailable, saveDocument } from "@/services/desktop/media";
 import type { desktop } from "@/wailsjs/go/models";
 
 /**
@@ -41,6 +42,12 @@ import type { desktop } from "@/wailsjs/go/models";
  *  - A stale row is REFUSED rather than overwritten. The revision the table read travels
  *    with the edit, and a conflict says so instead of silently replacing another window's
  *    change.
+ *
+ * A FOURTH THING, ADDED WITH THE SHOT LIST: the board can leave as a DOCUMENT. ROADMAP item
+ * 11 asks for the storyboard's export, and this section is where the board is, so the control
+ * lives beside the rows rather than only in the timeline. The document is rendered to be READ
+ * and saved from what was read — `ExportShotList` returns the text and `SaveDocument` writes
+ * it — which is the same two-step the timeline's own document area keeps.
  */
 
 export type StoryboardTableSectionProps = {
@@ -91,6 +98,17 @@ export function StoryboardTableSection({ projectId, episodes, activeEpisodeId, o
     const [error, setError] = useState("");
     const [editing, setEditing] = useState<desktop.StoryboardItemDTO | null>(null);
     const [form] = Form.useForm<RowDraft>();
+    /**
+     * The shot list's own state.
+     *
+     * `busy` above is the section's boolean for the stage and the supervisor, and the shot list export
+     * gets a separate key rather than sharing it: the two are independent actions, and a shared flag
+     * would put a spinner on the stage button while a document renders.
+     */
+    const [shotList, setShotList] = useState<{ text: string; suggestedName: string } | null>(null);
+    const [shotListBusy, setShotListBusy] = useState("");
+    /** Whether this build can render and write a document at all. */
+    const shotListExportAvailable = isDocumentExportAvailable();
 
     const activeEpisode = useMemo(
         () => episodes.find((episode) => episode.id === activeEpisodeId) || null,
@@ -207,6 +225,63 @@ export function StoryboardTableSection({ projectId, episodes, activeEpisodeId, o
             message.error(String(failure));
         }
     }, [activeVersionId, message, reload, onChanged, t]);
+
+    /**
+     * renderShotList renders the board as a shot list document.
+     *
+     * THE EPISODE IS THE SECTION'S `activeEpisodeId` PROP, and the version is the one the table is
+     * SHOWING. Those are the two facts a user is looking at, and the core takes both: `episodeId` is
+     * required, and a `versionId` overrides the version in force — so naming the selected version is
+     * what makes the exported document the board on screen rather than a different approved board.
+     * When the picker holds no version (an episode whose board was never read), the id is left empty
+     * and the core falls back to its own approved version, which is the honest answer to "export what
+     * this episode has".
+     *
+     * CSV is the format sent, and it is the one a shot list is worked from: a schedule is read in a
+     * spreadsheet. The core writes `txt` as well, and this control does not offer the choice because a
+     * second format selector beside a table that is already CSV-shaped would be a control for its own
+     * sake — the timeline's document area is where the formats are chosen side by side.
+     */
+    const renderShotList = useCallback(async () => {
+        if (!activeEpisodeId) return;
+        setShotListBusy("render");
+        try {
+            const rendered = await exportShotList({ episodeId: activeEpisodeId, versionId: activeVersionId || undefined, format: "csv" } as never);
+            setShotList({ text: rendered.text, suggestedName: rendered.suggestedName });
+        } catch (failure) {
+            // A failed render CLEARS the document: text from an earlier successful call would be read
+            // as this call's answer, which is the one thing a preview must never do.
+            message.error(failure instanceof Error ? failure.message : t("studio.storyboardTable.shotListFailed"));
+            setShotList(null);
+        } finally {
+            setShotListBusy("");
+        }
+    }, [activeEpisodeId, activeVersionId, message, t]);
+
+    /**
+     * saveShotList writes the rendered document to where the user points.
+     *
+     * The text travels BACK rather than being re-rendered, which is the core's own reasoning: a second
+     * render could pick up a version approved in between, so what the user read would not be what they
+     * saved. `written: false` is the user having cancelled the dialog — a returned value, not an error,
+     * reported with the same wording the timeline's save handlers use.
+     */
+    const saveShotList = useCallback(async () => {
+        if (!shotList) return;
+        setShotListBusy("save");
+        try {
+            const result = await saveDocument({ text: shotList.text, suggestedName: shotList.suggestedName });
+            // The three strings are the TIMELINE's, read from here on purpose: they are the wording
+            // `writeToDisk` already uses for "the dialog wrote your file" and "you cancelled, which is
+            // not a failure", and a second copy of them would be two sentences that must stay in step.
+            // `assetKind` is a family two sections already share this way.
+            message.success(result.written ? t("studio.timeline.savedTo", { path: result.path ?? "" }) : t("studio.timeline.saveCancelled"));
+        } catch (failure) {
+            message.error(failure instanceof Error ? failure.message : t("studio.storyboardTable.shotListSaveFailed"));
+        } finally {
+            setShotListBusy("");
+        }
+    }, [shotList, message, t]);
 
     const openEditor = useCallback(
         (row: desktop.StoryboardItemDTO) => {
@@ -348,6 +423,33 @@ export function StoryboardTableSection({ projectId, episodes, activeEpisodeId, o
                     )}
                 />
             )}
+            {/* The board as a document: rendered here to be READ, and written only from what was read.
+                The control is disabled when the build carries no document export rather than left to
+                fail on a press, which is the same answer the timeline's document area gives. */}
+            <Space wrap align="end">
+                <Button
+                    icon={<Download className="size-4" />}
+                    loading={shotListBusy === "render"}
+                    disabled={!shotListExportAvailable || !activeEpisodeId}
+                    data-testid="studio-storyboard-table-render-shot-list"
+                    onClick={() => void renderShotList()}
+                >
+                    {t("studio.storyboardTable.exportShotList")}
+                </Button>
+                {shotList ? (
+                    <Button type="primary" loading={shotListBusy === "save"} disabled={!shotListExportAvailable} data-testid="studio-storyboard-table-save-shot-list" onClick={() => void saveShotList()}>
+                        {t("studio.timeline.save")}
+                    </Button>
+                ) : null}
+            </Space>
+            {shotList ? (
+                <div>
+                    <Typography.Text className="mb-2 block text-xs text-stone-500">{t("studio.timeline.suggestedName", { name: shotList.suggestedName })}</Typography.Text>
+                    {/* Read-only on purpose, and the same shape the timeline's previews use: the core
+                        returns the DOCUMENT rather than writing it, so saving is a separate act. */}
+                    <Input.TextArea readOnly rows={12} value={shotList.text} data-testid="studio-storyboard-table-shot-list" className="font-mono text-xs" />
+                </div>
+            ) : null}
             <Modal
                 open={editing !== null}
                 title={editing ? `#${editing.ordinal} · ${editing.shotId}` : ""}

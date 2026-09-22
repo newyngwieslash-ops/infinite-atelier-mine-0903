@@ -1897,6 +1897,24 @@ export namespace desktop {
 	        this.createdAt = source["createdAt"];
 	    }
 	}
+	export class DocumentDTO {
+	    name: string;
+	    text: string;
+	    extension: string;
+	    suggestedName: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new DocumentDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.text = source["text"];
+	        this.extension = source["extension"];
+	        this.suggestedName = source["suggestedName"];
+	    }
+	}
 	export class DocumentRangeDTO {
 	    text: string;
 	    startRune: number;
@@ -2067,6 +2085,18 @@ export namespace desktop {
 	        this.revision = source["revision"];
 	    }
 	}
+	export class ExportManifestDocumentRequest {
+	    episodeId: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ExportManifestDocumentRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.episodeId = source["episodeId"];
+	    }
+	}
 	export class ExportRecordDTO {
 	    id: string;
 	    episodeId: string;
@@ -2101,6 +2131,40 @@ export namespace desktop {
 	        this.manifestJson = source["manifestJson"];
 	        this.approvalTraceId = source["approvalTraceId"];
 	        this.createdAt = source["createdAt"];
+	    }
+	}
+	export class ExportScriptRequest {
+	    episodeId: string;
+	    versionId?: string;
+	    format: string;
+	    includeShots?: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new ExportScriptRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.episodeId = source["episodeId"];
+	        this.versionId = source["versionId"];
+	        this.format = source["format"];
+	        this.includeShots = source["includeShots"];
+	    }
+	}
+	export class ExportShotListRequest {
+	    episodeId: string;
+	    versionId?: string;
+	    format: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ExportShotListRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.episodeId = source["episodeId"];
+	        this.versionId = source["versionId"];
+	        this.format = source["format"];
 	    }
 	}
 	export class ExportSubtitlesRequest {
@@ -3972,6 +4036,20 @@ export namespace desktop {
 	        this.title = source["title"];
 	        this.messagesJson = source["messagesJson"];
 	        this.revision = source["revision"];
+	    }
+	}
+	export class SaveDocumentRequest {
+	    text: string;
+	    suggestedName: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SaveDocumentRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.text = source["text"];
+	        this.suggestedName = source["suggestedName"];
 	    }
 	}
 	export class SaveExportRequest {

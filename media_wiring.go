@@ -44,6 +44,10 @@ type mediaWiring struct {
 	subtitles *appmedia.SubtitleService
 	timeline  *appmedia.TimelineService
 	exports   *appmedia.ExportService
+	// documents renders the episode's script, shot list and manifest, which ROADMAP item 11 asks for
+	// beside the MP4. It is composed here because it needs the same connection the other three do, and
+	// a second composition would be a second place to answer "which version is in force".
+	documents *appmedia.DocumentService
 	saveFile  func(ctx context.Context, suggestedName string, write func(io.Writer) error) (string, error)
 }
 
@@ -84,8 +88,15 @@ func composeMedia(handle *database.Handle, script *appscript.Service, store *fil
 		Clock:    clock,
 		IDs:      ids,
 	})
+	// The document reader is the same connection, because every fact it answers is a table the reads
+	// above already touch: which version is approved, which panel a row points at, and what the newest
+	// export recorded.
+	documentService := appmedia.NewDocumentService(appmedia.DocumentOptions{
+		Repository: database.NewDocumentFactsReader(connection),
+	})
 	return &mediaWiring{
 		engine: engine, subtitles: subtitleService, timeline: timelineService, exports: exportService,
+		documents: documentService,
 	}
 }
 
@@ -94,7 +105,7 @@ func (w *mediaWiring) attach(binding *desktop.MediaBinding, ctx context.Context)
 	if w == nil || binding == nil {
 		return
 	}
-	desktop.AttachMedia(binding, ctx, w.exports, w.subtitles, w.timeline, w.saveFile)
+	desktop.AttachMedia(binding, ctx, w.exports, w.subtitles, w.timeline, w.documents, w.saveFile)
 }
 
 // mediaClock is the application's time source, which every wiring here uses.

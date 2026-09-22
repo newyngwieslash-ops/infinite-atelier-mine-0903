@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Alert, App, Button, Collapse, Empty, Input, InputNumber, Popconfirm, Select, Space, Table, Tag, Typography } from "antd";
+import { Alert, App, Button, Collapse, Empty, Input, InputNumber, Popconfirm, Select, Space, Switch, Table, Tag, Typography } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { Download, Play, RefreshCw } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -9,7 +9,11 @@ import {
     approveSubtitleTrack,
     draftSubtitles,
     editSubtitleCues,
+    exportManifestDocument,
+    exportScript,
+    exportShotList,
     exportSubtitles,
+    isDocumentExportAvailable,
     isMediaBindingsAvailable,
     isMediaExportAvailable,
     listExports,
@@ -19,6 +23,7 @@ import {
     missingSubtitleLines,
     readTimeline,
     runExport,
+    saveDocument,
     saveExport,
     submitExportForReview,
     submitSubtitleTrackForReview,
@@ -59,6 +64,9 @@ import type { desktop } from "@/wailsjs/go/models";
  *  5. NOTHING IS SENT THAT THE CORE CANNOT ATTRIBUTE. A subtitle draft needs a script version id
  *     and no read here can enumerate one (see `scriptVersionId` below), so the field is an INPUT the
  *     user fills rather than a value this interface guessed.
+ *  6. A DOCUMENT IS READ BEFORE IT IS WRITTEN. ROADMAP item 11's script, shot list and manifest are
+ *     the same shape as the subtitle document: the core returns the TEXT and `SaveDocument` is the
+ *     separate act that writes it, so each of the three is previewed here and saved from the preview.
  */
 export type TimelineSectionProps = {
     /**
@@ -94,6 +102,30 @@ const SUBTITLE_MODES = [
 /** The two formats `domain/media.SubtitleFormats` documents. */
 const FORMATS = ["srt", "vtt"] as const;
 
+/** The two formats `screenplay.Formats` documents for a script document. */
+const SCRIPT_FORMATS = ["txt", "fountain"] as const;
+
+/**
+ * The two formats `shotlist.Formats` documents for a shot list.
+ *
+ * CSV is listed first because it is the one a schedule is read in: a spreadsheet is what a shot list
+ * is for, and the text form is the same rows for a person reading them.
+ */
+const SHOT_LIST_FORMATS = ["csv", "txt"] as const;
+
+/**
+ * One rendered document as this section holds it: exactly what a save needs, and nothing else.
+ *
+ * The read-only preview is an `Input.TextArea`, so a document is never inserted as markup.
+ */
+type RenderedDocument = {
+    text: string;
+    suggestedName: string;
+};
+
+/** The three documents this section can render, which is also the busy key of each export. */
+type DocumentKind = "script" | "shotList" | "manifest";
+
 /** One cue as the editor holds it. Times stay in the milliseconds the schema stores. */
 type CueDraft = {
     id: string;
@@ -125,10 +157,29 @@ export function TimelineSection({ episodes, activeEpisodeId, onSelectEpisode, on
     const [error, setError] = useState("");
     const [notice, setNotice] = useState("");
 
+    /**
+     * The document area's own state, kept beside the subtitle document's.
+     *
+     * `document` above is the SUBTITLE track's rendered file and these are the episode's script, shot
+     * list and manifest. They are separate fields rather than one "current document" because the three
+     * are different artifacts: a user reads the shot list while the script is still on screen, and one
+     * shared slot would make the second export erase the first.
+     */
+    const [scriptFormat, setScriptFormat] = useState<string>("txt");
+    const [shotListFormat, setShotListFormat] = useState<string>("csv");
+    const [includeShots, setIncludeShots] = useState(false);
+    const [documents, setDocuments] = useState<Record<DocumentKind, RenderedDocument | null>>({ script: null, shotList: null, manifest: null });
+
     const activeEpisode = useMemo(() => episodes.find((episode) => episode.id === activeEpisodeId) || null, [episodes, activeEpisodeId]);
 
     const bindingsAvailable = isMediaBindingsAvailable();
     const exportAvailable = isMediaExportAvailable();
+    /**
+     * The documents are ROADMAP item 11's other half, and a build can carry the media binding without
+     * them. The probe is separate from `exportAvailable` for that reason, and the controls below are
+     * disabled rather than left to fail on a press — the same ruling the export button follows.
+     */
+    const documentExportAvailable = isDocumentExportAvailable();
 
     /**
      * reload reads the timeline, the machine's capability, the tracks and the exports.
@@ -392,6 +443,55 @@ export function TimelineSection({ episodes, activeEpisodeId, onSelectEpisode, on
         }
     };
 
+    /**
+     * renderDocument asks the core for one of the episode's three documents.
+     *
+     * The three arrive through one handler because the ACT is the same — render, hold the text, let a
+     * person read it — and only the request differs. Each keeps its own slot in `documents`, so a user
+     * can compare a shot list against the script they just rendered.
+     *
+     * A failed render CLEARS that document rather than leaving the previous one on screen: text that
+     * came from an earlier, successful call would be read as this call's answer.
+     */
+    const renderDocument = async (kind: DocumentKind) => {
+        if (!activeEpisode) return;
+        setBusy(`document-${kind}`);
+        try {
+            const rendered = await renderByKind(kind, activeEpisode.id, { scriptFormat, shotListFormat, includeShots });
+            setDocuments((current) => ({ ...current, [kind]: { text: rendered.text, suggestedName: rendered.suggestedName } }));
+        } catch (failure) {
+            message.error(failure instanceof Error ? failure.message : t(`studio.timeline.documentFailed.${kind}`));
+            setDocuments((current) => ({ ...current, [kind]: null }));
+        } finally {
+            setBusy("");
+        }
+    };
+
+    /**
+     * saveRenderedDocument writes one rendered document to where the user points.
+     *
+     * The text travels BACK rather than being re-rendered, which is the core's own reasoning: a second
+     * render could pick up a version approved in between, so what a user read would not be what they
+     * saved. `suggestedName` is the core's own suggestion — a hint to a human, not a destination — and
+     * the dialog is still the only thing that decides where the file goes.
+     *
+     * `written: false` is the user having cancelled the dialog, and this handler reports it the way
+     * `writeToDisk` does: as an ordinary act, not a failure.
+     */
+    const saveRenderedDocument = async (kind: DocumentKind) => {
+        const rendered = documents[kind];
+        if (!rendered) return;
+        setBusy(`document-save-${kind}`);
+        try {
+            const result = await saveDocument({ text: rendered.text, suggestedName: rendered.suggestedName });
+            setNotice(result.written ? t("studio.timeline.savedTo", { path: result.path ?? "" }) : t("studio.timeline.saveCancelled"));
+        } catch (failure) {
+            message.error(failure instanceof Error ? failure.message : t("studio.timeline.documentSaveFailed"));
+        } finally {
+            setBusy("");
+        }
+    };
+
     /** submitOne moves one export to review, which is what its approval requires. */
     const submitOne = async (record: desktop.ExportRecordDTO) => {
         setBusy(`submit-${record.id}`);
@@ -425,6 +525,38 @@ export function TimelineSection({ episodes, activeEpisodeId, onSelectEpisode, on
     /** updateDraft replaces one cue row's fields. */
     const updateDraft = (index: number, patch: Partial<CueDraft>) => {
         setDrafts((current) => current.map((cue, position) => (position === index ? { ...cue, ...patch } : cue)));
+    };
+
+    /**
+     * documentPreview renders one rendered document with its save control, or nothing.
+     *
+     * It is a render helper rather than a component because it reads four pieces of this section's own
+     * state, and lifting them into props would be a component boundary drawn around a text area. The
+     * area is read-only for the same reason the subtitle document's is — the core returns the DOCUMENT
+     * rather than writing it — and the save control appears only beside a document, because there is
+     * nothing to write until one has been rendered.
+     */
+    const documentPreview = (kind: DocumentKind, rows: number) => {
+        const rendered = documents[kind];
+        if (!rendered) return null;
+        return (
+            <div className="mt-3">
+                <Space wrap className="mb-2">
+                    <Button
+                        size="small"
+                        icon={<Download className="size-3" />}
+                        loading={busy === `document-save-${kind}`}
+                        disabled={!documentExportAvailable}
+                        data-testid={`studio-timeline-save-document-${kind}`}
+                        onClick={() => void saveRenderedDocument(kind)}
+                    >
+                        {t("studio.timeline.save")}
+                    </Button>
+                    <Typography.Text className="text-xs text-stone-500">{t("studio.timeline.suggestedName", { name: rendered.suggestedName })}</Typography.Text>
+                </Space>
+                <Input.TextArea readOnly rows={rows} value={rendered.text} data-testid={`studio-timeline-document-${kind}`} className="font-mono text-xs" />
+            </div>
+        );
     };
 
     const cueColumns: ColumnsType<CueDraft> = [
@@ -798,6 +930,99 @@ export function TimelineSection({ episodes, activeEpisodeId, onSelectEpisode, on
                 )}
             </section>
 
+            {/* ROADMAP item 11's other half: the episode's three documents, each rendered here to be
+                READ and saved from what was read rather than written on the first press — the same
+                shape the subtitle document above keeps, and the core's own decision in both cases
+                (`ExportScript`, `ExportShotList` and `ExportManifestDocument` return the text). */}
+            <section>
+                <h2 className="mb-3 text-lg font-medium">{t("studio.timeline.documentsTitle")}</h2>
+                <Typography.Paragraph className="mb-3 text-xs text-stone-500">{t("studio.timeline.documentsHint")}</Typography.Paragraph>
+
+                {!documentExportAvailable ? (
+                    // The documents are a later addition to the media binding, so a build can carry the
+                    // timeline without them. The controls stay on screen and are disabled, which is the
+                    // same answer the export button gives a machine with no engine: a visible control
+                    // that says why, rather than a press that fails.
+                    <Alert className="mb-3" type="warning" showIcon data-testid="studio-timeline-no-document-core" message={t("studio.timeline.noDocumentCoreTitle")} description={t("studio.timeline.noDocumentCoreBody")} />
+                ) : null}
+
+                <div className="space-y-6">
+                    <div>
+                        <h3 className="mb-2 text-sm font-medium">{t("studio.timeline.documentKind.script")}</h3>
+                        <Space wrap align="end">
+                            <label>
+                                <span className="mb-1 block text-sm">{t("studio.timeline.scriptFormatLabel")}</span>
+                                <Select
+                                    className="w-32"
+                                    value={scriptFormat}
+                                    data-testid="studio-timeline-script-format"
+                                    onChange={(value: string) => setScriptFormat(value)}
+                                    options={SCRIPT_FORMATS.map((value) => ({ value, label: value.toUpperCase() }))}
+                                />
+                            </label>
+                            <label>
+                                <span className="mb-1 block text-sm">{t("studio.timeline.includeShotsLabel")}</span>
+                                <div>
+                                    {/* The switch is the request's own field, forwarded rather than
+                                        decided here: whether the document carries the camera setups
+                                        is the user's choice and the section does not make it. */}
+                                    <Switch checked={includeShots} data-testid="studio-timeline-include-shots" onChange={(checked: boolean) => setIncludeShots(checked)} />
+                                </div>
+                            </label>
+                            <Button
+                                loading={busy === "document-script"}
+                                disabled={!documentExportAvailable}
+                                data-testid="studio-timeline-render-script"
+                                onClick={() => void renderDocument("script")}
+                            >
+                                {t("studio.timeline.renderScript")}
+                            </Button>
+                        </Space>
+                        {documentPreview("script", 16)}
+                    </div>
+
+                    <div>
+                        <h3 className="mb-2 text-sm font-medium">{t("studio.timeline.documentKind.shotList")}</h3>
+                        <Space wrap align="end">
+                            <label>
+                                <span className="mb-1 block text-sm">{t("studio.timeline.shotListFormatLabel")}</span>
+                                <Select
+                                    className="w-32"
+                                    value={shotListFormat}
+                                    data-testid="studio-timeline-shot-list-format"
+                                    onChange={(value: string) => setShotListFormat(value)}
+                                    options={SHOT_LIST_FORMATS.map((value) => ({ value, label: value.toUpperCase() }))}
+                                />
+                            </label>
+                            <Button
+                                loading={busy === "document-shotList"}
+                                disabled={!documentExportAvailable}
+                                data-testid="studio-timeline-render-shot-list"
+                                onClick={() => void renderDocument("shotList")}
+                            >
+                                {t("studio.timeline.renderShotList")}
+                            </Button>
+                        </Space>
+                        {documentPreview("shotList", 12)}
+                    </div>
+
+                    <div>
+                        <h3 className="mb-2 text-sm font-medium">{t("studio.timeline.documentKind.manifest")}</h3>
+                        <Space wrap align="end">
+                            <Button
+                                loading={busy === "document-manifest"}
+                                disabled={!documentExportAvailable}
+                                data-testid="studio-timeline-render-manifest"
+                                onClick={() => void renderDocument("manifest")}
+                            >
+                                {t("studio.timeline.renderManifest")}
+                            </Button>
+                        </Space>
+                        {documentPreview("manifest", 12)}
+                    </div>
+                </div>
+            </section>
+
             <Collapse
                 items={[
                     {
@@ -814,6 +1039,34 @@ export function TimelineSection({ episodes, activeEpisodeId, onSelectEpisode, on
             />
         </div>
     );
+}
+
+/**
+ * renderByKind calls the one document method that matches the kind.
+ *
+ * The three requests are shaped here rather than inside `media.ts` because this is the layer that knows
+ * WHICH control a user pressed; the client's job is to name the binding method and keep the absence
+ * rule, and it would have to take a kind to do this instead — a union in a client whose other exports
+ * each take their own request.
+ *
+ * No `versionId` is sent: the core renders the version IN FORCE, and a version id this interface
+ * invented would render someone else's draft as "my script". The subtitle engine's known gap —
+ * `scriptVersionId` is a field a user fills because no read enumerates versions — does not apply here,
+ * because these three documents are defined as the approved versions.
+ */
+async function renderByKind(
+    kind: DocumentKind,
+    episodeId: string,
+    formats: { scriptFormat: string; shotListFormat: string; includeShots: boolean },
+): Promise<desktop.DocumentDTO> {
+    switch (kind) {
+        case "script":
+            return exportScript({ episodeId, format: formats.scriptFormat, includeShots: formats.includeShots } as never);
+        case "shotList":
+            return exportShotList({ episodeId, format: formats.shotListFormat } as never);
+        case "manifest":
+            return exportManifestDocument({ episodeId } as never);
+    }
 }
 
 /**

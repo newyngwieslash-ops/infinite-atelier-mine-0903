@@ -242,6 +242,32 @@ says so.
 - The export's playability is asserted with `ffprobe` when one is available, and the test
   reports a SKIP rather than a pass when it is not.
 
+## Item 11's remaining half, and item 14, added after the first report
+
+This package first reported ROADMAP item 11 as half-built (the subtitle and manifest halves only) and
+item 14 as not built. Both are now built, and the ruling that shaped them is worth recording because
+it is a structural one rather than a detail:
+
+**A DOCUMENT IS A RENDER OF STATE, NOT A VERSION.** The four exports — script, shot list, subtitle,
+manifest — write no version, no approval and no event. A user who exports a script has not changed it,
+and a build that recorded an event for a read would fill the audit trail with somebody opening a file.
+So `application/media/documents.go` is a read model over four aggregates, and the two renderers that
+know the FORMATS live in the domain: `domain/screenplay` (plain text and Fountain) and
+`domain/shotlist` (aligned text and CSV). A format is a vocabulary, which is why it belongs there —
+the same reason `domain/media` owns the SRT renderer.
+
+**THE WRITE PATH IS THE SAME ONE THE MP4 USES.** `SaveDocument` and `SaveExport` both take their
+destination from the dialog and from nowhere else, so a document cannot be written anywhere a user did
+not point at. The earlier state was worse than a missing feature: `save_dialog.go` carried a `.json`
+filter that nothing ever asked for, which is a path that exists and cannot be reached.
+
+**ITEM 14 IS WHAT FOUND THE DEFECT.** The walk in `acceptance_wp11_e2e_test.go` is the first test that
+drives the whole chain, and it found that `final_reader.go` keyed a manifest's per-shot references by
+shot alone — so the `panel` reference OVERWROTE the `asset_version` one, and the traceability rule
+compared a panel id against the media version a shot approves and reported EVERY export as stale. Each
+kind was correct in isolation and both groups of tests were green, which is the argument for the walk
+existing rather than for more unit tests.
+
 ## What an independent review corrected, and when
 
 Two defects in this work package were found by review rather than by its own tests, and both are

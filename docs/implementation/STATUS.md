@@ -3,7 +3,7 @@
 > Last updated: 2026-09-23
 > Product: Infinite Atelier Core + Drama Production Pack
 > Current work package: **WP-11 — 视频、音频、字幕、时间线与导出**
-> Status: **COMPLETE for the 14 ROADMAP items, with five PARTIAL items and one NOT-BUILT item named in section 0l.** The media half of the product is built: the one audited subprocess and its ffmpeg adapter, migration 000020's three tables, the media domain's timecodes and cue/manifest rules, the subtitle service with drafts that cite dialogue lines and an editor that reads back, the timeline as an ordered join over the board's own rows, the export service that composes a real playable MP4 from approved panel frames with audio and subtitles muxed in, the `SaveFile` path that writes to where a user points — the first such path this application has ever had — the video and audio job submissions with their reference-asset pipeline, the two `final_episode` agents and the deterministic Final Ruleset that precedes the supervisor, and the video, audio and timeline sections. Section 0l states what this package delivered, the defects TWO INDEPENDENT REVIEWS found (321 mutations, 149 killed; four blockers), and — plainly — the items that are PARTIAL and the one that is NOT BUILT. WP-01 through WP-10 remain COMPLETE for their recorded scopes.
+> Status: **COMPLETE for the 14 ROADMAP items, with four PARTIAL items named in section 0l.** The media half of the product is built: the one audited subprocess and its ffmpeg adapter, migration 000020's three tables, the media domain's timecodes and cue/manifest rules, the subtitle service with drafts that cite dialogue lines and an editor that reads back, the timeline as an ordered join over the board's own rows, the export service that composes a real playable MP4 from approved panel frames with audio and subtitles muxed in, the `SaveFile` path that writes to where a user points — the first such path this application has ever had — the video and audio job submissions with their reference-asset pipeline, the two `final_episode` agents and the deterministic Final Ruleset that precedes the supervisor, and the video, audio and timeline sections. Section 0l states what this package delivered, the defects TWO INDEPENDENT REVIEWS found (321 mutations, 149 killed; four blockers), the two ROADMAP items closed after the first report, and — plainly — what remains PARTIAL. WP-01 through WP-10 remain COMPLETE for their recorded scopes.
 
 WP-03 start baseline (2026-09-15): branch `codex/wp-01-desktop-foundation`, HEAD `a243891455ec17687dd54b5ac90d3bd64478a1a1`, empty index. Freshly re-run baseline: `go test ./... -count=1` PASS (15 packages at start), `go vet ./...` PASS, `web` `npm run typecheck` PASS, `npm test` PASS (15 tests), `npm run build` PASS. Go commands require `GOTOOLCHAIN=go1.25.0 GOSUMDB=sum.golang.org` on this host because the user-level `go env` sets `GOSUMDB=off`, which blocks toolchain verification. The working tree already contained the WP-01/WP-02 tracked and untracked work plus the user's brand rename; none of it was modified outside the WP-03 scope.
 
@@ -255,10 +255,12 @@ unusable** (uncompilable or equivalent). The survivors are reported in three cla
 
 ## Scope completed
 
-- **Status: COMPLETE for the 14 ROADMAP items, with five PARTIAL and one NOT BUILT.** Each is
-  stated below rather than glossed. Two independent reviews ran against the package — a spec
-  review and a mutation/quality review — and the defects they found are listed with what was done
-  about each.
+- **Status: COMPLETE for all 14 ROADMAP items, with four PARTIAL.** Items 11 and 14 were reported
+  NOT BUILT in this package's first report and are now built — see "Item 11 and item 14, closed
+  after the first report" below, which also records the defect the item-14 walk found. Each
+  remaining PARTIAL is stated rather than glossed. Two independent reviews ran against the
+  package — a spec review and a mutation/quality review — and the defects they found are listed
+  with what was done about each.
 
 - **The one audited subprocess** (`internal/infrastructure/media/ffmpeg.go`): `os/exec` in exactly
   one file, structured `[]string` argv with no shell, `-`-prefixed paths refused, bounded output,
@@ -317,6 +319,16 @@ unusable** (uncompilable or equivalent). The survivors are reported in three cla
   client (`web/src/services/desktop/media.ts`), with the query-empty/command-throws split every
   desktop client in this repository keeps. All three were `available: false` before this package.
 
+- **The four documents** (`internal/domain/screenplay`, `internal/domain/shotlist`,
+  `internal/application/media/documents.go`): a script in plain text or Fountain, a shot list in
+  aligned text or CSV, SRT and VTT subtitles, and the export manifest as a `.json` a user can take
+  away. Each goes through the same save dialog an MP4 uses. ROADMAP item 11.
+
+- **The single-episode walk** (`acceptance_wp11_e2e_test.go`): script → board → subtitles → a video
+  version and an audio version attached to the assets aggregate → timeline → export → Final Ruleset
+  → all four documents, asserting on the database at each step. ROADMAP item 14, and the test that
+  found the manifest-reference defect recorded below.
+
 ## Acceptance criteria
 
 | Criterion | Result | Evidence |
@@ -329,30 +341,59 @@ unusable** (uncompilable or equivalent). The survivors are reported in three cla
 | 无 Shell 注入 | PASS | Structured argv, no shell, `-`-prefixed paths refused, and a real composition with a crafted value. |
 | 导出清单可追溯 | PASS | The manifest is decoded, each cited reference is read back from the database, and the traceability rule compares it against what is currently approved. |
 
-## What is PARTIAL, and what is NOT BUILT
+## Item 11 and item 14, closed after the first report
 
-1. **ROADMAP item 11, "Script/Storyboard/Subtitle/Manifest Export", is NOT BUILT beyond half.**
-   The subtitle and manifest halves exist. There is **no script export and no storyboard export**:
-   `grep -rni "ExportScript\|ExportStoryboard"` returns nothing, and no binding writes a manifest to
-   disk. `save_dialog.go`'s `.json` filter is therefore reachable only if a caller asks for a name
-   ending in `.json`, which nothing does today.
-2. **ROADMAP item 3, "Shot Video Version", is PARTIAL.** ADR-0015 section 4 rules the model (an
-   `assets` row of type `video`, with an `asset_usages` row whose `usage_role` is `video`), and the
-   vocabulary exists in the schema. **Nothing writes a `usage_role = 'video'` row**, so the model is
-   chosen and unimplemented.
-3. **ROADMAP item 13, "中断恢复", is PARTIAL.** `video_restart_test.go` covers a job restart WITHOUT
+**Both were reported NOT BUILT and both are now built.** They were closed in the same work package
+rather than deferred, and the walk item 14 asks for is what found the defect below.
+
+- **ROADMAP item 11, "Script/Storyboard/Subtitle/Manifest Export", is COMPLETE.** All four documents
+  exist. The script renders in `txt` and Fountain (`internal/domain/screenplay`), the shot list in
+  aligned text and CSV (`internal/domain/shotlist`), the subtitle in SRT and VTT (built earlier), and
+  the manifest as a `.json` a user can take away — which had NO caller before: `save_dialog.go`'s
+  `.json` filter was unreachable, and `ExportRecordDTO.ManifestJSON` was a block of text a user could
+  read and not save.
+  `internal/application/media/documents.go` assembles them,
+  `MediaBinding.{ExportScript,ExportShotList,ExportManifestDocument,SaveDocument}` exposes them, and
+  the timeline section offers all three with a preview before a save. Each document goes through the
+  SAME save dialog an MP4 uses, so a document cannot be written anywhere the user did not point at.
+  Evidence: `internal/infrastructure/database/documents_wp11_test.go` over the real schema, plus
+  `internal/domain/{screenplay,shotlist}/*_test.go` for the two formats' own conventions.
+- **ROADMAP item 14, "单集 E2E", is COMPLETE.** `acceptance_wp11_e2e_test.go` walks one episode
+  through script → board → subtitle draft and approval → a video version attached with a
+  `usage_role = 'video'` usage → an audio version attached → timeline → export composed and probed →
+  Final Ruleset → all four documents, asserting on the DATABASE at every step rather than on a
+  service's own account.
+- **ROADMAP item 3, "Shot Video Version", is COMPLETE for its model.** The walk attaches a shot's
+  video as an `assets` row of type `video` with an `asset_usages` row whose `usage_role` is `video`,
+  which is ADR-0015 section 4's ruling, and asserts the usage exists. The submission path is
+  `SubmitVideoJob`; the attachment is what the walk exercises. What remains absent is a real video
+  PROVIDER, which item 1 permits.
+
+### The defect the walk found, and no unit test could
+
+`final_reader.go` read a manifest's per-shot references by appending the `asset_version` and `panel`
+lists and keying both by shot. `ExportService` writes BOTH for every shot, so the panel OVERWROTE the
+asset version — and the traceability rule then compared a panel version id against the media version a
+shot currently approves and reported **every export as stale**. Each kind was correct on its own, which
+is why the ruleset's own tests and the export's own tests were both green.
+
+Fixed: the two kinds are keyed separately (`shot:` for the media, `panel:` for the panel). The walk is
+what found it, which is the argument for item 14 existing at all.
+
+## What remains PARTIAL
+
+1. **ROADMAP item 13, "中断恢复", is PARTIAL.** `video_restart_test.go` covers a job restart WITHOUT
    reference assets. A restart with first-frame, last-frame or reference assets populated is not
    covered.
-4. **ROADMAP item 14, "单集 E2E", is NOT BUILT.** No test drives one episode through board → video
-   and audio → subtitle → timeline → export → final review as a single walk.
-   `acceptance_wp11_test.go` stops at the export and the approval. WP-10 has
-   `acceptance_wp10_e2e_test.go` for exactly this shape; WP-11 does not.
-5. **ROADMAP item 1's video provider is a complete Mock, which the item permits** ("或完整 Mock").
+2. **ROADMAP item 1's video provider is a complete Mock, which the item permits** ("或完整 Mock").
    Its payload is a twenty-four byte container header rather than decodable video, which is why
    ADR-0015 section 2 composes exports from panel frames instead. A real adapter is not built.
-6. **ROADMAP item 4, "TTS Voice/Dialogue mapping", is PARTIAL.** `SubmitAudioJob` maps to a dialogue
+3. **ROADMAP item 4, "TTS Voice/Dialogue mapping", is PARTIAL.** `SubmitAudioJob` maps to a dialogue
    line; no read enumerates a script version's lines, so the section asks the user to type the line
    id rather than offering a picker.
+4. **The document exports have no `versionId` picker.** Each accepts one and the core honours it, but
+   no read enumerates an episode's versions for the UI to offer, so a user exports the version in
+   force. It is the same gap the audio section records.
 
 ## The two AGENT_CONTRACTS section 11.4 clauses this build does not fully answer
 

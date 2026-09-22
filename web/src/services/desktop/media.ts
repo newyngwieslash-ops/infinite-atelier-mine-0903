@@ -286,3 +286,60 @@ export async function saveExport(request: desktop.SaveExportRequest): Promise<de
     const binding = await loadMediaBinding();
     return binding.SaveExport(request as never);
 }
+
+/**
+ * isDocumentExportAvailable reports whether the episode's documents can be exported.
+ *
+ * It is a probe of its own rather than part of the media set, because the documents are ROADMAP
+ * item 11's other half and a build can have one without the other. An older build whose media
+ * binding predates them still reads a timeline and runs an export; it simply cannot write a script
+ * out, and this is what says so rather than a call that fails on a press.
+ */
+export function isDocumentExportAvailable(): boolean {
+    const media = getDesktopWindow()?.go?.desktop?.MediaBinding;
+    if (!media) return false;
+    return typeof media.ExportScript === "function" && typeof media.SaveDocument === "function";
+}
+
+/**
+ * exportScript renders the episode's script as a document.
+ *
+ * The text comes BACK rather than being written: a user should be able to read what they are about to
+ * save, and `SaveDocument` is the separate act that writes it to where they point.
+ */
+export async function exportScript(request: desktop.ExportScriptRequest): Promise<desktop.DocumentDTO> {
+    if (!isDocumentExportAvailable()) throw unavailableError();
+    const binding = await loadMediaBinding();
+    return binding.ExportScript(request as never);
+}
+
+/** exportShotList renders the episode's storyboard as a shot list. */
+export async function exportShotList(request: desktop.ExportShotListRequest): Promise<desktop.DocumentDTO> {
+    if (!isDocumentExportAvailable()) throw unavailableError();
+    const binding = await loadMediaBinding();
+    return binding.ExportShotList(request as never);
+}
+
+/**
+ * exportManifestDocument renders the episode's newest export manifest as a file.
+ *
+ * It is distinct from the `manifestJson` a row carries: that is a block of text a user can READ, and
+ * this is the document they can TAKE AWAY — which is what AC-MEDIA-003's traceability clause is for.
+ */
+export async function exportManifestDocument(request: desktop.ExportManifestDocumentRequest): Promise<desktop.DocumentDTO> {
+    if (!isDocumentExportAvailable()) throw unavailableError();
+    const binding = await loadMediaBinding();
+    return binding.ExportManifestDocument(request as never);
+}
+
+/**
+ * saveDocument writes a rendered document to a location the user picks.
+ *
+ * The text travels back rather than being re-rendered in the Go layer, so what a user read is what
+ * they save: a second render could pick up a version approved in between.
+ */
+export async function saveDocument(request: desktop.SaveDocumentRequest): Promise<desktop.SaveFileResultDTO> {
+    if (!isDocumentExportAvailable()) throw unavailableError();
+    const binding = await loadMediaBinding();
+    return binding.SaveDocument(request as never);
+}

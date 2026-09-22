@@ -414,18 +414,30 @@ func (r *FinalFactsReader) readExport(ctx context.Context, episodeID string, fac
 			export.ManifestVersions["script"] = firstReferenceID(manifest.ReferencesOf(domainmedia.RefScript))
 			export.ManifestVersions["board"] = firstReferenceID(manifest.ReferencesOf(domainmedia.RefStoryboard))
 			export.ManifestVersions["plan"] = firstReferenceID(manifest.ReferencesOf(domainmedia.RefDirectorPlan))
-			// A shot's media travels as an ASSET VERSION or a PANEL reference, and both carry the
-			// shot's own identifier: the ruleset keys them by shot so it can compare each against what
-			// is approved now.
-			for _, reference := range append(
-				manifest.ReferencesOf(domainmedia.RefAssetVersion),
-				manifest.ReferencesOf(domainmedia.RefPanel)...,
-			) {
+			// A SHOT'S MEDIA TRAVELS AS TWO REFERENCES, and the kinds are kept SEPARATE.
+			//
+			// `ExportService` writes an `asset_version` reference (the media the film was made from)
+			// AND a `panel` reference (the panel that media was approved for) for every shot, both
+			// carrying the shot's identifier. An earlier version of this loop appended the two lists
+			// and keyed them by shot, so the PANEL overwrote the ASSET VERSION — and the traceability
+			// rule then compared a panel id against the media version a shot currently approves and
+			// reported every export as stale. The walk in `acceptance_wp11_e2e_test.go` is what found
+			// it: no unit test compared the two kinds, because each was correct on its own.
+			//
+			// The ruleset compares the MEDIA version, so `shot:` is the asset version and `panel:` is
+			// the panel, each in its own key space.
+			for _, reference := range manifest.ReferencesOf(domainmedia.RefAssetVersion) {
 				if reference.ShotID == "" {
 					continue
 				}
 				export.ManifestVersions["shot:"+reference.ShotID] = reference.ID
 				export.ManifestHashes["shot:"+reference.ShotID] = reference.Hash
+			}
+			for _, reference := range manifest.ReferencesOf(domainmedia.RefPanel) {
+				if reference.ShotID == "" {
+					continue
+				}
+				export.ManifestVersions["panel:"+reference.ShotID] = reference.ID
 			}
 			if trackID := firstReferenceID(manifest.ReferencesOf(domainmedia.RefSubtitleTrack)); trackID != "" {
 				export.ManifestVersions["subtitle"] = trackID

@@ -36,11 +36,12 @@ import (
 
 // MediaBinding is the Wails surface for composing, subtitling and exporting an episode.
 type MediaBinding struct {
-	mu       sync.RWMutex
-	ctx      context.Context
-	exports  *appmedia.ExportService
-	subs     *appmedia.SubtitleService
-	timeline *appmedia.TimelineService
+	mu        sync.RWMutex
+	ctx       context.Context
+	exports   *appmedia.ExportService
+	subs      *appmedia.SubtitleService
+	timeline  *appmedia.TimelineService
+	documents *appmedia.DocumentService
 	// saveFile is the dialog plus the copy, injected so a test can exercise the write without a
 	// window. A nil one leaves SaveFile failing closed with a reason.
 	saveFile func(ctx context.Context, suggestedName string, write func(io.Writer) error) (string, error)
@@ -49,6 +50,7 @@ type MediaBinding struct {
 // AttachMedia supplies the media services and the save path.
 func AttachMedia(binding *MediaBinding, ctx context.Context, exports *appmedia.ExportService,
 	subs *appmedia.SubtitleService, timeline *appmedia.TimelineService,
+	documents *appmedia.DocumentService,
 	saveFile func(ctx context.Context, suggestedName string, write func(io.Writer) error) (string, error)) {
 	if binding == nil {
 		return
@@ -58,8 +60,19 @@ func AttachMedia(binding *MediaBinding, ctx context.Context, exports *appmedia.E
 	binding.exports = exports
 	binding.subs = subs
 	binding.timeline = timeline
+	binding.documents = documents
 	binding.saveFile = saveFile
 	binding.mu.Unlock()
+}
+
+// documentService returns the document reader, or nil when the stack was composed without one.
+func (b *MediaBinding) documentService() *appmedia.DocumentService {
+	if b == nil {
+		return nil
+	}
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return b.documents
 }
 
 // MediaBindingUnavailable is the fail-closed error the composition root returns.
@@ -658,6 +671,184 @@ func (b *MediaBinding) SaveExport(request SaveExportRequest) (SaveFileResultDTO,
 	if written == "" {
 		// A cancelled dialog. It is not an error: the user changed their mind, and reporting a failure
 		// for that would make the section show a message for an ordinary act.
+		return SaveFileResultDTO{Written: false}, nil
+	}
+	return SaveFileResultDTO{Written: true, Path: written}, nil
+}
+
+// --- Document exports, and the write that had no caller -------------------------------
+//
+// ROADMAP WP-11 item 11 is "Script/Storyboard/Subtitle/Manifest Export", and before these methods
+// only the subtitle half was reachable. The manifest was worse than missing: `save_dialog.go` carries
+// a `.json` filter that nothing ever asked for, and `ExportRecordDTO.ManifestJSON` reached the UI as a
+// block of text a user could read and not take away.
+//
+// A document is rendered by the core and then written through the SAME dialog path an MP4 uses, which
+// is the property that matters: the destination comes from the user pointing at it, and a document
+// export cannot write anywhere else.
+
+// DocumentDTO is a rendered document on its way to a user.
+type DocumentDTO struct {
+	// Name is what the document IS, for a section's message: "script", "shot list", "manifest".
+	Name string `json:"name"`
+	// Text is the document's own bytes. It is returned rather than written because a user should be
+	// able to READ what they are about to save — the same reason `ExportSubtitles` returns text.
+	Text string `json:"text"`
+	// Extension includes the dot, and is what `SaveDocument` offers as a default.
+	Extension string `json:"extension"`
+	// SuggestedName is the filename the dialog offers, WITHOUT a directory: the dialog decides where.
+	SuggestedName string `json:"suggestedName"`
+}
+
+func toDocumentDTO(document appmedia.Document) DocumentDTO {
+	return DocumentDTO{
+		Name: document.Name, Text: document.Text,
+		Extension: document.Extension, SuggestedName: document.SuggestedName,
+	}
+}
+
+// ExportScriptRequest asks for the episode's script as a document.
+type ExportScriptRequest struct {
+	EpisodeID string `json:"episodeId"`
+	// VersionID overrides the approved version. Empty uses the one in force.
+	VersionID string `json:"versionId,omitempty"`
+	// Format is `txt` or `fountain`.
+	Format string `json:"format"`
+	// IncludeShots writes each scene's camera setups after its lines, which a production wants and a
+	// reader of the screenplay usually does not.
+	IncludeShots bool `json:"includeShots,omitempty"`
+}
+
+// ExportScript renders the episode's script.
+func (b *MediaBinding) ExportScript(request ExportScriptRequest) (DocumentDTO, error) {
+	service := b.documentService()
+	if service == nil {
+		return DocumentDTO{}, MediaBindingUnavailable()
+	}
+	document, err := service.ExportScript(b.context(), appmedia.ScriptRequest{
+		DocumentRequest: appmedia.DocumentRequest{
+			EpisodeID: strings.TrimSpace(request.EpisodeID),
+			VersionID: strings.TrimSpace(request.VersionID),
+		},
+		Format: strings.TrimSpace(request.Format),
+		// The switch travels with the request rather than being decided here: whether a document
+		// carries shot lists is the user's choice, and this layer only forwards it.
+		IncludeShots: request.IncludeShots,
+	})
+	if err != nil {
+		return DocumentDTO{}, toDramaError(err)
+	}
+	return toDocumentDTO(document), nil
+}
+
+// ExportShotListRequest asks for the episode's board as a shot list.
+type ExportShotListRequest struct {
+	EpisodeID string `json:"episodeId"`
+	VersionID string `json:"versionId,omitempty"`
+	// Format is `txt` or `csv`.
+	Format string `json:"format"`
+}
+
+// ExportShotList renders the episode's storyboard as a shot list.
+func (b *MediaBinding) ExportShotList(request ExportShotListRequest) (DocumentDTO, error) {
+	service := b.documentService()
+	if service == nil {
+		return DocumentDTO{}, MediaBindingUnavailable()
+	}
+	document, err := service.ExportShotList(b.context(), appmedia.ShotListRequest{
+		DocumentRequest: appmedia.DocumentRequest{
+			EpisodeID: strings.TrimSpace(request.EpisodeID),
+			VersionID: strings.TrimSpace(request.VersionID),
+		},
+		Format: strings.TrimSpace(request.Format),
+	})
+	if err != nil {
+		return DocumentDTO{}, toDramaError(err)
+	}
+	return toDocumentDTO(document), nil
+}
+
+// ExportManifestDocumentRequest asks for the episode's newest export manifest as a file.
+//
+// It is a separate request type from `RunExportRequest` because it is a different act: running an
+// export COMPOSES a film, and this one writes the document that records what an existing film was
+// made from.
+type ExportManifestDocumentRequest struct {
+	EpisodeID string `json:"episodeId"`
+}
+
+// ExportManifestDocument renders the episode's newest export manifest as a document.
+func (b *MediaBinding) ExportManifestDocument(request ExportManifestDocumentRequest) (DocumentDTO, error) {
+	service := b.documentService()
+	if service == nil {
+		return DocumentDTO{}, MediaBindingUnavailable()
+	}
+	document, err := service.ExportManifest(b.context(), appmedia.DocumentRequest{
+		EpisodeID: strings.TrimSpace(request.EpisodeID),
+	})
+	if err != nil {
+		return DocumentDTO{}, toDramaError(err)
+	}
+	return toDocumentDTO(document), nil
+}
+
+// SaveDocumentRequest writes a rendered document to a location the user chooses.
+type SaveDocumentRequest struct {
+	// Text is the document as `ExportScript`, `ExportShotList` or `ExportManifestDocument` returned
+	// it. It travels back rather than being re-rendered, so what a user read is what they save: a
+	// second render could pick up a version approved in between.
+	Text string `json:"text"`
+	// SuggestedName is what the dialog offers. It is a HINT to a human, not a destination.
+	SuggestedName string `json:"suggestedName"`
+}
+
+// SaveDocument writes a rendered document to where the user points.
+//
+// # The same guard `SaveExport` uses, for the same reason
+//
+// The request names no destination. SECURITY section 11 allows writing only where the user pointed —
+// "用户选择导出目录时只写明确目标" — and a destination field would be the opposite, because a
+// compromised frontend could write anywhere. The dialog IS the user pointing, and this method is the
+// only writer for a document.
+//
+// # Why the text is bounded
+//
+// A caller could hand this method a megabyte of anything, and the save dialog would write it. The
+// bound is not a security boundary — the frontend is the user's own — it is a mistake-catcher: a
+// request carrying something other than a document is refused with a message rather than written to
+// the user's disk under a name they chose. A script, a shot list and a manifest are all far below it;
+// the figure is generous enough that no honest document meets it.
+const maxDocumentBytes = 8 * 1024 * 1024
+
+func (b *MediaBinding) SaveDocument(request SaveDocumentRequest) (SaveFileResultDTO, error) {
+	save := b.savePath()
+	if save == nil {
+		return SaveFileResultDTO{}, bindingUnavailable()
+	}
+	text := request.Text
+	if strings.TrimSpace(text) == "" {
+		// An empty document is refused rather than written: a zero-byte file at a name the user chose
+		// is worse than a refusal, because they believe it saved.
+		return SaveFileResultDTO{}, bindingInvalidInput()
+	}
+	if len(text) > maxDocumentBytes {
+		return SaveFileResultDTO{}, bindingInvalidInput()
+	}
+	name := strings.TrimSpace(request.SuggestedName)
+	if name == "" {
+		name = "episode-document.txt"
+	}
+	ctx := b.context()
+	// The dialog opens FIRST and only a chosen path causes a write, so a cancelled dialog has touched
+	// nothing — the same ordering `SaveExport` keeps.
+	written, err := save(ctx, name, func(writer io.Writer) error {
+		_, err := io.WriteString(writer, text)
+		return err
+	})
+	if err != nil {
+		return SaveFileResultDTO{}, toDramaError(err)
+	}
+	if written == "" {
 		return SaveFileResultDTO{Written: false}, nil
 	}
 	return SaveFileResultDTO{Written: true, Path: written}, nil

@@ -18,6 +18,18 @@ export function EditSubtitleCues(arg1, arg2) {
   return window['go']['desktop']['MediaBinding']['EditSubtitleCues'](arg1, arg2);
 }
 
+export function ExportManifestDocument(arg1) {
+  return window['go']['desktop']['MediaBinding']['ExportManifestDocument'](arg1);
+}
+
+export function ExportScript(arg1) {
+  return window['go']['desktop']['MediaBinding']['ExportScript'](arg1);
+}
+
+export function ExportShotList(arg1) {
+  return window['go']['desktop']['MediaBinding']['ExportShotList'](arg1);
+}
+
 export function ExportSubtitles(arg1) {
   return window['go']['desktop']['MediaBinding']['ExportSubtitles'](arg1);
 }
@@ -48,6 +60,10 @@ export function ReadTimeline(arg1) {
 
 export function RunExport(arg1) {
   return window['go']['desktop']['MediaBinding']['RunExport'](arg1);
+}
+
+export function SaveDocument(arg1) {
+  return window['go']['desktop']['MediaBinding']['SaveDocument'](arg1);
 }
 
 export function SaveExport(arg1) {

@@ -10,6 +10,12 @@ export function DraftSubtitles(arg1:desktop.DraftSubtitlesRequest):Promise<deskt
 
 export function EditSubtitleCues(arg1:string,arg2:Array<desktop.SubtitleCueEdit>):Promise<Array<desktop.SubtitleCueDTO>>;
 
+export function ExportManifestDocument(arg1:desktop.ExportManifestDocumentRequest):Promise<desktop.DocumentDTO>;
+
+export function ExportScript(arg1:desktop.ExportScriptRequest):Promise<desktop.DocumentDTO>;
+
+export function ExportShotList(arg1:desktop.ExportShotListRequest):Promise<desktop.DocumentDTO>;
+
 export function ExportSubtitles(arg1:desktop.ExportSubtitlesRequest):Promise<string>;
 
 export function ListExports(arg1:string):Promise<Array<desktop.ExportRecordDTO>>;
@@ -25,6 +31,8 @@ export function MissingSubtitleLines(arg1:string):Promise<Array<desktop.MissingL
 export function ReadTimeline(arg1:desktop.TimelineRequest):Promise<desktop.TimelineDTO>;
 
 export function RunExport(arg1:desktop.RunExportRequest):Promise<desktop.ExportRecordDTO>;
+
+export function SaveDocument(arg1:desktop.SaveDocumentRequest):Promise<desktop.SaveFileResultDTO>;
 
 export function SaveExport(arg1:desktop.SaveExportRequest):Promise<desktop.SaveFileResultDTO>;
 

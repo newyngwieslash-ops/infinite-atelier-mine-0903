@@ -19,7 +19,11 @@ import {
     approveSubtitleTrack,
     draftSubtitles,
     editSubtitleCues,
+    exportManifestDocument,
+    exportScript,
+    exportShotList,
     exportSubtitles,
+    isDocumentExportAvailable,
     isMediaBindingsAvailable,
     isMediaExportAvailable,
     listExports,
@@ -29,6 +33,7 @@ import {
     missingSubtitleLines,
     readTimeline,
     runExport,
+    saveDocument,
     saveExport,
 } from "../desktop/media";
 import { isMediaJobSubmissionAvailable, submitAudioJob, submitVideoJob } from "../desktop/jobs";
@@ -37,6 +42,10 @@ test("a window with no desktop core reports both media capabilities unsatisfied"
     assert.equal(isMediaBindingsAvailable(), false);
     assert.equal(isMediaExportAvailable(), false);
     assert.equal(isMediaJobSubmissionAvailable(), false);
+    // The documents are a probe of their own, and the absence direction has to be asserted for it too:
+    // a build whose media binding predates them reads a timeline and runs an export, and a probe that
+    // answered `true` here would offer a user three buttons that cannot reach anything.
+    assert.equal(isDocumentExportAvailable(), false);
 });
 
 test("the media reads answer empty rather than throwing when the core is absent", async () => {
@@ -80,6 +89,12 @@ test("every media command throws when the core is absent", async () => {
         ["runExport", () => runExport({ episodeId: "episode-1", quality: "preview" } as never)],
         ["approveExport", () => approveExport({ exportId: "export-1" } as never)],
         ["saveExport", () => saveExport({ storageKey: "a".repeat(64), suggestedName: "episode.mp4" } as never)],
+        // ROADMAP item 11's documents, which are commands of the same kind: a user pressed "render" and
+        // a silent no-op would leave them believing a document was produced.
+        ["exportScript", () => exportScript({ episodeId: "episode-1", format: "txt" } as never)],
+        ["exportShotList", () => exportShotList({ episodeId: "episode-1", format: "csv" } as never)],
+        ["exportManifestDocument", () => exportManifestDocument({ episodeId: "episode-1" } as never)],
+        ["saveDocument", () => saveDocument({ text: "INT. ROOM - DAY", suggestedName: "script-ep1.txt" } as never)],
         ["submitVideoJob", () => submitVideoJob({ projectId: "p", episodeId: "e", shotId: "s", providerId: "pr", model: "m", prompt: "x" } as never)],
         ["submitAudioJob", () => submitAudioJob({ projectId: "p", episodeId: "e", dialogueLineId: "l", providerId: "pr", model: "m", text: "x" } as never)],
     ];
@@ -205,5 +220,122 @@ test("a reachable binding carries the call through rather than answering empty",
         await mediaCapability();
         await draftSubtitles({ episodeId: "episode-9", scriptVersionId: "s" } as never);
         assert.deepEqual(calls, ["ReadTimeline", "ListSubtitleTracks", "MediaCapability", "DraftSubtitles"]);
+    });
+});
+
+/**
+ * The document probe, from both sides.
+ *
+ * `isDocumentExportAvailable` is the only gate on ROADMAP item 11's document controls, so it carries
+ * the same mutation risk `isMediaBindingsAvailable` did: hardcoded to `true` it offers three buttons
+ * that reach nothing, and hardcoded to `false` it hides a working feature forever. The pairs below fix
+ * both directions, and the second pair is the one that matters for the split it draws: `ExportScript`
+ * without `SaveDocument` must read as UNAVAILABLE, because a user can render a document they can never
+ * write out — which is worse than the notice that says the build cannot do this.
+ */
+test("the document probe reads available only when the binding has both a renderer and a writer", async () => {
+    const both: FakeBindings = {
+        MediaBinding: {
+            ExportScript: () => undefined,
+            SaveDocument: () => undefined,
+        },
+    };
+    await withDesktopCore(both, () => {
+        assert.equal(isDocumentExportAvailable(), true, "a binding with both methods must report documents available");
+    });
+
+    // A renderer with no writer, which is the divergence the probe exists for: the text would arrive
+    // and the save button beside it would fail on every press.
+    const renderOnly: FakeBindings = { MediaBinding: { ExportScript: () => undefined } };
+    await withDesktopCore(renderOnly, () => {
+        assert.equal(isDocumentExportAvailable(), false, "a binding that cannot write a document must not report documents available");
+    });
+
+    // The mirror: a writer with no renderer reaches nothing, since there is no text to send it.
+    const saveOnly: FakeBindings = { MediaBinding: { SaveDocument: () => undefined } };
+    await withDesktopCore(saveOnly, () => {
+        assert.equal(isDocumentExportAvailable(), false, "a binding that cannot render a document must not report documents available");
+    });
+
+    // And a binding with none of them, which is the state every older build is in.
+    await withDesktopCore({ MediaBinding: {} }, () => {
+        assert.equal(isDocumentExportAvailable(), false, "a media binding without the document methods must not report documents available");
+    });
+});
+
+test("a reachable document binding carries the call through rather than answering empty", async () => {
+    // The same property the media probe's positive test asserts, for the four document methods: each
+    // call must REACH the binding and return what it answered. A client mutated to return a fixed
+    // document, or to throw while the probe reports available, fails here — and these are the only
+    // checks in a browser-mode run that can see the calls at all, since the sections' own bodies are
+    // answered by the shell's no-core notice.
+    const calls: Array<[string, unknown]> = [];
+    const rendering: FakeBindings = {
+        MediaBinding: {
+            ExportScript: (request: unknown) => {
+                calls.push(["ExportScript", request]);
+                return { name: "script", text: "INT. ROOM - DAY", extension: ".txt", suggestedName: "script-ep1.txt" };
+            },
+            ExportShotList: (request: unknown) => {
+                calls.push(["ExportShotList", request]);
+                return { name: "shot list", text: "ordinal,shot_id", extension: ".csv", suggestedName: "shotlist-ep1.csv" };
+            },
+            ExportManifestDocument: (request: unknown) => {
+                calls.push(["ExportManifestDocument", request]);
+                return { name: "manifest", text: "{\"schemaVersion\":1}", extension: ".json", suggestedName: "manifest-ep1.json" };
+            },
+            SaveDocument: (request: unknown) => {
+                calls.push(["SaveDocument", request]);
+                return { written: true, path: "C:/exports/shotlist-ep1.csv" };
+            },
+        },
+    };
+    await withDesktopCore(rendering, async () => {
+        assert.equal(isDocumentExportAvailable(), true, "the probe must read the documents as available");
+
+        const script = await exportScript({ episodeId: "episode-1", format: "fountain", includeShots: true } as never);
+        assert.equal(script.text, "INT. ROOM - DAY", "the script the core returned must be the one answered");
+        assert.equal(script.suggestedName, "script-ep1.txt");
+
+        const shotList = await exportShotList({ episodeId: "episode-1", format: "csv" } as never);
+        assert.equal(shotList.text, "ordinal,shot_id");
+        assert.equal(shotList.extension, ".csv", "the extension decides what the dialog writes");
+
+        const manifest = await exportManifestDocument({ episodeId: "episode-1" } as never);
+        assert.equal(manifest.name, "manifest");
+
+        const saved = await saveDocument({ text: shotList.text, suggestedName: shotList.suggestedName } as never);
+        assert.equal(saved.written, true, "a written answer must travel back as written");
+        assert.equal(saved.path, "C:/exports/shotlist-ep1.csv");
+
+        assert.deepEqual(
+            calls.map(([name]) => name),
+            ["ExportScript", "ExportShotList", "ExportManifestDocument", "SaveDocument"],
+        );
+        // The requests must reach the binding AS GIVEN, `includeShots` included: the switch is the
+        // user's choice and the client forwards it rather than deciding it.
+        assert.deepEqual(calls[0][1], { episodeId: "episode-1", format: "fountain", includeShots: true });
+        assert.deepEqual(calls[1][1], { episodeId: "episode-1", format: "csv" });
+        assert.deepEqual(calls[3][1], { text: "ordinal,shot_id", suggestedName: "shotlist-ep1.csv" });
+    });
+});
+
+test("a cancelled document save is a value rather than an error", async () => {
+    // `written: false` is the user closing the save dialog, which `media.ts` documents as a returned
+    // value and NOT a failure — the same distinction `saveExport` keeps. A client that turned it into
+    // a rejection would make a cancellation look like a defect on a screen that did nothing wrong.
+    const cancelling: FakeBindings = {
+        MediaBinding: {
+            // The probe's own pair, which is what makes the binding reachable at all: it reads
+            // `ExportScript` and `SaveDocument`, so a fake that installed a different renderer would
+            // assert the unavailable path rather than the cancelled one.
+            ExportScript: () => undefined,
+            SaveDocument: () => ({ written: false }),
+        },
+    };
+    await withDesktopCore(cancelling, async () => {
+        const result = await saveDocument({ text: "ordinal,shot_id", suggestedName: "shotlist-ep1.csv" } as never);
+        assert.equal(result.written, false, "a cancellation must come back as written: false");
+        assert.equal(result.path ?? "", "", "a cancellation names no path");
     });
 });
