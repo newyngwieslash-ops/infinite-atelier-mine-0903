@@ -138,6 +138,7 @@ func (s *Service) RememberMessage(ctx context.Context, request RememberMessageRe
 			item = embedded[0]
 		}
 	}
+	s.recordEvent(ctx, item)
 	return item, nil
 }
 
@@ -224,6 +225,7 @@ func (s *Service) RememberFact(ctx context.Context, request RememberFactRequest)
 			item = embedded[0]
 		}
 	}
+	s.recordEvent(ctx, item)
 	return item, nil
 }
 
@@ -430,7 +432,21 @@ func (s *Service) BuildMemoryContext(ctx context.Context, request MemoryContextR
 	if err != nil {
 		return MemoryContext{}, err
 	}
-	result.Recent = append(result.Recent, recentMemories...)
+	// THE BUDGET APPLIES TO THIS CHANNEL TOO, and the first version did not apply it. The transcript
+	// window above is charged as it is filled; this append came after that loop and was charged
+	// nowhere, so a project whose memories were longer than its transcript's turns could spend past
+	// its budget — the acceptance test for FR-120's "记忆构建符合 Token Budget" found it by building a
+	// tiny budget against twenty long memories and reading back a context that said it had not
+	// truncated.
+	for _, item := range recentMemories {
+		cost := EstimateTokens(item.Content)
+		if used+cost > budget {
+			result.Truncated = true
+			break
+		}
+		used += cost
+		result.Recent = append(result.Recent, item)
+	}
 
 	if s.SemanticAvailable(ctx, request.Scope.Project) && strings.TrimSpace(request.Query) != "" {
 		scored, err := s.scoredCandidates(ctx, request.Scope, request.Query, threshold, excluded)

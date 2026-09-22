@@ -2846,6 +2846,22 @@ export namespace desktop {
 	        this.relationType = source["relationType"];
 	    }
 	}
+	export class MemoryLinkRequest {
+	    memoryId: string;
+	    entityType: string;
+	    entityId: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new MemoryLinkRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.memoryId = source["memoryId"];
+	        this.entityType = source["entityType"];
+	        this.entityId = source["entityId"];
+	    }
+	}
 	export class MemoryPinRequest {
 	    memoryId: string;
 	    locked: boolean;

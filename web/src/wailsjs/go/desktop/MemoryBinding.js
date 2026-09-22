@@ -10,6 +10,10 @@ export function GetMemory(arg1) {
   return window['go']['desktop']['MemoryBinding']['GetMemory'](arg1);
 }
 
+export function LinkMemory(arg1) {
+  return window['go']['desktop']['MemoryBinding']['LinkMemory'](arg1);
+}
+
 export function ListMemories(arg1) {
   return window['go']['desktop']['MemoryBinding']['ListMemories'](arg1);
 }

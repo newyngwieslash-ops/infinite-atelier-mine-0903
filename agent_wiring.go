@@ -128,6 +128,11 @@ func composeAgents(deps agentDeps) *agentWiring {
 		Embedder: newProjectEmbedder(deps.Providers, connection),
 		Clock:    clock,
 		IDs:      ids,
+		// THE EVENT RECORDER, which is what makes MemoryCreated reachable. ADR-0009 section 5 assigned
+		// the emission to this package, the name has been in the closed vocabulary since migration
+		// 000013, and until this the memory store wrote rows and announced nothing — the "declared but
+		// never emitted" gap STATUS's event table has carried since WP-05.
+		Events: deps.Drama.events,
 	})
 
 	tools, err := agenttools.Build(agenttools.Deps{

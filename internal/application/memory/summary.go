@@ -179,10 +179,11 @@ func (s *Service) Summarize(ctx context.Context, request SummarizeRequest) (memo
 		// not yet searchable is a recoverable state — the rebuild command is exactly the
 		// path that recovers it. Reporting the failure to the caller would be right if the
 		// caller could act on it, and the caller here cannot.
-		if _, err := s.embedItems(ctx, readScope.Project, []memory.MemoryItem{summary}); err != nil {
-			return summary, true, nil
+		if embedded, err := s.embedItems(ctx, readScope.Project, []memory.MemoryItem{summary}); err == nil && len(embedded) == 1 {
+			summary = embedded[0]
 		}
 	}
+	s.recordEvent(ctx, summary)
 	return summary, true, nil
 }
 

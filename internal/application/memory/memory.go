@@ -32,7 +32,9 @@ import (
 	"strings"
 	"time"
 
+	eventsapp "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/events"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/agent"
+	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/event"
 	domainmemory "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/memory"
 )
 
@@ -107,6 +109,7 @@ type Service struct {
 	embedder Embedder
 	clock    Clock
 	ids      IDGenerator
+	events   EventRecorder
 }
 
 // Options configures the service.
@@ -122,6 +125,10 @@ type Options struct {
 	Embedder Embedder
 	Clock    Clock
 	IDs      IDGenerator
+	// Events is OPTIONAL. A build without a recorder still stores and recalls memories; what it loses
+	// is the announcement, which ADR-0009 puts on the best-effort side — a memory's write is the fact
+	// and its event is the notification.
+	Events EventRecorder
 }
 
 // NewService builds the full service.
@@ -133,6 +140,7 @@ func NewService(options Options) *Service {
 		embedder: options.Embedder,
 		clock:    options.Clock,
 		ids:      options.IDs,
+		events:   options.Events,
 	}
 }
 
@@ -243,6 +251,28 @@ func ScopeFor(projectID, episodeID, agentKey string) Scope {
 	// 14.4 lists the field so a future multi-tenant deployment has somewhere to put
 	// its value rather than a shape to change.
 	return Scope{Tenant: "local", Project: projectID, Episode: episodeID, AgentKey: agentKey}
+}
+
+// recordEvent announces a memory write, if the service has a recorder.
+//
+// The nil check is not defensive padding: the recorder is an interface, so a service composed without
+// one holds a nil interface and calling a method on it panics. This is the one place that check lives,
+// so no emit site repeats it and none can forget it.
+//
+// It is BEST EFFORT, and ADR-0009 explains why: the row is committed by the time this runs, and a
+// caller must not be told its memory was not written because an announcement failed. MemoryCreated is
+// in the closed vocabulary migration 000013's CHECK enforces, and ADR-0009 section 5 assigned the
+// emission to this package — WP-05 declared it and it went unemitted until now.
+func (s *Service) recordEvent(ctx context.Context, item domainmemory.MemoryItem) {
+	if s == nil || s.events == nil {
+		return
+	}
+	s.events.RecordBestEffort(ctx, eventsapp.Draft{
+		Type:          event.MemoryCreated,
+		AggregateType: event.AggregateMemory,
+		AggregateID:   item.ID,
+		ProjectID:     item.Scope.Project,
+	})
 }
 
 // trimOrEmpty trims a caller-supplied identifier.

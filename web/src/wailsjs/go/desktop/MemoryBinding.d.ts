@@ -6,6 +6,8 @@ export function DeleteMemory(arg1:desktop.DeleteMemoryRequest):Promise<desktop.M
 
 export function GetMemory(arg1:string):Promise<desktop.MemoryDTO>;
 
+export function LinkMemory(arg1:desktop.MemoryLinkRequest):Promise<void>;
+
 export function ListMemories(arg1:desktop.MemoryQuery):Promise<Array<desktop.MemoryDTO>>;
 
 export function ListMemoryEntityLinks(arg1:string):Promise<Array<desktop.MemoryEntityLinkDTO>>;

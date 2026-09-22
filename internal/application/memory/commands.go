@@ -74,6 +74,38 @@ func (s *Service) EntityLinks(ctx context.Context, memoryID string) ([]memory.En
 	return s.items.ListEntityLinks(ctx, memoryID)
 }
 
+// LinkMemory records that a memory is about a domain entity.
+//
+// It is a COMMAND rather than something a write path infers, and the reason is section 12.4's list of
+// what must not become a high-confidence fact automatically. A link says "this memory is about that
+// character or that asset" — an assertion about the world — and an agent that could make one would be
+// able to attach its own guesses to an entity a user reads. So the link is the user's, made through
+// this command and the binding above it, and the fixture that exercises AC-E2E-005 makes it the same
+// way.
+//
+// A link does NOT make the memory searchable or change its content: it is a fact ABOUT the memory, and
+// the recall reads it through EntityLinks rather than through the vector index.
+func (s *Service) LinkMemory(ctx context.Context, memoryID, entityType, entityID string) error {
+	if !s.StorageAvailable() {
+		return storageUnavailable()
+	}
+	id := strings.TrimSpace(memoryID)
+	if id == "" {
+		return memory.InvalidError("A link must name the memory it starts from.")
+	}
+	// The memory must exist, so a link cannot be created for an identifier that was never written.
+	if _, err := s.items.GetItem(ctx, id); err != nil {
+		return err
+	}
+	return s.items.AddEntityLinks(ctx, []memory.EntityLink{{
+		MemoryID:     id,
+		EntityType:   strings.TrimSpace(entityType),
+		EntityID:     strings.TrimSpace(entityID),
+		RelationType: memory.RelationAbout,
+		CreatedAt:    s.now(),
+	}})
+}
+
 // DeleteMemoryRequest soft-deletes one memory.
 type DeleteMemoryRequest struct {
 	MemoryID string

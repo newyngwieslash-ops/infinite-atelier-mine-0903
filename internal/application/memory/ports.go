@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	eventsapp "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/events"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/memory"
 )
 
@@ -175,6 +176,15 @@ type Embedder interface {
 	Available(ctx context.Context, projectID string) bool
 	// Embed embeds the request's texts.
 	Embed(ctx context.Context, projectID string, request EmbeddingRequest) (EmbeddingResult, error)
+}
+
+// EventRecorder announces something that happened.
+//
+// It is the shape the asset and staleness services declare, and it is declared again here rather than
+// shared for the reason those two do not share theirs: each service states the one dependency it uses
+// at the width it uses it, and a shared interface would be a fourth package both had to import.
+type EventRecorder interface {
+	RecordBestEffort(ctx context.Context, draft eventsapp.Draft)
 }
 
 // Clock and IDGenerator are the determinism ports every application service here has.

@@ -367,6 +367,34 @@ func (b *MemoryBinding) SetMemoryLocked(request MemoryPinRequest) (bool, error) 
 	return changed, nil
 }
 
+// MemoryLinkRequest attaches a memory to a domain entity.
+type MemoryLinkRequest struct {
+	MemoryID   string `json:"memoryId"`
+	EntityType string `json:"entityType"`
+	EntityID   string `json:"entityId"`
+}
+
+// LinkMemory records that a memory is about a domain entity.
+//
+// It is a user command rather than something a write path infers, because a link is an assertion about
+// the world: section 12.4 lists what must not become a high-confidence fact automatically, and an
+// agent able to attach its own guesses to a character a user reads would be doing exactly that.
+func (b *MemoryBinding) LinkMemory(request MemoryLinkRequest) error {
+	service := b.memoryService()
+	if service == nil {
+		return MemoryBindingUnavailable()
+	}
+	if strings.TrimSpace(request.MemoryID) == "" || strings.TrimSpace(request.EntityType) == "" ||
+		strings.TrimSpace(request.EntityID) == "" {
+		return bindingInvalidInput()
+	}
+	if err := service.LinkMemory(b.context(), strings.TrimSpace(request.MemoryID),
+		strings.TrimSpace(request.EntityType), strings.TrimSpace(request.EntityID)); err != nil {
+		return toDramaError(err)
+	}
+	return nil
+}
+
 // MemoryEditRequest replaces a memory's text.
 type MemoryEditRequest struct {
 	MemoryID string `json:"memoryId"`
