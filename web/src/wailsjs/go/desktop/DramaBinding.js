@@ -22,6 +22,10 @@ export function ApproveAdaptationStrategyVersion(arg1) {
   return window['go']['desktop']['DramaBinding']['ApproveAdaptationStrategyVersion'](arg1);
 }
 
+export function ApproveCandidate(arg1) {
+  return window['go']['desktop']['DramaBinding']['ApproveCandidate'](arg1);
+}
+
 export function ApproveDirectorPlanVersion(arg1) {
   return window['go']['desktop']['DramaBinding']['ApproveDirectorPlanVersion'](arg1);
 }
@@ -46,8 +50,16 @@ export function ApprovedStoryboardVersionID(arg1) {
   return window['go']['desktop']['DramaBinding']['ApprovedStoryboardVersionID'](arg1);
 }
 
+export function CheckStoryboardGate(arg1) {
+  return window['go']['desktop']['DramaBinding']['CheckStoryboardGate'](arg1);
+}
+
 export function ClearStaleMark(arg1) {
   return window['go']['desktop']['DramaBinding']['ClearStaleMark'](arg1);
+}
+
+export function CollectBatchResults(arg1) {
+  return window['go']['desktop']['DramaBinding']['CollectBatchResults'](arg1);
 }
 
 export function CountDomainEvents(arg1) {
@@ -308,6 +320,10 @@ export function ResolveStoryConflict(arg1) {
 
 export function ReviseChapter(arg1) {
   return window['go']['desktop']['DramaBinding']['ReviseChapter'](arg1);
+}
+
+export function RunImageBatch(arg1) {
+  return window['go']['desktop']['DramaBinding']['RunImageBatch'](arg1);
 }
 
 export function RunScriptStage(arg1) {

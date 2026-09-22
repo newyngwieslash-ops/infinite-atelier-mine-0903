@@ -452,6 +452,24 @@ export namespace desktop {
 		    return a;
 		}
 	}
+	export class ApproveCandidateRequest {
+	    panelVersionId: string;
+	    approvedImageAssetVersionId: string;
+	    candidateVersionIds: string[];
+	    expectedRevision: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ApproveCandidateRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.panelVersionId = source["panelVersionId"];
+	        this.approvedImageAssetVersionId = source["approvedImageAssetVersionId"];
+	        this.candidateVersionIds = source["candidateVersionIds"];
+	        this.expectedRevision = source["expectedRevision"];
+	    }
+	}
 	export class ApproveDirectorPlanVersionRequest {
 	    versionId: string;
 	    traceId?: string;
@@ -771,6 +789,26 @@ export namespace desktop {
 	        this.stagedDatabase = source["stagedDatabase"];
 	    }
 	}
+	export class BatchSubmissionDTO {
+	    shotId: string;
+	    itemId: string;
+	    candidateIndex: number;
+	    jobId: string;
+	    duplicate: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new BatchSubmissionDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.shotId = source["shotId"];
+	        this.itemId = source["itemId"];
+	        this.candidateIndex = source["candidateIndex"];
+	        this.jobId = source["jobId"];
+	        this.duplicate = source["duplicate"];
+	    }
+	}
 	export class BeginImportUploadRequest {
 	    projectId: string;
 	    name?: string;
@@ -1043,6 +1081,22 @@ export namespace desktop {
 	        this.revision = source["revision"];
 	    }
 	}
+	export class CheckStoryboardGateRequest {
+	    episodeId: string;
+	    storyboardVersionId?: string;
+	    storyboardId?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new CheckStoryboardGateRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.episodeId = source["episodeId"];
+	        this.storyboardVersionId = source["storyboardVersionId"];
+	        this.storyboardId = source["storyboardId"];
+	    }
+	}
 	export class ClearStaleMarkRequest {
 	    artifactType: string;
 	    artifactId: string;
@@ -1055,6 +1109,44 @@ export namespace desktop {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.artifactType = source["artifactType"];
 	        this.artifactId = source["artifactId"];
+	    }
+	}
+	export class CollectBatchResultsRequest {
+	    assetByItem: Record<string, string>;
+	    jobIds: string[];
+	    usageRole?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new CollectBatchResultsRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.assetByItem = source["assetByItem"];
+	        this.jobIds = source["jobIds"];
+	        this.usageRole = source["usageRole"];
+	    }
+	}
+	export class CollectedCandidateDTO {
+	    jobId: string;
+	    itemId: string;
+	    assetId: string;
+	    versionId?: string;
+	    versionNumber?: number;
+	    duplicate: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new CollectedCandidateDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.jobId = source["jobId"];
+	        this.itemId = source["itemId"];
+	        this.assetId = source["assetId"];
+	        this.versionId = source["versionId"];
+	        this.versionNumber = source["versionNumber"];
+	        this.duplicate = source["duplicate"];
 	    }
 	}
 	export class ConfirmChaptersRequestDTO {
@@ -3181,6 +3273,66 @@ export namespace desktop {
 	        this.revision = source["revision"];
 	    }
 	}
+	export class RunImageBatchRequest {
+	    storyboardVersionId: string;
+	    episodeId: string;
+	    projectId: string;
+	    perShotCandidates: number;
+	    shotIds?: string[];
+	    providerId: string;
+	    modelName: string;
+	    promptSuffix?: string;
+	    seed?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new RunImageBatchRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.storyboardVersionId = source["storyboardVersionId"];
+	        this.episodeId = source["episodeId"];
+	        this.projectId = source["projectId"];
+	        this.perShotCandidates = source["perShotCandidates"];
+	        this.shotIds = source["shotIds"];
+	        this.providerId = source["providerId"];
+	        this.modelName = source["modelName"];
+	        this.promptSuffix = source["promptSuffix"];
+	        this.seed = source["seed"];
+	    }
+	}
+	export class RunImageBatchResultDTO {
+	    submissions: BatchSubmissionDTO[];
+	    duplicate: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new RunImageBatchResultDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.submissions = this.convertValues(source["submissions"], BatchSubmissionDTO);
+	        this.duplicate = source["duplicate"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class RunScriptStageRequest {
 	    workflowRunId: string;
 	    stage: string;
@@ -3194,6 +3346,12 @@ export namespace desktop {
 	    strategyVersionId?: string;
 	    scriptVersionId?: string;
 	    selectedEventIds?: string[];
+	    directorPlanVersionId?: string;
+	    storyboardVersionId?: string;
+	    storyboardId?: string;
+	    storyboardItemId?: string;
+	    assetGapReportId?: string;
+	    shotIds?: string[];
 	    modelId?: string;
 	    providerId?: string;
 	
@@ -3215,6 +3373,12 @@ export namespace desktop {
 	        this.strategyVersionId = source["strategyVersionId"];
 	        this.scriptVersionId = source["scriptVersionId"];
 	        this.selectedEventIds = source["selectedEventIds"];
+	        this.directorPlanVersionId = source["directorPlanVersionId"];
+	        this.storyboardVersionId = source["storyboardVersionId"];
+	        this.storyboardId = source["storyboardId"];
+	        this.storyboardItemId = source["storyboardItemId"];
+	        this.assetGapReportId = source["assetGapReportId"];
+	        this.shotIds = source["shotIds"];
 	        this.modelId = source["modelId"];
 	        this.providerId = source["providerId"];
 	    }

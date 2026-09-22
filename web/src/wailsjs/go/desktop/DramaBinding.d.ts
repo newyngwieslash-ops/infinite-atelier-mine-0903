@@ -12,6 +12,8 @@ export function ApplyScriptGate(arg1:desktop.ApplyScriptGateRequest):Promise<des
 
 export function ApproveAdaptationStrategyVersion(arg1:string):Promise<desktop.AdaptationStrategyVersionDTO>;
 
+export function ApproveCandidate(arg1:desktop.ApproveCandidateRequest):Promise<desktop.StoryboardPanelVersionDTO>;
+
 export function ApproveDirectorPlanVersion(arg1:desktop.ApproveDirectorPlanVersionRequest):Promise<desktop.DirectorPlanVersionDTO>;
 
 export function ApprovePanelImage(arg1:desktop.ApprovePanelImageRequest):Promise<desktop.StoryboardPanelVersionDTO>;
@@ -24,7 +26,11 @@ export function ApproveStoryboardVersion(arg1:desktop.ApproveStoryboardVersionRe
 
 export function ApprovedStoryboardVersionID(arg1:string):Promise<string>;
 
+export function CheckStoryboardGate(arg1:desktop.CheckStoryboardGateRequest):Promise<void>;
+
 export function ClearStaleMark(arg1:desktop.ClearStaleMarkRequest):Promise<boolean>;
+
+export function CollectBatchResults(arg1:desktop.CollectBatchResultsRequest):Promise<Array<desktop.CollectedCandidateDTO>>;
 
 export function CountDomainEvents(arg1:desktop.ListDomainEventsRequest):Promise<number>;
 
@@ -155,6 +161,8 @@ export function RejectStoryEvent(arg1:desktop.DecideStoryEventRequest):Promise<d
 export function ResolveStoryConflict(arg1:desktop.ResolveStoryConflictRequest):Promise<desktop.StoryFactConflictDTO>;
 
 export function ReviseChapter(arg1:desktop.ReviseChapterRequest):Promise<desktop.ChapterDTO>;
+
+export function RunImageBatch(arg1:desktop.RunImageBatchRequest):Promise<desktop.RunImageBatchResultDTO>;
 
 export function RunScriptStage(arg1:desktop.RunScriptStageRequest):Promise<desktop.ScriptStageResultDTO>;
 
