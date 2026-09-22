@@ -52,6 +52,13 @@ const DYNAMIC_ALLOWLIST = [
         owner: "WP-12",
         reason: "Legacy browser model-script path; unreachable in secure desktop mode (guarded in runModelPlugin) and scheduled for removal in WP-12 clean-up.",
     },
+    {
+        file: "internal/infrastructure/media/ffmpeg.go",
+        rule: "os-exec",
+        owner: "ADR-0015",
+        reason:
+            "The audited MediaEngine adapter, and the ONLY place this repository starts a process. SECURITY section 5 permits os/exec in exactly one place: '允许 os/exec 的唯一位置是经过审计的 MediaEngine/系统集成 Adapter,参数必须结构化构造,禁止 Shell 字符串拼接'. Every command is exec.CommandContext over a []string with no shell, no joining and no interpolation; user text goes into files rather than argv; the two program names are constants resolved by LookPath. Removing this file requires removing this entry, because a stale exception fails the scan.",
+    },
 ];
 
 // --- Rule 1b: browser-direct provider calls -------------------------------
