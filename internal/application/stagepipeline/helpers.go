@@ -7,6 +7,7 @@ import (
 	agentruntime "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/agentruntime"
 	appworkflow "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/workflow"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/agent"
+	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/consistency"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/workflow"
 )
 
@@ -281,6 +282,56 @@ func supervisionTask(attempt workflow.StageRun, request SupervisionRequest) stri
 	// pipeline does not read it.
 	parts = append(parts, "Cite the ruleset version you reviewed against, and read the project's rules before judging.")
 	return strings.Join(parts, " ")
+}
+
+// supervisionTaskWithChecks is supervisionTask plus what the deterministic rules already found.
+//
+// # Why the reviewer is TOLD the mechanical findings
+//
+// Section 11.4 splits the work — "硬规则应尽量用确定性代码先检查，LLM Supervisor 负责语义质量" — and the
+// split only helps if the two halves do not spend their effort on the same question. A supervisor
+// asked to review a twelve-row board would otherwise re-derive that a row cites a superseded costume
+// version, and its answer would be right or wrong depending on the model. Told that the code already
+// found it, the reviewer is left the part that needs reading: whether the rows tell the story, whether
+// the coverage is sensible, whether a shot's description matches what the scene says.
+//
+// The findings travel in the TASK rather than in the approved-facts layer because they are not
+// approved facts: they are this review's own input, and the prompt's layer 8 is where "what this
+// attempt must do" belongs.
+//
+// The instruction to not repeat them is stated, and a model that repeats one anyway is handled by the
+// merge rather than by trust: see MergeIssues, which dedupes on the rule and the place.
+func supervisionTaskWithChecks(attempt workflow.StageRun, request SupervisionRequest, findings []consistency.Finding) string {
+	task := supervisionTask(attempt, request)
+	if len(findings) == 0 {
+		return task
+	}
+	var builder strings.Builder
+	builder.WriteString(task)
+	builder.WriteString(" The deterministic checks have ALREADY established the following, so do not " +
+		"report them again; judge the quality of everything else, and report what the checks cannot see:")
+	for _, finding := range findings {
+		builder.WriteString("\n- [")
+		builder.WriteString(string(finding.Severity))
+		builder.WriteString("] ")
+		builder.WriteString(finding.Rule)
+		builder.WriteString(" at ")
+		if strings.TrimSpace(finding.EntityID) != "" {
+			builder.WriteString(finding.EntityType)
+			builder.WriteString(" ")
+			builder.WriteString(finding.EntityID)
+		} else {
+			builder.WriteString(finding.Location)
+		}
+		if strings.TrimSpace(finding.Field) != "" {
+			builder.WriteString(" (field ")
+			builder.WriteString(finding.Field)
+			builder.WriteString(")")
+		}
+		builder.WriteString(": ")
+		builder.WriteString(finding.Problem)
+	}
+	return builder.String()
 }
 
 // userActor is the attribution a user's own command records.

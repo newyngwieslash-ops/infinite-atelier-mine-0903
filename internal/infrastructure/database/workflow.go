@@ -278,7 +278,7 @@ const reviewSelectColumns = `SELECT id, stage_run_id, supervisor_key, ruleset_ve
 	passed, severity, recommended_action, summary, created_at FROM review_reports`
 
 const reviewIssueSelectColumns = `SELECT id, review_report_id, rule, severity, entity_type, entity_id,
-	location, field, problem, suggestion, evidence_json, auto_fixable, status, resolved_by, resolved_at,
+	location, field, problem, suggestion, evidence_json, auto_fixable, source, status, resolved_by, resolved_at,
 	created_at FROM review_issues`
 
 // CreateReport writes a report and its issues in one transaction, so a report
@@ -305,13 +305,13 @@ func (r *WorkflowRepository) CreateReport(ctx context.Context, report workflow.R
 		for _, issue := range issues {
 			if _, err := repo.conn().ExecContext(ctx, `INSERT INTO review_issues
 				(id, review_report_id, rule, severity, entity_type, entity_id, location, field,
-				 problem, suggestion, evidence_json, auto_fixable, status, resolved_by, resolved_at,
+				 problem, suggestion, evidence_json, auto_fixable, source, status, resolved_by, resolved_at,
 				 created_at)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 				issue.ID, issue.ReviewReportID, issue.Rule, string(issue.Severity), issue.EntityType,
 				issue.EntityID, issue.Location, issue.Field, issue.Problem, issue.Suggestion,
-				issue.EvidenceJSON, boolInt(issue.AutoFixable), string(issue.Status), issue.ResolvedBy,
-				formatTime(issue.ResolvedAt), formatTime(issue.CreatedAt)); err != nil {
+				issue.EvidenceJSON, boolInt(issue.AutoFixable), sourceOf(issue.Source), string(issue.Status),
+				issue.ResolvedBy, formatTime(issue.ResolvedAt), formatTime(issue.CreatedAt)); err != nil {
 				if isUniqueViolation(err) {
 					return workflow.ConflictError("A review issue with that id already exists.")
 				}
@@ -587,6 +587,21 @@ func scanReport(row rowScanner) (workflow.ReviewReport, error) {
 	return report, nil
 }
 
+// sourceOf renders a finding's mark, defaulting an empty one to the supervisor's.
+//
+// The default is written HERE as well as in the service, and that is not redundancy: the column's
+// DEFAULT only applies when the INSERT omits it, and this statement names every column. An empty
+// string reaching the check constraint would be refused — which is what happened, as a bare "the
+// review finding could not be saved" from the one test that writes issues through the repository
+// rather than through the service. Stating the default at the storage boundary means a caller cannot
+// get a different answer from the same row depending on which door it came through.
+func sourceOf(source string) string {
+	if strings.TrimSpace(source) == "" {
+		return string(workflowapp.IssueSourceLLM)
+	}
+	return source
+}
+
 // scanIssue reads one review issue row.
 func scanIssue(row rowScanner) (workflow.ReviewIssue, error) {
 	var issue workflow.ReviewIssue
@@ -594,7 +609,7 @@ func scanIssue(row rowScanner) (workflow.ReviewIssue, error) {
 	var autoFixable int
 	if err := row.Scan(&issue.ID, &issue.ReviewReportID, &issue.Rule, &severity, &issue.EntityType,
 		&issue.EntityID, &issue.Location, &issue.Field, &issue.Problem, &issue.Suggestion,
-		&issue.EvidenceJSON, &autoFixable, &status, &issue.ResolvedBy, &resolvedAt,
+		&issue.EvidenceJSON, &autoFixable, &issue.Source, &status, &issue.ResolvedBy, &resolvedAt,
 		&createdAt); err != nil {
 		return workflow.ReviewIssue{}, err
 	}

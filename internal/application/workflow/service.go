@@ -373,6 +373,34 @@ func (s *Service) TransitionStage(ctx context.Context, request TransitionStageRe
 	return record, nil
 }
 
+// IssueSource marks which half of a review produced a finding.
+//
+// AGENT_CONTRACTS section 11.4 requires the mark: "ReviewReport 合并两类证据，并标记
+// source=deterministic|llm". It matters because the two kinds of claim have different force — a
+// deterministic finding is a computation over stored rows, and a supervisor's is a reading — and a
+// user deciding what to do about one needs to know which they are looking at.
+type IssueSource string
+
+const (
+	// IssueSourceLLM is a finding a supervisor reported.
+	IssueSourceLLM IssueSource = "llm"
+	// IssueSourceDeterministic is a finding a code rule established.
+	IssueSourceDeterministic IssueSource = "deterministic"
+)
+
+// IssueSources lists the documented marks in the schema's order.
+var IssueSources = []IssueSource{IssueSourceLLM, IssueSourceDeterministic}
+
+// IsValidIssueSource reports whether a mark may be persisted.
+func IsValidIssueSource(value IssueSource) bool {
+	for _, candidate := range IssueSources {
+		if candidate == value {
+			return true
+		}
+	}
+	return false
+}
+
 // ReviewIssueInput is one finding a reviewer reported.
 type ReviewIssueInput struct {
 	Rule         string
@@ -385,6 +413,10 @@ type ReviewIssueInput struct {
 	Suggestion   string
 	EvidenceJSON string
 	AutoFixable  bool
+	// Source marks which half of the review the finding came from. An empty value is read as the
+	// supervisor's, which is what every finding written before WP-10 was — the column's own default,
+	// set so an old row keeps exactly the meaning it had.
+	Source IssueSource
 }
 
 // RecordReviewRequest stores one review report and its findings.
@@ -448,6 +480,16 @@ func (s *Service) RecordReview(ctx context.Context, request RecordReviewRequest)
 		if idErr != nil {
 			return workflow.ReviewReport{}, nil, storageFailure()
 		}
+		// The mark is defaulted rather than required, because an empty one means "a supervisor
+		// reported it" and that is what every finding written before this column existed was. A
+		// caller that states a value it invented is refused, so the mark stays a closed vocabulary.
+		source := input.Source
+		if strings.TrimSpace(string(source)) == "" {
+			source = IssueSourceLLM
+		}
+		if !IsValidIssueSource(source) {
+			return workflow.ReviewReport{}, nil, workflow.InvalidError("The finding's source is not recognised.")
+		}
 		issue := workflow.ReviewIssue{
 			ID:             issueID,
 			ReviewReportID: report.ID,
@@ -461,6 +503,7 @@ func (s *Service) RecordReview(ctx context.Context, request RecordReviewRequest)
 			Suggestion:     input.Suggestion,
 			EvidenceJSON:   input.EvidenceJSON,
 			AutoFixable:    input.AutoFixable,
+			Source:         string(source),
 			Status:         workflow.IssueOpen,
 			CreatedAt:      now,
 		}

@@ -636,10 +636,14 @@ type ReviewIssue struct {
 	Suggestion     string
 	EvidenceJSON   string
 	AutoFixable    bool
-	Status         IssueStatus
-	ResolvedBy     string
-	ResolvedAt     time.Time
-	CreatedAt      time.Time
+	// Source marks which half of the review found this: a deterministic code rule, or a supervisor.
+	// DOMAIN_MODEL section 11.4's report shape carries it because the two claims have different force,
+	// and a reader deciding what to do about a finding needs to know which one they have.
+	Source     string
+	Status     IssueStatus
+	ResolvedBy string
+	ResolvedAt time.Time
+	CreatedAt  time.Time
 }
 
 // Validate checks a review issue before it is stored.

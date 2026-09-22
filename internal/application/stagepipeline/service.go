@@ -3,11 +3,13 @@ package stagepipeline
 import (
 	"context"
 	"encoding/json"
+	"sort"
 	"strings"
 
 	agentruntime "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/agentruntime"
 	appworkflow "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/workflow"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/agent"
+	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/consistency"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/versioning"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/workflow"
 )
@@ -26,6 +28,17 @@ type Service struct {
 	runs     RunReader
 	layer    Layer
 	episodes EpisodeProjectLookup
+	checks   StageChecker
+}
+
+// StageChecker runs the deterministic rules for one artifact.
+//
+// The stage name is a parameter rather than a method per stage because the pipeline is generic across
+// stages and must not grow a method each time a ruleset does. A checker that has no rules for a stage
+// returns nothing, which is an answer rather than an error: "there is nothing mechanical to say about
+// this artifact" is the ordinary state of most stages.
+type StageChecker interface {
+	Check(ctx context.Context, stage string, artifactVersionID string) ([]consistency.Finding, error)
 }
 
 // SkillSource is what the pipeline reads a skill from.
@@ -57,6 +70,14 @@ type Options struct {
 	Assembly SkillSource
 	Runs     RunReader
 	Layer    Layer
+	// Checks is the DETERMINISTIC half of the review, and it is optional.
+	//
+	// AGENT_CONTRACTS section 11.4: "硬规则应尽量用确定性代码先检查，LLM Supervisor 负责语义质量。
+	// ReviewReport 合并两类证据，并标记 source=deterministic|llm". A build without one runs the
+	// supervisor alone, which is what WP-08 and WP-09 shipped; a build with one gets the mechanical
+	// findings merged into the same report, before the model is asked, so the model is not asked to
+	// discover what a join can answer.
+	Checks StageChecker
 	// Episodes answers which project an episode belongs to, for the manual edit's scope
 	// check. It is required: a manual edit without it could write into another project's
 	// episode, which is the one boundary a user-triggered write must not cross.
@@ -73,6 +94,7 @@ func New(options Options) *Service {
 		runs:     options.Runs,
 		layer:    options.Layer,
 		episodes: options.Episodes,
+		checks:   options.Checks,
 	}
 }
 
@@ -247,6 +269,24 @@ func (s *Service) RunSupervision(ctx context.Context, request SupervisionRequest
 	if err != nil {
 		return SupervisionResult{}, err
 	}
+	// THE DETERMINISTIC PASS RUNS FIRST, which is section 11.4's "硬规则应尽量用确定性代码先检查".
+	//
+	// "First" is doing real work in that sentence. The mechanical findings are computed before the
+	// model is asked anything, and they are then given to it as part of its task: a supervisor told
+	// that a row cites a superseded costume version does not have to notice that itself, and the
+	// report it produces is about the quality of what remains. A run that computed them afterwards
+	// would ask the model for a verdict it then had to overrule, which is a different and worse
+	// arrangement — the model's answer would be wrong in a way the user could see.
+	//
+	// A checker that fails does NOT fail the review. Its findings are the extra evidence, and losing
+	// them leaves exactly what WP-08 and WP-09 shipped: a supervisor on its own.
+	deterministic := []consistency.Finding{}
+	if s.checks != nil {
+		found, err := s.checks.Check(ctx, string(attempt.Stage), trimOrEmpty(request.ArtifactVersionID))
+		if err == nil {
+			deterministic = found
+		}
+	}
 	outcome, err := s.runtime.Run(ctx, agentruntime.Invocation{
 		AgentKey:      agents.Supervision,
 		ProjectID:     trimOrEmpty(request.ProjectID),
@@ -266,7 +306,7 @@ func (s *Service) RunSupervision(ctx context.Context, request SupervisionRequest
 		// §6.4's rule that large text travels as a reference: a supervisor that loaded the
 		// artifact itself is the property §10.1 asks for, and a prompt carrying the
 		// artifact would make that impossible to distinguish from the executor's summary.
-		Task:            supervisionTask(attempt, request),
+		Task:            supervisionTaskWithChecks(attempt, request, deterministic),
 		TaskIsUntrusted: false,
 		ModelID:         trimOrEmpty(request.ModelID),
 		ProviderID:      trimOrEmpty(request.ProviderID),
@@ -287,22 +327,42 @@ func (s *Service) RunSupervision(ctx context.Context, request SupervisionRequest
 	if err != nil {
 		return SupervisionResult{StageRun: attempt, Outcome: outcome}, err
 	}
+	// THE MERGE, which is section 11.4's "ReviewReport 合并两类证据，并标记 source".
+	//
+	// The deterministic findings were computed BEFORE the model ran and rendered into its task, so
+	// the model was told what a join had already established. It is not required to repeat them and a
+	// good one will not, but a model that reports one anyway must not produce two findings: the merge
+	// dedupes on (rule, entity, field) and keeps the more severe, which is what makes the report's
+	// `source` marks a partition rather than an overlap.
+	merged := MergeIssues(deterministic, issues)
+	passed := report.Passed && len(consistency.Blockers(deterministic)) == 0
+	severity := report.Severity
+	if worst := consistency.WorstSeverity(deterministic); severityRank(worst) > severityRank(severity) {
+		severity = worst
+	}
+	if !passed && report.Passed && strings.TrimSpace(report.Summary) != "" {
+		// The summary SAYS the model was happy and the report says otherwise, and a reader deserves
+		// to know which findings turned it. Appending rather than replacing keeps the model's own
+		// reading, which a user may still want.
+		summary := report.Summary + " " + deterministicSummary(deterministic)
+		report.Summary = summary
+	}
 	stored, storedIssues, err := s.workflow.RecordReview(ctx, appworkflow.RecordReviewRequest{
 		StageRunID:        attempt.ID,
 		SupervisorKey:     agents.Supervision,
 		RulesetVersion:    report.RulesetVersion,
-		Passed:            report.Passed,
-		Severity:          report.Severity,
+		Passed:            passed,
+		Severity:          severity,
 		RecommendedAction: report.RecommendedAction,
 		Summary:           report.Summary,
-		Issues:            issues,
+		Issues:            merged,
 	})
 	if err != nil {
 		return SupervisionResult{StageRun: attempt, Outcome: outcome}, err
 	}
 	moved, err := s.engine.ApplySupervision(ctx, agentruntime.RecordSupervisionRequest{
 		StageRunID:        attempt.ID,
-		Passed:            report.Passed,
+		Passed:            passed,
 		Severity:          report.Severity,
 		RecommendedAction: report.RecommendedAction,
 		Actor:             s.actor(),
@@ -698,4 +758,150 @@ func stageInput(request StageRequest) string {
 		return "{}"
 	}
 	return string(encoded)
+}
+
+// MergeIssues combines the deterministic findings with the supervisor's.
+//
+// # Why the merge is a function rather than two appends
+//
+// Section 11.4 requires ONE report carrying both kinds of evidence, marked by source. An append would
+// satisfy the letter of that and produce a report with the same fault in it twice whenever the model
+// echoed what it was told — which it will, because the deterministic findings are in its task. The
+// merge key is (rule, entity, field): two findings about the same field of the same entity by the same
+// rule are one finding, and the deterministic one wins because it was computed rather than read.
+//
+// The model's findings keep their own source mark, so a reader can still see that a given problem was
+// reported by the supervisor, and a problem reported by both is attributed to the code that proved it.
+func MergeIssues(deterministic []consistency.Finding, issues []appworkflow.ReviewIssueInput) []appworkflow.ReviewIssueInput {
+	merged := make([]appworkflow.ReviewIssueInput, 0, len(deterministic)+len(issues))
+	seen := map[string]bool{}
+	for _, finding := range deterministic {
+		key := issueKey(finding.Rule, finding.EntityType, finding.EntityID, finding.Field)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		merged = append(merged, appworkflow.ReviewIssueInput{
+			Rule:         finding.Rule,
+			Severity:     finding.Severity,
+			EntityType:   finding.EntityType,
+			EntityID:     finding.EntityID,
+			Location:     finding.Location,
+			Field:        finding.Field,
+			Problem:      finding.Problem,
+			Suggestion:   finding.Suggestion,
+			EvidenceJSON: encodeFindingEvidence(finding.Evidence),
+			AutoFixable:  finding.AutoFixable,
+			// The mark section 11.4 asks for. It is what lets the UI group the two kinds and what
+			// lets a reader tell a claim from a computation.
+			Source: appworkflow.IssueSourceDeterministic,
+		})
+	}
+	for _, issue := range issues {
+		key := issueKey(issue.Rule, issue.EntityType, issue.EntityID, issue.Field)
+		if seen[key] {
+			// The deterministic finding said it first, and a duplicate would make one fault look like
+			// two. The model's version is dropped rather than merged: its evidence may cite something
+			// the rule did not, and taking the extra reference would produce a finding that neither
+			// party actually made.
+			continue
+		}
+		seen[key] = true
+		if strings.TrimSpace(string(issue.Source)) == "" {
+			issue.Source = appworkflow.IssueSourceLLM
+		}
+		merged = append(merged, issue)
+	}
+	return merged
+}
+
+// issueKey is the identity a merge dedupes on.
+func issueKey(rule, entityType, entityID, field string) string {
+	return strings.Join([]string{
+		strings.TrimSpace(rule), strings.TrimSpace(entityType),
+		strings.TrimSpace(entityID), strings.TrimSpace(field),
+	}, "\x00")
+}
+
+// encodeFindingEvidence renders a finding's references the way the schema stores them.
+//
+// It is the same shape `evidenceJson` holds for a supervisor's finding — an array of
+// {type, ref} — because the column is one and a reader should not have to know which producer wrote a
+// row to parse it. An empty list encodes to the empty string rather than to "[]", which is what the
+// supervisor's own evidence does and what keeps "no evidence" a single state in the column.
+func encodeFindingEvidence(evidence []consistency.Evidence) string {
+	if len(evidence) == 0 {
+		return ""
+	}
+	encoded := make([]map[string]string, 0, len(evidence))
+	for _, entry := range evidence {
+		encoded = append(encoded, map[string]string{"type": entry.Type, "ref": entry.Ref})
+	}
+	document, err := json.Marshal(encoded)
+	if err != nil {
+		return ""
+	}
+	return string(document)
+}
+
+// deterministicSummary names what the code found, for a report whose model was happy.
+func deterministicSummary(findings []consistency.Finding) string {
+	blockers := consistency.Blockers(findings)
+	if len(blockers) == 0 {
+		return ""
+	}
+	rules := map[string]bool{}
+	names := []string{}
+	for _, finding := range blockers {
+		if rules[finding.Rule] {
+			continue
+		}
+		rules[finding.Rule] = true
+		names = append(names, finding.Rule)
+	}
+	sort.Strings(names)
+	return "The deterministic checks found " + itoa(len(blockers)) + " blocking " +
+		plural(len(blockers), "problem", "problems") + " (" + strings.Join(names, ", ") +
+		"), so this attempt cannot pass on the reviewer's verdict alone."
+}
+
+// severityRank orders severities for comparison.
+//
+// It is a second statement of the ranking the consistency domain has, and it is here rather than
+// exported from there for the reason the domain states its own: the domain's copy decides whether a
+// finding is a BLOCKER, and this one decides which of two severities is worse for a report field. They
+// are different questions about the same vocabulary, and collapsing them would make a change to
+// blocking rules silently change report ordering.
+func severityRank(severity workflow.Severity) int {
+	switch severity {
+	case workflow.SeverityCritical:
+		return 3
+	case workflow.SeverityMajor:
+		return 2
+	case workflow.SeverityMinor:
+		return 1
+	default:
+		return 0
+	}
+}
+
+// itoa renders a small integer, so a message can quote a count without a conversion import.
+func itoa(value int) string {
+	if value == 0 {
+		return "0"
+	}
+	digits := []byte{}
+	for value > 0 {
+		digits = append([]byte{byte('0' + value%10)}, digits...)
+		value /= 10
+	}
+	return string(digits)
+}
+
+// plural picks a word for a count.
+func plural(count int, one, many string) string {
+	if count == 1 {
+		return one
+	}
+	return many
 }
