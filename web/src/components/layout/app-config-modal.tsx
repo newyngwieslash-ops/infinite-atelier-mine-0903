@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 
 import { ModelPicker } from "@/components/model-picker";
 import { ChannelEditorDrawer } from "@/components/layout/channel-editor-drawer";
+import { ProjectBackupPanel } from "@/components/config/backup-panel";
 import { exportAppConfig, importAppConfig } from "@/services/config-file";
 import { exportAppBackup, importAppBackup } from "@/services/backup-restore";
 import { audioFormatOptions, audioVoiceOptions, normalizeAudioSpeedValue } from "@/lib/audio-generation";
@@ -307,18 +308,24 @@ function ConfigBackupTab() {
     };
 
     return (
-        <section className="rounded-lg border border-stone-200 p-3 dark:border-stone-800">
-            <div className="mb-1 text-sm font-semibold">{t("config.backup.title")}</div>
-            <div className="mb-3 text-xs text-stone-500">{t("config.backup.description")}</div>
-            <div className="flex flex-wrap items-center gap-2">
-                <Button icon={<Download className="size-4" />} onClick={() => void handleBackup()}>
-                    {t("config.backup.export")}
-                </Button>
-                <Button icon={<FileUp className="size-4" />} onClick={() => inputRef.current?.click()}>
-                    {t("config.backup.import")}
-                </Button>
-            </div>
-            <input ref={inputRef} type="file" accept="application/zip,.zip" className="hidden" onChange={(event) => void handleImport(event.target.files?.[0])} />
-        </section>
+        <div className="space-y-3">
+            <section className="rounded-lg border border-stone-200 p-3 dark:border-stone-800">
+                <div className="mb-1 text-sm font-semibold">{t("config.backup.title")}</div>
+                <div className="mb-3 text-xs text-stone-500">{t("config.backup.description")}</div>
+                <div className="flex flex-wrap items-center gap-2">
+                    <Button icon={<Download className="size-4" />} onClick={() => void handleBackup()}>
+                        {t("config.backup.export")}
+                    </Button>
+                    <Button icon={<FileUp className="size-4" />} onClick={() => inputRef.current?.click()}>
+                        {t("config.backup.import")}
+                    </Button>
+                </div>
+                <input ref={inputRef} type="file" accept="application/zip,.zip" className="hidden" onChange={(event) => void handleImport(event.target.files?.[0])} />
+            </section>
+            {/* The Go core's backup of the project database and its media, which the browser-local
+                package above does not touch. A separate section rather than a control inside that
+                one: the two archives carry different data and neither restores the other. */}
+            <ProjectBackupPanel />
+        </div>
     );
 }

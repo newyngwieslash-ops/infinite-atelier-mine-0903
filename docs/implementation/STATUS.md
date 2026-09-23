@@ -2,287 +2,389 @@
 
 > Last updated: 2026-09-23
 > Product: Infinite Atelier Core + Drama Production Pack
-> Current work package: **WP-12 — 硬化、性能、打包与 Release Candidate, scope items 10, 12 and the
-> release-blocker audit (headline acceptance)**
->
-> # 0n. WP-12 items 10 and 12, and the release-blocker audit (2026-09-23)
->
-> Items 10 (third-party notices/SBOM) and 12 (dependency vulnerability) are CLOSED, and PRD section
-> 18's eleven release blockers were each checked against the running code rather than against a
-> comment. **All eleven are CLEARED**, with one named caveat that is a capability gap rather than a
-> blocker: there is no working video or audio generation in secure desktop mode, inherited from item
-> 16.
->
-> ## Item 10: SBOM and notices
->
-> - **`scripts/gen-sbom.mjs` generates `sbom/cyclonedx.json` (CycloneDX 1.5) and
->   `sbom/licences.json`**, and supports `--check`. Both verify scripts now run the check, so the
->   document cannot drift from `go.mod`/`go.sum`/`web/package-lock.json` without failing a gate.
->   CycloneDX was chosen over SPDX because its `licenses[].license.id` carries an SPDX identifier
->   directly and both ecosystems publish CycloneDX tooling. **Neither `syft` nor `cyclonedx-gomod`
->   nor `cyclonedx-npm` is installed on this host, and this generator uses neither.**
-> - **The generator never writes outside `sbom/`.** It does not run `go mod download`, because that
->   command appended 143 lines to `go.sum` when it was tried during development — a real
->   modification to a tracked file made by a tool whose job is to observe. A module whose licence
->   file is absent from the cache is recorded as `unknown`, never fetched.
-> - **Licence identification was VERIFIED, not restated, and the verification found two WRONG
->   answers.** `modernc.org/memory`'s LICENSE is BSD-3-Clause but was reported BSD-2-Clause (its
->   third clause reads "Neither the names of the authors..."), and `hashicorp/golang-lru/v2` plus
->   `cyphar/filepath-securejoin` were reported **AGPL-3.0** — a false release blocker — because
->   MPL-2.0's own text mentions the AGPL in ordinary sentence case. Both were found by reading the
->   files. The GPL-family markers are now case-sensitive, and a negative control over synthetic
->   AGPL/SSPL/GPL-3/GPL-2/LGPL-2.1 texts caught a regression that the fix itself introduced.
-> - **Result: no AGPL/GPL/LGPL/SSPL dependency anywhere, and no unidentified licence.** Across 130
->   Go modules: MIT 66, BSD-3-Clause 35, Apache-2.0 14, BSD-2-Clause 8, ISC 4, Unlicense OR MIT 1,
->   BSD-3-Clause AND MPL-2.0 1, MPL-2.0 1. Across 1,388 npm slots: MIT 1,270, ISC 63, BSD-3-Clause
->   16, Apache-2.0 12, MPL-2.0 12, BSD-2-Clause 5, BlueOak 2, 0BSD 2, four singletons, two
->   OR-expressions. The three MPL entries are in the graph tier, not in `go build ./...`'s closure.
-> - **`THIRD_PARTY_NOTICES.md` gained 86 entries**, covering every module in the graph the file had
->   no entry for (its WP-01 caveat said toolchain-only modules were outside the inventory; that gap
->   is now closed). No licence entry was removed: `git diff` shows 5,653 insertions and 2 deletions,
->   and those two are the file's TITLE line and its opening paragraph, rewritten because both said
->   "WP-01" and "this is not a complete release SBOM" — claims this package made false. All 86
->   appended licence texts were verified against the module cache, which is how two formatting
->   defects were caught (a missing trailing newline merging two entries, and an embedded Markdown
->   fence truncating a 19 KB text to 1.2 KB). Eight lines then had trailing whitespace stripped
->   inside the fences — `git diff --check` is an AGENTS section 4.4 gate and eight upstream licence
->   files wrap their text that way. Trailing whitespace carries no legal meaning, every word is
->   unchanged, and the only 8 differing lines are ones where `rstrip()` matches.
->
-> ## Item 12: dependency vulnerability
->
-> - **Go: 25 findings, ALL in the standard library, ALL fixed in go1.25.13.** `go.mod` gained
->   `toolchain go1.25.13`. Re-scanned with the directive honoured: **"No vulnerabilities found."**
->   The findings were reachable, not theoretical — `net/url`, `crypto/tls`, `crypto/x509`,
->   `encoding/xml` and `encoding/asn1` all appear in traces through `providerhttp.Downloader` and
->   `importing.parseWordBody`.
-> - **npm: 24 findings → 4, via in-major bumps only.** axios 1.16.0→1.20.0, nanoid 5.1.11→5.1.16,
->   react-router and react-router-dom 7.18.0→7.18.4. `package.json` is unchanged; only the lockfile
->   moved. Every bump stayed inside its existing major.
-> - **The 4 remaining are moderate, and they are NOT in the shipped bundle.** They are the
->   `@ant-design/pro-components` → `react-syntax-highlighter` → `refractor` → `prismjs` chain. The
->   only import of that package is `ProConfigProvider` in `app-providers.tsx`, and the built
->   `dist/assets/index-*.js` contains zero occurrences of `react-syntax-highlighter`, `refractor`,
->   `prismjs` or `SyntaxHighlighter` — the vulnerable subtree is tree-shaken out. The available
->   "fix" is a **major downgrade** to 2.8.10, which is why it was NOT applied.
-> - `shadcn` is a **production** dependency that pulls the whole `@modelcontextprotocol/sdk` →
->   express/hono/qs chain while contributing exactly one CSS `@import`. That chain's 10 findings are
->   now fixed by the lockfile update; moving `shadcn` to devDependencies would be the structurally
->   right change and is left as a recommendation, because it is a dependency-graph decision rather
->   than a vulnerability fix.
->
-> ## The release-blocker audit
->
-> All eleven CLEARED. Each verdict names the code, test or command it rests on. One row carries a
-> caveat that is a capability gap rather than a blocker, and it is stated rather than softened:
->
-> | # | Blocker | Verdict |
-> |---|---|---|
-> | 1 | 前端或普通备份可获取完整 API Key | **CLEARED** |
-> | 2 | 仍存在任意模型 JavaScript 执行路径 | **CLEARED** |
-> | 3 | API 代理可访问回环、私网或任意地址 | **CLEARED** |
-> | 4 | 工作流运行状态只存在内存 | **CLEARED** |
-> | 5 | 视频结果未验证即标记成功 | **CLEARED** |
-> | 6 | 数据库迁移无备份或回滚/修复路径 | **CLEARED** |
-> | 7 | Supervisor 可使用未授权写工具 | **CLEARED** |
-> | 8 | 导入可路径穿越或 Zip Bomb | **CLEARED** |
-> | 9 | 旧项目迁移存在静默丢失 | **CLEARED** |
-> | 10 | 核心 E2E 测试未通过 | **CLEARED** |
-> | 11 | 许可证和第三方声明缺失 | **CLEARED** — by this package |
->
-> The evidence for each row, and the SECURITY section 19 / AGENT_CONTRACTS section 20 extras, are in
-> `docs/implementation/RELEASE_BLOCKERS_WP12.md`.
->
-> ## Verification, with results
->
-> | Command | Result |
-> |---|---|
-> | `GOTOOLCHAIN=auto go test ./... -count=1` (go1.25.13) | **PASS** — 36 packages ok |
-> | `go build ./...` / `go vet ./...` (go1.25.13) | **PASS** |
-> | `govulncheck ./...` (go1.25.13) | **PASS** — No vulnerabilities found |
-> | `bash scripts/verify.sh` | **PASS** — including the new "SBOM is current" step |
-> | `node scripts/security-scan.mjs` | **PASS** — 607 files, 1 audited dynamic exception, 3 named legacy files |
-> | `node scripts/gen-sbom.mjs --check` | **PASS** |
-> | `web`: `npm run typecheck` / `npm test` (67) / `npm run build` | **PASS** |
-> | `web`: `npx playwright test` | **PASS** — 25 passed, 1 pre-existing skip |
-> | `npm audit --omit=dev` | 4 moderate, all in a tree-shaken-out subtree (was 24) |
-> | `go test -race ./...` | **ENVIRONMENT FAILURE** — `cc1.exe: 64-bit mode not compiled in`. Not a pass. |
->
-> No test was weakened, skipped or deleted.
->
-> ## Known limits
->
-> - **Secure desktop mode has no working video or audio generation**, on the canvas or in the
->   studio. Item 16 recorded this; the audit confirms it is a capability gap rather than a security
->   defect, and it is NOT one of PRD section 18's eleven blockers.
-> - `THIRD_PARTY_NOTICES.md` now carries the whole module graph (~385 KB). The generated SBOM is the
->   machine-readable primary; the Markdown is the licence TEXT a distribution must carry.
-> - The npm half of the SBOM reads `package-lock.json` and, for the two packages it omits a licence
->   for, the installed package. It does not read the network.
+> Current work package: **WP-12 — 硬化、性能、打包与 Release Candidate**
+> Status: **IN PROGRESS — items 3, 4, 5, 6, 9, 10, 12, 13, 14, 15 and 16 are closed; the release-blocker
+> audit is complete with all eleven CLEARED. What remains is named in section 0p.** Items 3 and 4
+> added the scale benchmarks and found two index defects (migration 000021); item 5 built the
+> restore's atomic swap and found a write-ahead-log defect; item 13 made recovery reachable from
+> safe mode; item 16 deleted the dynamic-JavaScript path. WP-01 through WP-11 remain COMPLETE for
+> their recorded scopes.
 
-> # 0m1. WP-12 items 3 and 4: the scale cases are measured, and ONE FINDING IS OPEN (2026-09-23)
->
-> ## What this closes
->
-> - **Item 3 (1,000 node/2,000 edge 性能) is MEASURED.** `internal/infrastructure/database/scale_wp12_test.go`
->   builds the load through the real repositories over a migrated database;
->   `scale_canvas_wp12_test.go` holds five bound tests, two benchmarks per operation, a shape test and
->   a worst-case test at the binding's own 5,000-move ceiling. Every figure is in the file's own
->   comments beside the bound it set.
-> - **Item 4 (10k asset/Memory benchmark) is MEASURED.**
->   `scale_records_wp12_test.go` holds the same for 10,000 assets, 10,000 embedded memories and
->   10,000 transcript rows.
->
-> ## THE BLOCKING FINDING: three indexed reads sort the whole table
->
-> **`idx_memory_items_embedding` does not cover the query's ORDER BY, so a memory search spends
-> ~62 ms of which ~0.2 ms is the search's arithmetic.** Measured decomposition and
-> `EXPLAIN QUERY PLAN` output are recorded in `scale_records_wp12_test.go`. The plan is
-> `SEARCH memory_items USING INDEX idx_memory_items_embedding (scope_project=? AND embedding_model=?
-> AND embedding_version=?)` followed by `USE TEMP B-TREE FOR ORDER BY`; the same query with the
-> ORDER BY removed is 0.5 ms, a hundredfold difference.
->
-> `memory_index.go`'s "The ceiling" section states that the cost of a search "must not be a function
-> of how much a user has accumulated". **That holds for the SCORING, which is capped at
-> `MaxCandidates`, and NOT for the READ, which is linear in the project's embedded rows.**
->
-> **The same shape affects two more reads**, each confirmed by its own plan:
->
-> | read | plan's second line | measured |
-> |---|---|---|
-> | `MemoryRepository.VectorCandidates` | `USE TEMP B-TREE FOR ORDER BY` | 62 ms |
-> | `AssetRepository.ListAssets` | `USE TEMP B-TREE FOR ORDER BY` | 23 ms (1,000-row page) |
-> | `MemoryRepository.ListItems`, no type filter | `USE TEMP B-TREE FOR ORDER BY` | 51 ms |
-> | `MemoryRepository.ListItems`, one type | `USE TEMP B-TREE FOR LAST TERM OF ORDER BY` | not measured |
-> | `AgentRepository.RecentMessages` (for contrast) | none — index satisfies the order | 62 µs |
->
-> The two `ListItems` rows are the same statement with and without a type filter, and the
-> plan's second line differs between them while the conclusion does not: `idx_memory_items_project_type`
-> supplies `scope_project` and `memory_type`, and `created_at` is its fourth column, so the
-> `id DESC` tie-breaker is what still needs a sort. Only the unfiltered variant — the one the
-> benchmark makes — has a measured figure here.
->
-> **The cause is the same in each case**: every one of these reads orders by
-> `created_at DESC, id DESC` while its index ends at some other column, so SQLite materialises and
-> sorts. `RecentMessages` is the proof that it is fixable — `idx_agent_messages_scope` is
-> `(scope_project, scope_agent_key, created_at)`, which satisfies its ordering, and it is a
-> thousand times faster for it.
->
-> **The fix is a migration**: an index per affected table whose column list ends with
-> `created_at DESC, id DESC`. That is a change to `docs/DOMAIN_MODEL.md` section 18's index list and
-> belongs to a package with migration scope — WP-12 item 7 is "Database migration from previous
-> package", which is the natural home. **It is NOT done here**, because a performance measurement
-> must not quietly add schema, and no bound was loosened to hide it: the search's bound is 200 ms
-> (3.2x the measurement) with the figure recorded beside it, and the file says explicitly that a
-> loosened bound was not used to make this pass.
->
-> ## The second finding: the semantic channel cannot reach a memory older than the newest 500
->
-> `VectorCandidates` orders by `created_at DESC` and cuts to `MaxCandidates`, so a search can only
-> return a memory among the newest 500 embedded rows of its scope. A memory older than that is not
-> ranked lower — it is not a candidate, and no similarity can bring it back. In the 10,000-row load
-> the window is `wp12-memory-09500..wp12-memory-09999` and `wp12-memory-00000` is unreachable.
->
-> ADR-0014 rules on the index's COST ("A search is O(candidates) rather than O(log n), bounded by
-> `MaxCandidates`") and says nothing about the candidate WINDOW being the newest rows by recency.
-> This is a recall limit nothing documents. Whether it is acceptable is a **product decision** — the
-> alternatives are a non-recency ordering, a wider window, or the sqlite-vec adapter the port's V1
-> names — so it is recorded rather than changed. `TestWP12VectorCandidatesReachOnlyTheNewestRows`
-> asserts the CURRENT behaviour so the limit is a tested number rather than an unchecked
-> assumption.
->
-> ## What is NOT measured, stated plainly
->
-> **The React canvas's render cost at 1,000 nodes is not measured, and nothing in this repository
-> currently can.** It is a browser measurement, and the Playwright suite runs the canvas in BROWSER
-> mode where persistence is the legacy IndexedDB adapter rather than the Go core (ADR-BASE-004);
-> its own header says the desktop shell is not launched because "a Wails window cannot be driven
-> from a test runner". The benchmarks below support "the Go core's canvas reads and writes at 1,000
-> nodes and 2,000 edges are bounded" and NOT "the canvas renders 1,000 nodes smoothly".
->
-> # 0m. WP-12 item 16: the dangerous legacy paths are gone or fail closed (2026-09-23)
->
-> ## What this closes
->
-> - **PRD section 18's "仍存在任意模型 JavaScript 执行路径" is CLOSED.** `web/src/services/api/model-plugin.ts`
->   was the repository's only frontend `new Function`, and it is deleted, with its editor
->   (`model-script-editor.tsx`) and the accessor that fed it (`resolveModelScript`). The
->   scanner's `DYNAMIC_ALLOWLIST` no longer carries an entry for it, so a reintroduction
->   FAILS `node scripts/security-scan.mjs` rather than inheriting an exception.
-> - **The stale `WP-13 (legacy media removal)` owner strings are gone.** WP-13 does not exist —
->   WP-12 is the last work package in ROADMAP — so those entries were corrected to
->   `WP-12 (legacy removal)` with reasons that state the CURRENT truth.
-> - **No direct provider call is reachable in secure desktop mode.** `video-generation.ts` and
->   `audio-generation.ts` were added, mirroring `image-generation.ts`, and they THROW in secure
->   mode rather than falling back to a browser call. The three legacy files survive for browser
->   development mode only.
->
-> ## The blocking finding, stated rather than worked around
->
-> **The Go media job path cannot serve a free canvas node, so the canvas loses video and audio
-> generation in secure desktop mode.** This is a capability loss and it is recorded here as one.
->
-> `SubmitVideoJobRequest` requires `projectId`, `episodeId` and `shotId`, and
-> `SubmitAudioJobRequest` requires `projectId`, `episodeId` and `dialogueLineId`;
-> `internal/desktop/media_jobs.go` returns `bindingInvalidInput()` when any is blank. The canvas
-> page addresses a PROJECT (`web/src/pages/canvas/project.tsx` reads `useParams<{id: string}>`),
-> `CanvasNodeType` has no shot member, and a free-canvas node carries no `entityType`/`entityId`,
-> so there is no honest value for `episodeId`, `shotId` or `dialogueLineId`. Inventing one would
-> record a job against a shot or a line that does not exist, which is a fabricated domain fact
-> rather than a failed request. Separately, the Go video and audio adapters are mocks reachable
-> only through `mock_media`, which `IsUserConfigurableKind` refuses to persist and no UI offers,
-> so a secure submission would not have reached a real provider either.
->
-> **The alternative that was NOT taken, and why:** adding `episodeId`/`shotId` fields to the
-> canvas node, or a canvas-scoped media submission, is a domain and binding design change that
-> belongs to a work package with that scope. WP-12 item 16 is "remove or make unreachable", and
-> expanding it into new binding surface would be the scope creep AGENTS section 4.1 forbids.
->
-> **What a user can still do, and the part that does not work either:** the studio's video and
-> audio sections (`web/src/components/studio/video-view.tsx`, `audio-view.tsx`) are the
-> structurally correct route — they submit against a real shot and a real dialogue line through
-> `submitVideoJob`/`submitAudioJob`, so they can fill every required field. **But this build has no
-> real video or audio adapter.** `Registry.VideoPortFor` and `AudioPortFor` resolve an adapter only
-> for `mock_media`, which `IsUserConfigurableKind` refuses to persist and no UI offers, and return
-> "unsupported" for `openai_compatible` and `gemini_compatible`. A studio submission therefore
-> reaches the queue and fails at provider resolution. WP-11's own section 0l already records this
-> ("No real video provider", listed among what that package does not cover).
->
-> **So the honest statement is: secure desktop mode has no working video or audio generation today,
-> on the canvas or in the studio.** The canvas refusal arrives earlier and with a clearer message
-> than the studio's job failure, which is all this scope item can improve. Closing it requires a
-> real adapter, which is adapter work rather than a routing change, and it is left as an open item
-> rather than hidden behind a notice that implies the studio route succeeds.
->
-> ## Verification
->
-> | Command | Result |
-> |---|---|
-> | `node scripts/security-scan.mjs` | **PASS** — `PASS: security scans clean (602 files scanned; 1 audited dynamic-execution exception, 3 audited legacy direct-call files with named owners).` |
-> | `web`: `npm run typecheck` | **PASS** |
-> | `web`: `npm run test` | **PASS** — 67 tests, 67 pass, 0 fail |
-> | `web`: `npx playwright test` | **PASS** — 25 passed, 1 pre-existing skipped (26 total) |
-> | `web`: `npm run build` | **PASS** — with the pre-existing >500 kB chunk warning |
->
-> No test was weakened, skipped or deleted to reach these results. No test asserted the
-> model-script editor or a legacy transport, so none needed changing.
->
-> ## Known limits
->
-> - The legacy files (`api/image.ts`, `api/video.ts`, `api/audio.ts`) still exist and still
->   build; they are unreachable in secure mode because their routers check
->   `isSecureProviderMode()` first. A future regression that calls them directly would put a key
->   back in the webview, which is why they remain named in the scanner allowlist rather than
->   deleted: a browser build has no other transport for these capabilities.
-> - A model whose stored `script` was the only thing that made it work now falls through to the
->   standard OpenAI-compatible path and may fail at the provider. This is a deliberate capability
->   loss; there is no replacement, because a Go-side script runner would be the same
->   arbitrary-execution surface. The stored `script` field is left inert rather than deleted, so
->   no user configuration is destroyed during an upgrade.
->
-> ---
->
-> Previous: **WP-11 — 视频、音频、字幕、时间线与导出**
+# 0n. WP-12 items 10 and 12, and the release-blocker audit (2026-09-23)
+
+Items 10 (third-party notices/SBOM) and 12 (dependency vulnerability) are CLOSED, and PRD section
+18's eleven release blockers were each checked against the running code rather than against a
+comment. **All eleven are CLEARED**, with one named caveat that is a capability gap rather than a
+blocker: there is no working video or audio generation in secure desktop mode, inherited from item
+16.
+
+## Item 10: SBOM and notices
+
+- **`scripts/gen-sbom.mjs` generates `sbom/cyclonedx.json` (CycloneDX 1.5) and
+  `sbom/licences.json`**, and supports `--check`. Both verify scripts now run the check, so the
+  document cannot drift from `go.mod`/`go.sum`/`web/package-lock.json` without failing a gate.
+  CycloneDX was chosen over SPDX because its `licenses[].license.id` carries an SPDX identifier
+  directly and both ecosystems publish CycloneDX tooling. **Neither `syft` nor `cyclonedx-gomod`
+  nor `cyclonedx-npm` is installed on this host, and this generator uses neither.**
+- **The generator never writes outside `sbom/`.** It does not run `go mod download`, because that
+  command appended 143 lines to `go.sum` when it was tried during development — a real
+  modification to a tracked file made by a tool whose job is to observe. A module whose licence
+  file is absent from the cache is recorded as `unknown`, never fetched.
+- **Licence identification was VERIFIED, not restated, and the verification found two WRONG
+  answers.** `modernc.org/memory`'s LICENSE is BSD-3-Clause but was reported BSD-2-Clause (its
+  third clause reads "Neither the names of the authors..."), and `hashicorp/golang-lru/v2` plus
+  `cyphar/filepath-securejoin` were reported **AGPL-3.0** — a false release blocker — because
+  MPL-2.0's own text mentions the AGPL in ordinary sentence case. Both were found by reading the
+  files. The GPL-family markers are now case-sensitive, and a negative control over synthetic
+  AGPL/SSPL/GPL-3/GPL-2/LGPL-2.1 texts caught a regression that the fix itself introduced.
+- **Result: no AGPL/GPL/LGPL/SSPL dependency anywhere, and no unidentified licence.** Across 130
+  Go modules: MIT 66, BSD-3-Clause 35, Apache-2.0 14, BSD-2-Clause 8, ISC 4, Unlicense OR MIT 1,
+  BSD-3-Clause AND MPL-2.0 1, MPL-2.0 1. Across 1,388 npm slots: MIT 1,270, ISC 63, BSD-3-Clause
+  16, Apache-2.0 12, MPL-2.0 12, BSD-2-Clause 5, BlueOak 2, 0BSD 2, four singletons, two
+  OR-expressions. The three MPL entries are in the graph tier, not in `go build ./...`'s closure.
+- **`THIRD_PARTY_NOTICES.md` gained 86 entries**, covering every module in the graph the file had
+  no entry for (its WP-01 caveat said toolchain-only modules were outside the inventory; that gap
+  is now closed). No licence entry was removed: `git diff` shows 5,653 insertions and 2 deletions,
+  and those two are the file's TITLE line and its opening paragraph, rewritten because both said
+  "WP-01" and "this is not a complete release SBOM" — claims this package made false. All 86
+  appended licence texts were verified against the module cache, which is how two formatting
+  defects were caught (a missing trailing newline merging two entries, and an embedded Markdown
+  fence truncating a 19 KB text to 1.2 KB). Eight lines then had trailing whitespace stripped
+  inside the fences — `git diff --check` is an AGENTS section 4.4 gate and eight upstream licence
+  files wrap their text that way. Trailing whitespace carries no legal meaning, every word is
+  unchanged, and the only 8 differing lines are ones where `rstrip()` matches.
+
+## Item 12: dependency vulnerability
+
+- **Go: 25 findings, ALL in the standard library, ALL fixed in go1.25.13.** `go.mod` gained
+  `toolchain go1.25.13`. Re-scanned with the directive honoured: **"No vulnerabilities found."**
+  The findings were reachable, not theoretical — `net/url`, `crypto/tls`, `crypto/x509`,
+  `encoding/xml` and `encoding/asn1` all appear in traces through `providerhttp.Downloader` and
+  `importing.parseWordBody`.
+- **npm: 24 findings → 4, via in-major bumps only.** axios 1.16.0→1.20.0, nanoid 5.1.11→5.1.16,
+  react-router and react-router-dom 7.18.0→7.18.4. `package.json` is unchanged; only the lockfile
+  moved. Every bump stayed inside its existing major.
+- **The 4 remaining are moderate, and they are NOT in the shipped bundle.** They are the
+  `@ant-design/pro-components` → `react-syntax-highlighter` → `refractor` → `prismjs` chain. The
+  only import of that package is `ProConfigProvider` in `app-providers.tsx`, and the built
+  `dist/assets/index-*.js` contains zero occurrences of `react-syntax-highlighter`, `refractor`,
+  `prismjs` or `SyntaxHighlighter` — the vulnerable subtree is tree-shaken out. The available
+  "fix" is a **major downgrade** to 2.8.10, which is why it was NOT applied.
+- `shadcn` is a **production** dependency that pulls the whole `@modelcontextprotocol/sdk` →
+  express/hono/qs chain while contributing exactly one CSS `@import`. That chain's 10 findings are
+  now fixed by the lockfile update; moving `shadcn` to devDependencies would be the structurally
+  right change and is left as a recommendation, because it is a dependency-graph decision rather
+  than a vulnerability fix.
+
+## The release-blocker audit
+
+All eleven CLEARED. Each verdict names the code, test or command it rests on. One row carries a
+caveat that is a capability gap rather than a blocker, and it is stated rather than softened:
+
+| # | Blocker | Verdict |
+|---|---|---|
+| 1 | 前端或普通备份可获取完整 API Key | **CLEARED** |
+| 2 | 仍存在任意模型 JavaScript 执行路径 | **CLEARED** |
+| 3 | API 代理可访问回环、私网或任意地址 | **CLEARED** |
+| 4 | 工作流运行状态只存在内存 | **CLEARED** |
+| 5 | 视频结果未验证即标记成功 | **CLEARED** |
+| 6 | 数据库迁移无备份或回滚/修复路径 | **CLEARED** |
+| 7 | Supervisor 可使用未授权写工具 | **CLEARED** |
+| 8 | 导入可路径穿越或 Zip Bomb | **CLEARED** |
+| 9 | 旧项目迁移存在静默丢失 | **CLEARED** |
+| 10 | 核心 E2E 测试未通过 | **CLEARED** |
+| 11 | 许可证和第三方声明缺失 | **CLEARED** — by this package |
+
+The evidence for each row, and the SECURITY section 19 / AGENT_CONTRACTS section 20 extras, are in
+`docs/implementation/RELEASE_BLOCKERS_WP12.md`.
+
+## Verification, with results
+
+| Command | Result |
+|---|---|
+| `GOTOOLCHAIN=auto go test ./... -count=1` (go1.25.13) | **PASS** — 36 packages ok |
+| `go build ./...` / `go vet ./...` (go1.25.13) | **PASS** |
+| `govulncheck ./...` (go1.25.13) | **PASS** — No vulnerabilities found |
+| `bash scripts/verify.sh` | **PASS** — including the new "SBOM is current" step |
+| `node scripts/security-scan.mjs` | **PASS** — 607 files, 1 audited dynamic exception, 3 named legacy files |
+| `node scripts/gen-sbom.mjs --check` | **PASS** |
+| `web`: `npm run typecheck` / `npm test` (67) / `npm run build` | **PASS** |
+| `web`: `npx playwright test` | **PASS** — 25 passed, 1 pre-existing skip |
+| `npm audit --omit=dev` | 4 moderate, all in a tree-shaken-out subtree (was 24) |
+| `go test -race ./...` | **ENVIRONMENT FAILURE** — `cc1.exe: 64-bit mode not compiled in`. Not a pass. |
+
+No test was weakened, skipped or deleted.
+
+## Known limits
+
+- **Secure desktop mode has no working video or audio generation**, on the canvas or in the
+  studio. Item 16 recorded this; the audit confirms it is a capability gap rather than a security
+  defect, and it is NOT one of PRD section 18's eleven blockers.
+- `THIRD_PARTY_NOTICES.md` now carries the whole module graph (~385 KB). The generated SBOM is the
+  machine-readable primary; the Markdown is the licence TEXT a distribution must carry.
+- The npm half of the SBOM reads `package-lock.json` and, for the two packages it omits a licence
+  for, the installed package. It does not read the network.
+
+# 0n2. WP-12 items 5 and 13: the restore that can actually be reached (2026-09-23)
+
+Items 5 (backup/restore atomicity) and 13 (recovery/safe mode) are CLOSED, and the second one
+turned out to be about item 5 all along.
+
+## Item 5 — the atomic swap, and the write-ahead log it nearly broke
+
+AC-BACKUP-002's remaining half. `Restore` has validated and STAGED an archive since WP-04: nothing
+live is touched until the whole archive checks out. What was missing is the step after it — putting
+the staged result in force — and that is the step that can destroy a user's projects, so it is
+built around the ways it can go wrong:
+
+- **The confirmation is a parameter, not a dialog.** `PromoteRequest.Confirmed` must be true, and a
+  false value is refused with `BACKUP_NOT_CONFIRMED` BEFORE anything moves.
+- **The database and the object store move TOGETHER.** A database citing objects the store does not
+  hold is a project that cannot open, which is worse than either state; a half-completed swap is
+  rolled back.
+- **The previous state SURVIVES.** It is the only copy of what the user had until they have opened
+  a project and seen that the restore worked. `DiscardPrevious` is the single irreversible act and
+  is a separate command.
+
+**The defect the tests found, which is the reason this was worth doing carefully.** This repository
+runs SQLite in WAL mode, so the `.db` file is the last CHECKPOINT and recent committed transactions
+live in a `-wal` sidecar. A fixture made it visible — a **4 KB database with 1.9 MB of committed WAL
+beside it**. Moving the `.db` alone would have lost those transactions AND left a `-wal` belonging to
+the old database beside the restored one, which SQLite would replay against it: silent corruption of
+the data the user is trying to recover. `moveFileSet` moves the whole set.
+
+Two more found by running it rather than reading it:
+
+- The hold area was INSIDE the staging directory, so `CleanStaging` at startup would have deleted
+  the only copy of a user's data, and the rename failed because the destination was inside the
+  source.
+- `syscall.Stat_t` does not exist on Windows — `go doc` answers "no symbol" — so the
+  same-filesystem check takes its answer from the path (a drive letter or UNC share root) rather
+  than from a syscall the platform this application ships for does not have.
+
+Evidence: five tests over a real database (`TestACBACKUP002*`), and five mutations of the promote
+path all killed (the confirmation gate, a missing staged database, a rollback with nothing to
+restore, `DiscardPrevious` doing nothing, and leaving the WAL behind).
+
+## Item 13 — safe mode could not restore the backup that fixes it
+
+This is the finding that mattered. `composeProjects` returns nil when `handle.SQL()` is nil, and
+every safe-mode handle has no pool — the database could not be opened, failed its integrity check,
+or could not be migrated. That is right for the project and import services, which ARE queries.
+
+It was wrong for the backup. **A user whose database is broken is a user whose next step is to
+restore the backup that fixes it, and in that state the restore was unavailable: safe mode existed
+to make recovery possible and then refused the recovery.**
+
+`composeBackupOnly` builds the restore half from the resolved directories alone, and `app.go`
+composes it when the project stack did not compose. What works without a pool is now stated in the
+code rather than implied: the restore (which reads an archive, verifies the ARCHIVED database by
+opening that file, and promotes by renaming) is available; the export (which snapshots the live
+database) is absent and fails closed; and `SchemaVersion`/`Counts`/`Files` REFUSE rather than
+answering zero, because a manifest claiming nought projects would look valid and restore to an empty
+application.
+
+Two ordering defects the tests found in the promote code itself: `Promote` checked the pool before
+the confirmation gate, so a safe-mode promotion of an unconfirmed request answered
+`BACKUP_UNAVAILABLE` for a request whose real problem was that nobody had been asked; and it refused
+outright without a pool, when a nil pool is the safe-mode shape rather than an oversight.
+
+Evidence: four tests over a nil-pool store driving a REAL archive through validation, staging,
+verification and promotion (`TestWPSafeMode*`), with the three guards asserted to still hold — a
+build that skipped the confirmation when it had no pool would let a user destroy the data they were
+recovering.
+
+## Two reachability gaps found while documenting, one fixed
+
+The commands existed in the core and nothing in the interface called them. That is the "interface
+with no real path" shape AGENTS section 12 refuses, and both were found by counting callers rather
+than by reading comments:
+
+1. **The backup binding had FIVE methods and zero frontend callers** — including the restore this
+   section is about. **Fixed**: `web/src/components/config/backup-panel.tsx` exports an archive,
+   previews one before restoring it, requires an informed confirmation, and surfaces the restart
+   requirement, the previous-data location, and the held-state notice. Every method now has callers.
+2. **Nothing in the interface creates a panel image or an asset version.** `RunImageBatch`,
+   `CheckStoryboardGate`, `CollectBatchResults`, `ApproveCandidate`, `ApprovePanelImage`, `AddVersion`,
+   `AttachFile`, `AttachJobResult`, `AddUsage`, `AddRelation` all have zero frontend callers. Since
+   the export composes from `approved_image_asset_version_id`, **the export chain has a missing
+   middle in the UI**: an episode can be exported once its frames are approved, and no screen in this
+   build approves one. **NOT fixed**, and this is the largest open item in WP-12 — it is asset
+   production UI rather than hardening, and naming it is more honest than a checklist that implies
+   the pipeline is reachable end to end.
+
+## What item 13 does NOT cover
+
+- No `go test -race`: the C toolchain on this host cannot build the race runtime
+  (`cc1.exe: 64-bit mode not compiled in`). Every concurrency claim anywhere in this project is from
+  reading.
+- No Windows clean-VM run and no code signing: neither is possible here.
+  `docs/INSTALL_AND_SIGNING.md` states what each would require.
+
+# 0m1. WP-12 items 3 and 4: the scale cases are measured, and ONE FINDING IS OPEN (2026-09-23)
+
+## What this closes
+
+- **Item 3 (1,000 node/2,000 edge 性能) is MEASURED.** `internal/infrastructure/database/scale_wp12_test.go`
+  builds the load through the real repositories over a migrated database;
+  `scale_canvas_wp12_test.go` holds five bound tests, two benchmarks per operation, a shape test and
+  a worst-case test at the binding's own 5,000-move ceiling. Every figure is in the file's own
+  comments beside the bound it set.
+- **Item 4 (10k asset/Memory benchmark) is MEASURED.**
+  `scale_records_wp12_test.go` holds the same for 10,000 assets, 10,000 embedded memories and
+  10,000 transcript rows.
+
+## THE BLOCKING FINDING: three indexed reads sort the whole table
+
+**`idx_memory_items_embedding` does not cover the query's ORDER BY, so a memory search spends
+~62 ms of which ~0.2 ms is the search's arithmetic.** Measured decomposition and
+`EXPLAIN QUERY PLAN` output are recorded in `scale_records_wp12_test.go`. The plan is
+`SEARCH memory_items USING INDEX idx_memory_items_embedding (scope_project=? AND embedding_model=?
+AND embedding_version=?)` followed by `USE TEMP B-TREE FOR ORDER BY`; the same query with the
+ORDER BY removed is 0.5 ms, a hundredfold difference.
+
+`memory_index.go`'s "The ceiling" section states that the cost of a search "must not be a function
+of how much a user has accumulated". **That holds for the SCORING, which is capped at
+`MaxCandidates`, and NOT for the READ, which is linear in the project's embedded rows.**
+
+**The same shape affects two more reads**, each confirmed by its own plan:
+
+| read | plan's second line | measured |
+|---|---|---|
+| `MemoryRepository.VectorCandidates` | `USE TEMP B-TREE FOR ORDER BY` | 62 ms |
+| `AssetRepository.ListAssets` | `USE TEMP B-TREE FOR ORDER BY` | 23 ms (1,000-row page) |
+| `MemoryRepository.ListItems`, no type filter | `USE TEMP B-TREE FOR ORDER BY` | 51 ms |
+| `MemoryRepository.ListItems`, one type | `USE TEMP B-TREE FOR LAST TERM OF ORDER BY` | not measured |
+| `AgentRepository.RecentMessages` (for contrast) | none — index satisfies the order | 62 µs |
+
+The two `ListItems` rows are the same statement with and without a type filter, and the
+plan's second line differs between them while the conclusion does not: `idx_memory_items_project_type`
+supplies `scope_project` and `memory_type`, and `created_at` is its fourth column, so the
+`id DESC` tie-breaker is what still needs a sort. Only the unfiltered variant — the one the
+benchmark makes — has a measured figure here.
+
+**The cause is the same in each case**: every one of these reads orders by
+`created_at DESC, id DESC` while its index ends at some other column, so SQLite materialises and
+sorts. `RecentMessages` is the proof that it is fixable — `idx_agent_messages_scope` is
+`(scope_project, scope_agent_key, created_at)`, which satisfies its ordering, and it is a
+thousand times faster for it.
+
+**The fix is a migration**: an index per affected table whose column list ends with
+`created_at DESC, id DESC`. That is a change to `docs/DOMAIN_MODEL.md` section 18's index list and
+belongs to a package with migration scope — WP-12 item 7 is "Database migration from previous
+package", which is the natural home. **It is NOT done here**, because a performance measurement
+must not quietly add schema, and no bound was loosened to hide it: the search's bound is 200 ms
+(3.2x the measurement) with the figure recorded beside it, and the file says explicitly that a
+loosened bound was not used to make this pass.
+
+## The second finding: the semantic channel cannot reach a memory older than the newest 500
+
+`VectorCandidates` orders by `created_at DESC` and cuts to `MaxCandidates`, so a search can only
+return a memory among the newest 500 embedded rows of its scope. A memory older than that is not
+ranked lower — it is not a candidate, and no similarity can bring it back. In the 10,000-row load
+the window is `wp12-memory-09500..wp12-memory-09999` and `wp12-memory-00000` is unreachable.
+
+ADR-0014 rules on the index's COST ("A search is O(candidates) rather than O(log n), bounded by
+`MaxCandidates`") and says nothing about the candidate WINDOW being the newest rows by recency.
+This is a recall limit nothing documents. Whether it is acceptable is a **product decision** — the
+alternatives are a non-recency ordering, a wider window, or the sqlite-vec adapter the port's V1
+names — so it is recorded rather than changed. `TestWP12VectorCandidatesReachOnlyTheNewestRows`
+asserts the CURRENT behaviour so the limit is a tested number rather than an unchecked
+assumption.
+
+## What is NOT measured, stated plainly
+
+**The React canvas's render cost at 1,000 nodes is not measured, and nothing in this repository
+currently can.** It is a browser measurement, and the Playwright suite runs the canvas in BROWSER
+mode where persistence is the legacy IndexedDB adapter rather than the Go core (ADR-BASE-004);
+its own header says the desktop shell is not launched because "a Wails window cannot be driven
+from a test runner". The benchmarks below support "the Go core's canvas reads and writes at 1,000
+nodes and 2,000 edges are bounded" and NOT "the canvas renders 1,000 nodes smoothly".
+
+# 0m. WP-12 item 16: the dangerous legacy paths are gone or fail closed (2026-09-23)
+
+## What this closes
+
+- **PRD section 18's "仍存在任意模型 JavaScript 执行路径" is CLOSED.** `web/src/services/api/model-plugin.ts`
+  was the repository's only frontend `new Function`, and it is deleted, with its editor
+  (`model-script-editor.tsx`) and the accessor that fed it (`resolveModelScript`). The
+  scanner's `DYNAMIC_ALLOWLIST` no longer carries an entry for it, so a reintroduction
+  FAILS `node scripts/security-scan.mjs` rather than inheriting an exception.
+- **The stale `WP-13 (legacy media removal)` owner strings are gone.** WP-13 does not exist —
+  WP-12 is the last work package in ROADMAP — so those entries were corrected to
+  `WP-12 (legacy removal)` with reasons that state the CURRENT truth.
+- **No direct provider call is reachable in secure desktop mode.** `video-generation.ts` and
+  `audio-generation.ts` were added, mirroring `image-generation.ts`, and they THROW in secure
+  mode rather than falling back to a browser call. The three legacy files survive for browser
+  development mode only.
+
+## The blocking finding, stated rather than worked around
+
+**The Go media job path cannot serve a free canvas node, so the canvas loses video and audio
+generation in secure desktop mode.** This is a capability loss and it is recorded here as one.
+
+`SubmitVideoJobRequest` requires `projectId`, `episodeId` and `shotId`, and
+`SubmitAudioJobRequest` requires `projectId`, `episodeId` and `dialogueLineId`;
+`internal/desktop/media_jobs.go` returns `bindingInvalidInput()` when any is blank. The canvas
+page addresses a PROJECT (`web/src/pages/canvas/project.tsx` reads `useParams<{id: string}>`),
+`CanvasNodeType` has no shot member, and a free-canvas node carries no `entityType`/`entityId`,
+so there is no honest value for `episodeId`, `shotId` or `dialogueLineId`. Inventing one would
+record a job against a shot or a line that does not exist, which is a fabricated domain fact
+rather than a failed request. Separately, the Go video and audio adapters are mocks reachable
+only through `mock_media`, which `IsUserConfigurableKind` refuses to persist and no UI offers,
+so a secure submission would not have reached a real provider either.
+
+**The alternative that was NOT taken, and why:** adding `episodeId`/`shotId` fields to the
+canvas node, or a canvas-scoped media submission, is a domain and binding design change that
+belongs to a work package with that scope. WP-12 item 16 is "remove or make unreachable", and
+expanding it into new binding surface would be the scope creep AGENTS section 4.1 forbids.
+
+**What a user can still do, and the part that does not work either:** the studio's video and
+audio sections (`web/src/components/studio/video-view.tsx`, `audio-view.tsx`) are the
+structurally correct route — they submit against a real shot and a real dialogue line through
+`submitVideoJob`/`submitAudioJob`, so they can fill every required field. **But this build has no
+real video or audio adapter.** `Registry.VideoPortFor` and `AudioPortFor` resolve an adapter only
+for `mock_media`, which `IsUserConfigurableKind` refuses to persist and no UI offers, and return
+"unsupported" for `openai_compatible` and `gemini_compatible`. A studio submission therefore
+reaches the queue and fails at provider resolution. WP-11's own section 0l already records this
+("No real video provider", listed among what that package does not cover).
+
+**So the honest statement is: secure desktop mode has no working video or audio generation today,
+on the canvas or in the studio.** The canvas refusal arrives earlier and with a clearer message
+than the studio's job failure, which is all this scope item can improve. Closing it requires a
+real adapter, which is adapter work rather than a routing change, and it is left as an open item
+rather than hidden behind a notice that implies the studio route succeeds.
+
+## Verification
+
+| Command | Result |
+|---|---|
+| `node scripts/security-scan.mjs` | **PASS** — `PASS: security scans clean (602 files scanned; 1 audited dynamic-execution exception, 3 audited legacy direct-call files with named owners).` |
+| `web`: `npm run typecheck` | **PASS** |
+| `web`: `npm run test` | **PASS** — 67 tests, 67 pass, 0 fail |
+| `web`: `npx playwright test` | **PASS** — 25 passed, 1 pre-existing skipped (26 total) |
+| `web`: `npm run build` | **PASS** — with the pre-existing >500 kB chunk warning |
+
+No test was weakened, skipped or deleted to reach these results. No test asserted the
+model-script editor or a legacy transport, so none needed changing.
+
+## Known limits
+
+- The legacy files (`api/image.ts`, `api/video.ts`, `api/audio.ts`) still exist and still
+  build; they are unreachable in secure mode because their routers check
+  `isSecureProviderMode()` first. A future regression that calls them directly would put a key
+  back in the webview, which is why they remain named in the scanner allowlist rather than
+  deleted: a browser build has no other transport for these capabilities.
+- A model whose stored `script` was the only thing that made it work now falls through to the
+  standard OpenAI-compatible path and may fail at the provider. This is a deliberate capability
+  loss; there is no replacement, because a Go-side script runner would be the same
+  arbitrary-execution surface. The stored `script` field is left inert rather than deleted, so
+  no user configuration is destroyed during an upgrade.
+
+---
+
+Previous: **WP-11 — 视频、音频、字幕、时间线与导出**
+
 > Status: **COMPLETE for all 14 ROADMAP items, with two PARTIAL items named in section 0l.** The media half of the product is built: the one audited subprocess and its ffmpeg adapter, migration 000020's three tables, the media domain's timecodes and cue/manifest rules, the subtitle service with drafts that cite dialogue lines and an editor that reads back, the timeline as an ordered join over the board's own rows, the export service that composes a real playable MP4 from approved panel frames with audio and subtitles muxed in, the `SaveFile` path that writes to where a user points — the first such path this application has ever had — the video and audio job submissions with their reference-asset pipeline, the two `final_episode` agents and the deterministic Final Ruleset that precedes the supervisor, and the video, audio and timeline sections. Section 0l states what this package delivered, the defects TWO INDEPENDENT REVIEWS found (321 mutations, 149 killed; four blockers), the items closed after the first report, and — plainly — what remains PARTIAL. WP-01 through WP-10 remain COMPLETE for their recorded scopes.
 
 WP-03 start baseline (2026-09-15): branch `codex/wp-01-desktop-foundation`, HEAD `a243891455ec17687dd54b5ac90d3bd64478a1a1`, empty index. Freshly re-run baseline: `go test ./... -count=1` PASS (15 packages at start), `go vet ./...` PASS, `web` `npm run typecheck` PASS, `npm test` PASS (15 tests), `npm run build` PASS. Go commands require `GOTOOLCHAIN=go1.25.0 GOSUMDB=sum.golang.org` on this host because the user-level `go env` sets `GOSUMDB=off`, which blocks toolchain verification. The working tree already contained the WP-01/WP-02 tracked and untracked work plus the user's brand rename; none of it was modified outside the WP-03 scope.
