@@ -201,7 +201,8 @@ func (r *RestoreService) Restore(ctx context.Context, data []byte) (RestoreResul
 	if err := json.Unmarshal(rawManifest, &manifest); err != nil {
 		return RestoreResult{}, importError("manifest", "The archive manifest could not be read.", err)
 	}
-	if err := validateManifest(manifest); err != nil {
+	manifest, err = validateManifest(manifest)
+	if err != nil {
 		return RestoreResult{}, err
 	}
 	// The checksums cover every entry, so a byte that changed after the writer
@@ -283,23 +284,38 @@ func (r *RestoreService) Restore(ctx context.Context, data []byte) (RestoreResul
 }
 
 // validateManifest refuses an archive this build cannot read.
-func validateManifest(manifest Manifest) error {
-	if manifest.ManifestVersion != SupportedManifestVersion {
-		return importError("manifest",
-			"That backup was written by a different version and cannot be restored.", nil)
+//
+// # Every rule here sees a manifest of the CURRENT version
+//
+// The migration runs FIRST, so the checks below are about the archive's CONTENT rather than about
+// which release wrote it. That is the difference FR-170's 「旧版本有迁移测试」 asks for: an older
+// archive is upgraded rather than refused, and a NEWER one is refused by the migration (this build
+// cannot know which fields a later writer added, and importing one would silently drop them).
+//
+// The function is split so the migrating half is testable on its own — `migrateManifest` takes and
+// returns a document and touches no archive — which is what lets the migration tests state their
+// input directly instead of building a zip per case.
+func validateManifest(manifest Manifest) (Manifest, error) {
+	migrated, err := migrateManifest(manifest)
+	if err != nil {
+		return Manifest{}, err
 	}
+	manifest = migrated
 	if manifest.App != "infinite-canvas" {
-		return importError("manifest", "That file is not an Infinite Atelier backup.", nil)
+		return Manifest{}, importError("manifest", "That file is not an Infinite Atelier backup.", nil)
 	}
 	if manifest.HasSecrets {
 		// The writer asserted the archive carries secrets. This is the ordinary
 		// path, which never imports one.
-		return importError("secrets", "That is a sensitive backup, which this build does not restore.", nil)
+		return Manifest{}, importError("secrets", "That is a sensitive backup, which this build does not restore.", nil)
 	}
 	if manifest.SchemaVersion <= 0 {
-		return importError("manifest", "The archive does not record a database version.", nil)
+		return Manifest{}, importError("manifest", "The archive does not record a database version.", nil)
 	}
-	return nil
+	// THE MIGRATED DOCUMENT IS RETURNED, which is the whole reason this function returns one: the
+	// caller reports the manifest a user reads, and a version-0 archive that restored successfully
+	// should say what it was upgraded to rather than echoing the field it arrived without.
+	return manifest, nil
 }
 
 // secretShapes are prefixes that identify credential material. They are the
