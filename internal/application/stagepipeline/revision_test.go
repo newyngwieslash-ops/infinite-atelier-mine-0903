@@ -268,6 +268,60 @@ func TestReviewFromOutcomeRequiresARulesetVersion(t *testing.T) {
 	}
 }
 
+// TestReviewFromOutcomeCarriesScoreAndGrade is FR-110's last unfilled clause.
+//
+// The schema carries `score` and `grade` (`review-report.v1.json`), the domain stores both
+// (`ReviewReport.Score`/`Grade` and the `score`/`grade` columns), the transport carries both — and
+// `ReviewFromOutcome` was the one place that dropped them, so a supervisor could report
+// `{"score": 76, "grade": "C"}` and the stored report said nothing. The PRD's own example carries
+// them (PRD.md:871-872) and the quality centre is meant to show a score.
+//
+// The three cases are the shape of the field rather than the plumbing:
+//
+//   - a number arrives as a number,
+//   - an ABSENT score stays nil, because "declined to score" is distinct from "scored zero" (the
+//     schema says so, and a plain float would turn one into the other),
+//   - an explicit null stays nil for the same reason.
+func TestReviewFromOutcomeCarriesScoreAndGrade(t *testing.T) {
+	scored, err := ReviewFromOutcome(agentruntime.Outcome{
+		Output: []byte(`{"passed":true,"severity":"minor","score":76,"grade":"C","rulesetVersion":"rules.v1","summary":"s"}`),
+	}, "script.supervision.script")
+	if err != nil {
+		t.Fatalf("a scored report was refused: %v", err)
+	}
+	if scored.Score == nil || *scored.Score != 76 {
+		t.Fatalf("the score arrived as %v, want 76", scored.Score)
+	}
+	if scored.Grade != workflow.GradeC {
+		t.Fatalf("the grade arrived as %q, want C", scored.Grade)
+	}
+
+	// Absent: nil, NOT zero.
+	unscored, err := ReviewFromOutcome(agentruntime.Outcome{
+		Output: []byte(`{"passed":true,"severity":"none","rulesetVersion":"rules.v1","summary":"s"}`),
+	}, "k")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unscored.Score != nil {
+		t.Fatalf("an absent score became %v, and a nil score is what 'declined to score' is", *unscored.Score)
+	}
+	if unscored.Grade != "" {
+		t.Fatalf("an absent grade became %q", unscored.Grade)
+	}
+
+	// Explicit null: nil for the same reason.
+	nulled, err := ReviewFromOutcome(agentruntime.Outcome{
+		Output: []byte(`{"passed":true,"severity":"none","score":null,"grade":"","rulesetVersion":"rules.v1","summary":"s"}`),
+	}, "k")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if nulled.Score != nil {
+		t.Fatalf("an explicit null score became %v", *nulled.Score)
+	}
+}
+
 // TestEntityIDOfScansPastABlankIdentifier covers the multi-artifact case.
 //
 // A write tool may return several references, and one whose first entry has an empty id is still a result

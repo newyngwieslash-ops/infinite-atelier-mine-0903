@@ -418,6 +418,12 @@ func (s *Service) RunSupervision(ctx context.Context, request SupervisionRequest
 		RulesetVersion:    report.RulesetVersion,
 		Passed:            passed,
 		Severity:          severity,
+		// Score and Grade travel with the rest of the verdict. They were absent from this call for the
+		// same reason they were absent from the reader: the field existed at every layer and nothing
+		// carried it, so `review_reports.score` was always NULL and `grade` always empty — while the
+		// PRD's own report example and FR-110's quality centre both expect a score.
+		Score:             report.Score,
+		Grade:             report.Grade,
 		RecommendedAction: report.RecommendedAction,
 		Summary:           report.Summary,
 		Issues:            merged,

@@ -124,6 +124,18 @@ func newCostumeFaultBoard(t *testing.T) *costumeFaultBoard {
 	if planVersionID == "" {
 		t.Fatal("the plan stage wrote no version")
 	}
+	// THE PLAN IS SUPERVISED AND APPROVED BEFORE THE BOARD IS DRAWN, which this fixture used to skip.
+	// WP-15's dependency gate caught it: the board stage now declares that a passed `director_plan` is
+	// a prerequisite (FR-100's 「状态迁移不允许跳过未满足依赖的阶段」), and the fixture was driving the
+	// board from a plan that had never left `waiting_user`.
+	//
+	// The two calls are what a user does — the supervisor reads the version and the gate puts it in
+	// force — and they are the same pair `canary_production_test.go` calls for its own plan, so the
+	// fixture now walks the production chain the way the chain is meant to be walked.
+	if reviewed := canary.reviewProduction(t, plan.StageRun, planVersionID); !reviewed.Report.Passed {
+		t.Fatalf("the plan review failed: %s", reviewed.Report.Summary)
+	}
+	canary.canary.passThrough(t, canary.pipeline, plan.StageRun, planVersionID, "the plan is what we want to shoot.")
 	board := canary.runProductionStage(t, stagepipeline.StageRequest{
 		WorkflowRunID: canary.ids.workflowRun,
 		Stage:         "storyboard_table",

@@ -254,7 +254,12 @@ func composeAgents(deps agentDeps) *agentWiring {
 		database.NewAssetRepository(connection),
 		newScriptReaderSource(database.NewScriptRepository(connection)),
 		database.NewStoryRepository(connection),
-	).WithFinalRuleset(database.NewFinalFactsReader(connection))
+	).
+		WithFinalRuleset(database.NewFinalFactsReader(connection)).
+		// The SCRIPT ruleset (section 11.1's mechanical half), attached here for the reason the final
+		// ruleset is: a ruleset composed anywhere but at the composition root would leave a stage
+		// supervised by a model alone, and the whole point of section 11.4 is that the joins run FIRST.
+		WithScriptRuleset(database.NewScriptRepository(connection))
 	var pipeline *appscriptpipeline.Service
 	if deps.Drama != nil && deps.Drama.script != nil && deps.Drama.workflow != nil {
 		pipeline = appscriptpipeline.New(appscriptpipeline.Options{

@@ -62,6 +62,57 @@ const (
 	RuleAssetApproved = "ASSET_APPROVED_VERSION"
 )
 
+// CategoryOf returns the category a rule's findings belong to.
+//
+// It is a function over the RULE rather than a field copied at each construction site, so a rule
+// cannot be reported under two categories by two callers — and a rule with no entry is TECHNICAL,
+// which is the honest default for "the artifact is malformed in a way this ruleset can see" rather
+// than an invented classification.
+func CategoryOf(rule string) Category {
+	if category, ok := ruleCategories[rule]; ok {
+		return category
+	}
+	return CategoryTechnical
+}
+
+// RuleHasStatedCategory reports whether a rule has an entry rather than falling through to the
+// default.
+//
+// It exists for the test that keeps the mapping complete: `CategoryOf` answers TECHNICAL for an
+// unknown rule, which is a correct answer to give and a silent gap to ship — a rule that should be
+// filed as a character problem would be filed as a technical one, and nothing would say so.
+func RuleHasStatedCategory(rule string) bool {
+	_, stated := ruleCategories[rule]
+	return stated
+}
+
+// ruleCategories maps a rule identifier to its category, for every rule this build ships.
+//
+// The mapping lives beside the constants so adding a rule and its category is one edit, and the test
+// below asserts every documented rule has an entry — a rule that fell through to the default would
+// otherwise be filed as TECHNICAL, which would be wrong rather than merely unstated.
+var ruleCategories = map[string]Category{
+	RuleCostumeContinuity:  CategoryCharacter,
+	RulePropContinuity:     CategoryAsset,
+	RuleLocationContinuity: CategorySpatial,
+	RuleShotCoverage:       CategoryNarrative,
+	RuleDuration:           CategoryTemporal,
+	RuleAssetApproved:      CategoryAsset,
+	// The SCRIPT ruleset's three (AGENT_CONTRACTS 11.1's mechanical half). Their identifiers are
+	// declared in the application package's ruleset, where the rules live, and registered HERE
+	// because the classification is this package's vocabulary: a rule that named its category at its
+	// own construction site would let two rulesets disagree about what a category means.
+	"SCRIPT_DURATION":          CategoryTemporal,
+	"LOCKED_FIELD_PRESENT":     CategoryFidelity,
+	"REMOVED_EVENT_STILL_SHOT": CategoryFidelity,
+	// FR-110's 「不必要的高成本重试」. The budget rule's finding is the report a later version of
+	// this file adds; the category exists now because the classification is the vocabulary and the
+	// rule is a consumer of it.
+	"REVISION_BUDGET_SPENT": CategoryCost,
+	// Content and vendor rules, which no deterministic rule can decide but a report can classify.
+	"CONTENT_RATING": CategorySafety,
+}
+
 // Severities reuse the workflow domain's vocabulary rather than inventing one, because the merged
 // report is a single document: a deterministic finding and a supervisor finding have to be
 // comparable for the report's overall severity to mean anything.
@@ -71,6 +122,52 @@ const (
 	SeverityMinor    = workflow.SeverityMinor
 )
 
+// Category is FR-110's quality-rule classification (PRD.md:891-902).
+//
+// The ten categories were prose for four packages: the PRD names them, the supervisor skills never
+// mention two of them, and no column or constant carried one. That matters because the criterion's
+// point is a user being able to TELL THE KINDS APART — "the costume is wrong" and "the script
+// violates a content rule" are different problems with different remedies, and until now both
+// arrived as free text in `rule`.
+//
+// The vocabulary is closed and mirrors the PRD's list, so a finding's category is comparable across
+// rulesets and a later report can group by it.
+type Category string
+
+const (
+	CategoryNarrative Category = "narrative"
+	CategoryFidelity  Category = "fidelity"
+	CategoryCharacter Category = "character"
+	CategoryAsset     Category = "asset"
+	CategorySpatial   Category = "spatial"
+	CategoryTemporal  Category = "temporal"
+	CategoryVisual    Category = "visual"
+	CategoryTechnical Category = "technical"
+	// CategorySafety is PRD.md:901's 「内容与供应商规则」. It is the category a supervisor skill's
+	// "what may be shown" question belongs to.
+	CategorySafety Category = "safety"
+	// CategoryCost is PRD.md:902's 「不必要的高成本重试」 — the category nothing covered, and the one
+	// the automatic-revision budget is the mechanism against. It is what the script and asset
+	// rulesets below report when work would be REDONE rather than merely reviewed.
+	CategoryCost Category = "cost"
+)
+
+// Categories lists the documented set in the PRD's order.
+var Categories = []Category{
+	CategoryNarrative, CategoryFidelity, CategoryCharacter, CategoryAsset, CategorySpatial,
+	CategoryTemporal, CategoryVisual, CategoryTechnical, CategorySafety, CategoryCost,
+}
+
+// IsValidCategory reports whether a category may be persisted or reported.
+func IsValidCategory(value Category) bool {
+	for _, candidate := range Categories {
+		if candidate == value {
+			return true
+		}
+	}
+	return false
+}
+
 // Finding is one deterministic problem.
 //
 // It is a distinct type from the workflow's input so this package does not depend on the workflow
@@ -78,7 +175,11 @@ const (
 // stagepipeline converts one to the other, and a field added here without a home there would be a
 // finding that silently loses its evidence.
 type Finding struct {
-	Rule       string
+	Rule string
+	// Category is which kind of quality problem this is (FR-110's classification). A ruleset states
+	// it per rule rather than per finding, because the category is a property of what the rule
+	// checks: every CHARACTER_CONTINUITY finding is a character problem.
+	Category   Category
 	Severity   workflow.Severity
 	EntityType string
 	EntityID   string

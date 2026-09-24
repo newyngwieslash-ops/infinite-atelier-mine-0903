@@ -35,6 +35,9 @@ type StoryboardConsistencyChecker struct {
 	// final reader — in which case `final_episode` returns no findings rather than failing, which is
 	// the same answer every stage this build has no rules for gives.
 	final *appconsistency.FinalRuleset
+	// scripts is the SCRIPT ruleset of AGENT_CONTRACTS section 11.1, nil in a build composed without
+	// a script repository — in which case `script_generation` returns no findings rather than failing.
+	scripts *appconsistency.ScriptRuleset
 }
 
 // NewStoryboardConsistencyChecker builds the checker over the repositories.
@@ -75,15 +78,30 @@ func (c *StoryboardConsistencyChecker) WithFinalRuleset(reader appconsistency.Fi
 	return c
 }
 
+// WithScriptRuleset returns the same checker with the SCRIPT ruleset attached.
+//
+// A separate method for the reason `WithFinalRuleset` is: the call sites that build this checker for
+// one ruleset have no connection to hand another, and a signature that made the rulesets look like a
+// pair would invite a caller to pass one repository where the other was meant.
+func (c *StoryboardConsistencyChecker) WithScriptRuleset(source appconsistency.ScriptRulesSource) *StoryboardConsistencyChecker {
+	if c == nil {
+		return c
+	}
+	c.scripts = appconsistency.NewScriptRuleset(source)
+	return c
+}
+
 // Check runs the rules that apply to one stage's artifact.
 //
 // The stage is a string rather than a typed constant because the pipeline that calls this is generic
-// across stages, and a switch here is what maps a stage to its ruleset. Two stages have rules today:
-// `storyboard_table`, whose rules are AGENT_CONTRACTS section 11.3's, and `final_episode`, whose
-// rules are section 11.4's. The asset and director stages' rules are stated in sections 11.1 and 11.2
-// and neither has an artifact whose mechanical half this build can check without inventing vocabulary
-// the specification does not give. An unknown stage returns no findings, which the pipeline treats as
-// "nothing mechanical to say" rather than as an error.
+// across stages, and a switch here is what maps a stage to its ruleset. Three stages have rules today:
+// `script_generation`, whose rules are AGENT_CONTRACTS section 11.1's mechanical half;
+// `storyboard_table`, whose rules are section 11.3's; and `final_episode`, whose rules are section
+// 11.4's. The asset and director stages' rules are stated in sections 11.1 and 11.2 and neither has an
+// artifact whose mechanical half this build can check without inventing vocabulary the specification
+// does not give — section 11.2's 场景时间/天气 has no column, which is the reason recorded in STATUS
+// section 0k. An unknown stage returns no findings, which the pipeline treats as "nothing mechanical to
+// say" rather than as an error.
 func (c *StoryboardConsistencyChecker) Check(ctx context.Context, stage, artifactVersionID string) ([]consistency.Finding, error) {
 	if c == nil || c.checker == nil {
 		return nil, nil
@@ -92,6 +110,13 @@ func (c *StoryboardConsistencyChecker) Check(ctx context.Context, stage, artifac
 		return nil, nil
 	}
 	switch stage {
+	case "script_generation":
+		// The script ruleset's rules are AGENT_CONTRACTS section 11.1's mechanical half. The artifact
+		// a script stage reports is the `script_version` it wrote, which is what the ruleset reads.
+		if c.scripts == nil {
+			return nil, nil
+		}
+		return c.scripts.Check(ctx, artifactVersionID)
 	case "storyboard_table":
 		return c.checker.CheckStoryboard(ctx, artifactVersionID)
 	case "final_episode":
@@ -126,7 +151,7 @@ var _ stageCheckerPort = (*StoryboardConsistencyChecker)(nil)
 // It must match the switch in `Check` exactly, and `TestCheckedStagesMatchTheSwitch` is what keeps
 // the two from drifting: a list that named a stage the switch does not handle would tell a reader
 // their stage is covered when it is not, which is worse than no list at all.
-var stageCheckStages = []string{"storyboard_table", "final_episode"}
+var stageCheckStages = []string{"script_generation", "storyboard_table", "final_episode"}
 
 // CheckedStages lists the stages the deterministic rules cover.
 func CheckedStages() []string {

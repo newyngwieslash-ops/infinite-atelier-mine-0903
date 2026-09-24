@@ -137,13 +137,26 @@ func ArtifactIDsOf(outcome agentruntime.Outcome) []string {
 // malformed document. What it does defend against is a document that is valid and says
 // nothing usable — and a report naming no RULESET, which section 7.6 requires because a
 // report that named none could not be reproduced.
+//
+// SCORE AND GRADE ARE READ HERE, and they used not to be: the schema carries both
+// (`review-report.v1.json`), the domain stores both (`ReviewReport.Score`/`Grade`, the
+// `score`/`grade` columns), the transport carries both, and this function was the one place
+// that dropped them — so a supervisor could report `{"score": 76, "grade": "C"}` and the
+// stored report would say nothing. The PRD's own example carries them (PRD.md:871-872), and
+// FR-110's quality centre is asked to show a score.
 func ReviewFromOutcome(outcome agentruntime.Outcome, supervisorKey string) (workflow.ReviewReport, error) {
 	var document struct {
-		Passed            bool   `json:"passed"`
-		Severity          string `json:"severity"`
-		RulesetVersion    string `json:"rulesetVersion"`
-		RecommendedAction string `json:"recommendedAction"`
-		Summary           string `json:"summary"`
+		Passed   bool   `json:"passed"`
+		Severity string `json:"severity"`
+		// Score is a POINTER because the schema models it as nullable and does not require it: a
+		// supervisor may legitimately decline to score a stage, and `null is distinct from zero`
+		// (review-report.v1.json, and DOMAIN_MODEL on the same column). A plain float would turn
+		// "declined to score" into "scored zero", which reads as a failing verdict.
+		Score             *float64 `json:"score"`
+		Grade             string   `json:"grade"`
+		RulesetVersion    string   `json:"rulesetVersion"`
+		RecommendedAction string   `json:"recommendedAction"`
+		Summary           string   `json:"summary"`
 	}
 	if err := json.Unmarshal(outcome.Output, &document); err != nil {
 		return workflow.ReviewReport{}, agent.InvalidError("The review report could not be read.")
@@ -151,6 +164,8 @@ func ReviewFromOutcome(outcome agentruntime.Outcome, supervisorKey string) (work
 	report := workflow.ReviewReport{
 		Passed:            document.Passed,
 		Severity:          workflow.Severity(document.Severity),
+		Score:             document.Score,
+		Grade:             workflow.Grade(strings.TrimSpace(document.Grade)),
 		RulesetVersion:    strings.TrimSpace(document.RulesetVersion),
 		RecommendedAction: strings.TrimSpace(document.RecommendedAction),
 		Summary:           document.Summary,
