@@ -715,6 +715,10 @@ export default {
         streaming: "Generating text through the secure gateway…",
     },
     secureSecrets: {
+            clearLegacy: "Clear the plaintext key",
+            clearLegacyTitle: "Clear the plaintext key stored in the browser?",
+            clearLegacyBody: "This removes the old plaintext key from browser storage. Re-enter it in the secure field above first, or you will need to configure it again. The provider, its endpoint and its models are kept.",
+            clearLegacyDone: "The plaintext key was cleared.",
         title: "Secure secrets",
         description: "Keys live in the OS credential store and are never written to config files, browser storage, or ordinary backups.",
         legacyKeysDetected: "{{count}} legacy plaintext key(s) are still stored in browser storage. Re-enter them through the secure key input under Settings → Providers, then the old values can be cleared.",

@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { configContainsSecrets, stripSecretsFromConfig } from "../config-secrets";
+import { configContainsSecrets, persistedConfigShape, stripSecretsFromConfig } from "../config-secrets";
 import { toProviderId } from "../desktop/provider-id";
 import { toSecureMessages } from "../desktop/messages";
 import { channelIdForModel, decodeModelSelection } from "../desktop/model-selection";
 import { isLocalAddress, toProviderConfigInput } from "../desktop/provider-sync";
-import { hasLegacyPlaintextKeys, legacyKeyLocations } from "../desktop/legacy-config";
+import { clearLegacyPlaintextKeys, hasLegacyPlaintextKeys, legacyKeyLocations } from "../desktop/legacy-config";
 
 type Channel = { id: string; name: string; baseUrl: string; apiKey: string; apiFormat: "openai" | "gemini"; models: Array<{ name: string; capability: string }> };
 type Config = {
@@ -199,4 +199,82 @@ test("legacyKeyLocations reports plaintext keys without exposing them", () => {
     assert.equal(locations.channelCount, 1);
     assert.equal(hasLegacyPlaintextKeys(makeConfig() as never), true);
     assert.equal(hasLegacyPlaintextKeys(makeConfig({ apiKey: "", channels: [] }) as never), false);
+});
+
+test("the persisted config shape carries no key, which is what DevTools reads", () => {
+    // AC-E2E-006: 「前端 DevTools 无法从 Store 读取密钥」.
+    //
+    // The store persists through zustand's `persist`, which writes whatever `partialize` returns
+    // into localStorage — the first place a person opens DevTools to look. So the clause is decided
+    // by the SHAPE that reaches storage, and `persistedConfigShape` is that shape.
+    //
+    // This test exists because the clause had no automated assertion at all: the suite covered
+    // `stripSecretsFromConfig` (the EXPORT path) and the store's persisted shape was unchecked, so a
+    // regression that put a key back into localStorage would have passed every test in this file.
+    const persisted = persistedConfigShape({
+        ...makeConfig(),
+        apiKey: "sk-root-must-not-be-persisted-0001",
+        channels: [
+            { id: "relay-a", name: "Relay A", baseUrl: "https://relay.example.com", apiKey: "sk-channel-must-not-be-persisted-0002", apiFormat: "openai", models: [] },
+        ],
+    } as never);
+
+    // The serialized text is what lands in storage, so it is what must not contain the keys.
+    const stored = JSON.stringify(persisted);
+    assert.ok(!stored.includes("sk-root-must-not-be-persisted-0001"), "the root key reached the persisted shape");
+    assert.ok(!stored.includes("sk-channel-must-not-be-persisted-0002"), "a channel key reached the persisted shape");
+    assert.equal(persisted.apiKey, "");
+    assert.equal(persisted.channels[0].apiKey, "");
+
+    // The removal goes through the repository's own check rather than a second opinion.
+    assert.equal(configContainsSecrets(persisted), false, "the persisted shape still reports secrets");
+
+    // And the fields a key sat beside are UNTOUCHED: blanking a key must not cost the user their
+    // provider, model or endpoint, or the guard would be a data-loss bug wearing a security hat.
+    assert.equal(persisted.channels[0].id, "relay-a");
+    assert.equal(persisted.channels[0].baseUrl, "https://relay.example.com");
+    assert.equal(persisted.channels[0].models.length, 0);
+    // The in-memory config is NOT mutated: a browser build needs its key to make the legacy request,
+    // and clearing it there would break that path rather than protect anything.
+    const inMemory = { ...makeConfig(), apiKey: "sk-still-needed-in-memory" } as never;
+    persistedConfigShape(inMemory);
+    assert.equal((inMemory as { apiKey: string }).apiKey, "sk-still-needed-in-memory");
+});
+
+test("clearing a legacy plaintext key removes it and keeps the configuration", () => {
+    // The migration path the repository documents is "re-enter through the secure field, THEN clear
+    // the legacy value". Until WP-15 the second half did not exist, so the state
+    // `LegacySecretNotice` reported was permanent and DevTools could read a raw key for the life of
+    // the installation. This asserts both halves of what the clear must do: remove the secret, and
+    // NOT cost the user their provider.
+    const legacy = {
+        ...makeConfig(),
+        baseUrl: "https://relay.example.com",
+        apiKey: "sk-legacy-root-0001",
+        channels: [
+            { id: "relay-a", name: "Relay A", baseUrl: "https://relay.example.com", apiKey: "sk-legacy-channel-0002", apiFormat: "openai", models: [{ name: "m1", capability: "text" }] },
+        ],
+    } as never;
+
+    // The state is detected first, which is what the UI's control is offered on.
+    assert.equal(hasLegacyPlaintextKeys(legacy), true);
+
+    const cleared = clearLegacyPlaintextKeys(legacy);
+    assert.equal(hasLegacyPlaintextKeys(cleared), false, "the clear left a plaintext key behind");
+    assert.equal(cleared.apiKey, "");
+    assert.equal(cleared.channels[0].apiKey, "");
+    assert.ok(!JSON.stringify(cleared).includes("sk-"), "a key survived the clear in the serialized form");
+
+    // And the configuration survives: a clear that dropped the provider would be a data-loss bug
+    // wearing a security hat.
+    assert.equal(cleared.baseUrl, "https://relay.example.com");
+    assert.equal(cleared.channels.length, 1);
+    assert.equal(cleared.channels[0].id, "relay-a");
+    assert.equal(cleared.channels[0].baseUrl, "https://relay.example.com");
+    assert.equal(cleared.channels[0].models.length, 1);
+
+    // Clearing is idempotent, so a second click is harmless rather than a corruption.
+    const again = clearLegacyPlaintextKeys(cleared);
+    assert.equal(hasLegacyPlaintextKeys(again), false);
+    assert.equal(again.channels[0].id, "relay-a");
 });

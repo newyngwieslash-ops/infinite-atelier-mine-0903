@@ -5,6 +5,10 @@ import { nanoid } from "nanoid";
 
 import i18n from "@/i18n";
 import { isSecureProviderMode } from "@/services/desktop/providers";
+// The persisted shape's rule lives in the dependency-free secrets module so it can be tested
+// in the node runner, which the store itself cannot be (it imports i18n, which reads
+// localStorage at module load).
+import { persistedConfigShape } from "@/services/config-secrets";
 
 export type ApiCallFormat = "openai" | "gemini";
 export type ModelCapability = "image" | "video" | "text" | "audio";
@@ -211,7 +215,27 @@ export const useConfigStore = create<ConfigStore>()(
         }),
         {
             name: CONFIG_STORE_KEY,
-            partialize: (state) => ({ config: state.config }),
+            // THE PERSISTED CONFIG NEVER CARRIES A KEY, and this is where that is enforced rather
+            // than asserted afterwards.
+            //
+            // AC-E2E-006 requires that DevTools cannot read a key out of the store, and zustand's
+            // persist writes whatever `partialize` returns into localStorage — a place DevTools
+            // reads trivially. The key therefore never reaches the persisted shape: `apiKey` is
+            // blanked on the root and on every channel here, which is the same removal (not
+            // masking) `stripSecretsFromConfig` performs for exports, applied at the one place the
+            // browser writes state.
+            //
+            // In SECURE mode this is belt-and-braces: the key is in the OS credential store and the
+            // field that would hold it is not rendered. In BROWSER mode it is the whole guard, and
+            // it is why a legacy key found in an existing localStorage entry is not re-persisted
+            // once the store next writes. Because browsers vary in WHEN they write, the legacy
+            // notice still tells a user their old entry is there — see `legacy-secret-notice.tsx`,
+            // which reports rather than pretends.
+            //
+            // The IN-MEMORY config keeps its key: a browser-mode build needs it to make a request
+            // through the legacy path, and clearing it there would break that path rather than
+            // protect anything.
+            partialize: (state) => ({ config: persistedConfigShape(state.config) }),
             merge: (persisted, current) => {
                 const persistedState = (persisted || {}) as Partial<ConfigStore>;
                 const persistedConfig = (persistedState.config || {}) as Partial<AiConfig>;

@@ -714,6 +714,10 @@ export default {
         streaming: "正在通过安全网关生成文本…",
     },
     secureSecrets: {
+            clearLegacy: "清除明文密钥",
+            clearLegacyTitle: "清除浏览器中保存的明文密钥？",
+            clearLegacyBody: "这会从浏览器存储中删除旧的明文密钥。请先在上方的安全输入框中重新填写该密钥，否则清除后需要重新配置。渠道、地址和模型都会保留。",
+            clearLegacyDone: "已清除明文密钥。",
         title: "安全密钥",
         description: "密钥保存在系统凭据存储中，不会写入配置文件、浏览器存储或普通备份。",
         legacyKeysDetected: "检测到 {{count}} 处旧版明文密钥仍保存在浏览器存储中。请在「配置 → 渠道」中通过安全密钥输入重新保存，随后可清除旧值。",
