@@ -421,4 +421,16 @@ type StateFields struct {
 	SkeletonVersionID string
 	StrategyVersionID string
 	ScriptVersionID   string
+	// ShotCount asks the generation stage for a script with at least this many shots.
+	//
+	// It is OPTIONAL and zero means "no constraint", which is what keeps every existing caller's
+	// behaviour: the deterministic mock writes a fixed two-scene, one-shot document when it is not
+	// asked for more, and a test that asserts those scene durations depends on that document rather
+	// than on a number a caller happened to pass.
+	//
+	// It exists because a caller can have a REQUIREMENT about shape rather than about content:
+	// PRD §19's AC-E2E-002 asks for a board of at least twelve shots from one episode, and a
+	// pipeline that could only ever produce one shot could not satisfy it. Asking for the count is
+	// the caller's act; producing a document that meets it is the model's.
+	ShotCount int
 }

@@ -607,6 +607,19 @@ func (r *StoryboardRepository) approvePanelImageOn(ctx context.Context, repo *St
 		}
 		return storageError("STORYBOARD_READ_FAILED", "The panel version could not be read.", err)
 	}
+	// The panel's own status decides whether it may become the approved one, and the rule is the
+	// shared version vocabulary's rather than a second copy of it: an approved version is not
+	// re-approved, a superseded one cannot come back without a new version, and a stale one must
+	// be re-reviewed first.
+	var currentStatus string
+	if err := conn.QueryRowContext(ctx,
+		`SELECT status FROM storyboard_panel_versions WHERE id = ?`, panelVersionID).Scan(&currentStatus); err != nil {
+		return storageError("STORYBOARD_READ_FAILED", "The panel version could not be read.", err)
+	}
+	if err := versioning.CanApprove(versioning.Status(currentStatus), versioning.StatusApproved); err != nil {
+		return err
+	}
+
 	// The guard is on the item, as documented above.
 	result, err := conn.ExecContext(ctx, `UPDATE storyboard_items
 		SET revision = revision + 1
@@ -621,9 +634,38 @@ func (r *StoryboardRepository) approvePanelImageOn(ctx context.Context, repo *St
 	if affected == 0 {
 		return storyboard.ConflictError("This storyboard item changed in another window. Reload it and try again.")
 	}
+
+	// THE STATUS MOVES WITH THE IMAGE, and that is not bookkeeping — it is what makes the approval
+	// visible to the export.
+	//
+	// The read the MP4 export is built from joins the panel with `AND p.status = 'approved'`
+	// (`timeline.go`, `final_reader.go`), and migration 000010's partial unique index
+	// `idx_storyboard_panel_versions_approved ON storyboard_panel_versions(storyboard_item_id)
+	// WHERE status = 'approved'` exists to make "one approved panel per row" a constraint. Until
+	// this was fixed, the approval wrote `approved_image_asset_version_id` and nothing wrote the
+	// status, so a panel stayed `draft` forever and the timeline did not see the image: a probe
+	// over the real services measured the row's media still resolving to the PREVIOUS version.
+	// The unique index was therefore never enforced either, because no row ever carried the value
+	// it constrains.
+	//
+	// The previous approval is superseded FIRST, which is the same order `approveVersionWithEvent`
+	// uses for the other four version families and the order the partial index requires: approving
+	// before superseding would briefly leave two approved panels on one row, which the index
+	// refuses.
 	if _, err := conn.ExecContext(ctx, `UPDATE storyboard_panel_versions
-		SET approved_image_asset_version_id = ? WHERE id = ?`,
+		SET status = 'superseded'
+		WHERE storyboard_item_id = ? AND status = 'approved' AND id <> ?`, itemID, panelVersionID); err != nil {
+		if isUniqueViolation(err) {
+			return storyboard.ConflictError("Another panel version of this row was approved at the same time. Reload and try again.")
+		}
+		return storageError("STORYBOARD_WRITE_FAILED", "The previous approved panel version could not be superseded.", err)
+	}
+	if _, err := conn.ExecContext(ctx, `UPDATE storyboard_panel_versions
+		SET status = 'approved', approved_image_asset_version_id = ? WHERE id = ?`,
 		approvedImageAssetVersionID, panelVersionID); err != nil {
+		if isUniqueViolation(err) {
+			return storyboard.ConflictError("This storyboard row already has an approved panel version. Reload and try again.")
+		}
 		return storageError("STORYBOARD_WRITE_FAILED", "The approved image could not be saved.", err)
 	}
 	return nil

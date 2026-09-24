@@ -37,6 +37,10 @@ const (
 	fieldScript     = "script_version="
 	fieldSelected   = "selected_events="
 	fieldLockedRefs = "locked_refs="
+	// fieldShotCount is the number of shots the generation stage is asked to write, emitted only
+	// when a caller asked for one: an absent field means "no constraint", which is a different
+	// statement from "zero shots".
+	fieldShotCount = "shot_count="
 )
 
 // renderState renders the prompt's workflow-state layer for one attempt.
@@ -71,6 +75,9 @@ func renderState(attempt workflow.StageRun, request stagepipeline.StageRequest, 
 	}
 	if version := strings.TrimSpace(fields.ScriptVersionID); version != "" {
 		parts = append(parts, fieldScript+version)
+	}
+	if fields.ShotCount > 0 {
+		parts = append(parts, fieldShotCount+itoa(fields.ShotCount))
 	}
 	return strings.Join(parts, " ")
 }

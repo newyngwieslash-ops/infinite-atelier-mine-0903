@@ -494,8 +494,19 @@ func mockStrategyArguments(request providers.TextRequest) json.RawMessage {
 //
 // The second scene is marked `isOriginalAdaptation` (原创改编标记) and cites no source event, so the
 // canary can tell an invention from a faithful adaptation — the distinction AC-SCRIPT-003 asks for.
+// mockStructureArguments builds the generation stage's structure write.
+//
+// THE DOCUMENT IS FIXED UNLESS A CALLER ASKS FOR MORE, and that is what keeps every existing test
+// honest: the canary asserts a derived duration against the scenes stated here, so a mock that
+// varied its output would make those assertions depend on a fixture rather than on the code. A
+// caller with a SHAPE requirement — AC-E2E-002 asks for a board of at least twelve shots from one
+// episode — writes `shot_count=` into the state, and only then does this document grow. The fixed
+// branch is the default; the sized branch is opt-in.
 func mockStructureArguments(request providers.TextRequest) json.RawMessage {
 	state := mockWorkflowStateOf(request)
+	if wanted := parseIntField(fieldOnLine(state, "shot_count=")); wanted > 1 {
+		return mockSizedStructureArguments(state, wanted, fieldOnLine(state, "episode="), fieldOnLine(state, "script_version="))
+	}
 	arguments := map[string]any{
 		"summary": "The deterministic mock's script: two scenes at the ferry crossing.",
 		"scenes": []any{
@@ -1181,4 +1192,94 @@ func mockToolArguments(key string, request providers.TextRequest) json.RawMessag
 		return json.RawMessage(`{}`)
 	}
 	return encoded
+}
+
+// mockSizedStructureArguments writes a structure with at least the shots the caller asked for.
+//
+// The shots are spread over as many scenes as it takes to keep a scene's shot count plausible, with
+// four per scene — the same shape a boarded episode has, and the shape the board stage then boards
+// one row per shot. Every scene carries a slugline, a summary and a duration, because the pipeline's
+// validator checks the structure's completeness rather than only counting its rows: a document with
+// scenes and no dialogue would be refused for a different reason than the one this branch exists to
+// satisfy.
+func mockSizedStructureArguments(state string, wanted int, episode, version string) json.RawMessage {
+	const shotsPerScene = 4
+	scenes := make([]any, 0, (wanted+shotsPerScene-1)/shotsPerScene)
+	written := 0
+	for sceneIndex := 1; written < wanted; sceneIndex++ {
+		shots := make([]any, 0, shotsPerScene)
+		for shotIndex := 0; shotIndex < shotsPerScene && written < wanted; shotIndex++ {
+			written++
+			shots = append(shots, map[string]any{
+				"shotNumber":        mockShotNumber(sceneIndex, shotIndex),
+				"shotSize":          "MS",
+				"cameraAngle":       "eye level",
+				"cameraMovement":    "static",
+				"visualDescription": "The mock script's shot " + mockSmallInt(written) + ".",
+				"actionDescription": "The mock script's action for shot " + mockSmallInt(written) + ".",
+				"audioIntent":       "The mock script's audio for shot " + mockSmallInt(written) + ".",
+				"estimatedDurationSeconds": 5,
+			})
+		}
+		dialogue := []any{
+			map[string]any{"type": "dialogue", "text": "第" + mockSmallInt(sceneIndex) + "场的台词。"},
+		}
+		scenes = append(scenes, map[string]any{
+			"sceneNumber":              mockSmallInt(sceneIndex),
+			"slugline":                 "INT. 渡口 " + mockSmallInt(sceneIndex) + " - 日",
+			"interiorExterior":         "INT",
+			"timeOfDay":                "日",
+			"summary":                  "第" + mockSmallInt(sceneIndex) + "场。",
+			"dramaticGoal":             "推进第" + mockSmallInt(sceneIndex) + "场的目标。",
+			"estimatedDurationSeconds": 30,
+			"isOriginalAdaptation":     false,
+			"dialogueLines":            dialogue,
+			"shots":                    shots,
+		})
+	}
+	arguments := map[string]any{
+		"summary": "The deterministic mock's script, sized to the caller's shot count.",
+		"scenes":  scenes,
+	}
+	if version != "" {
+		arguments["versionId"] = version
+	}
+	if episode != "" {
+		arguments["episodeId"] = episode
+	}
+	_ = state
+	return mockArgumentJSON(arguments)
+}
+
+// parseIntField reads a small non-negative integer from a state field, or zero.
+//
+// Zero is the honest answer for "absent" here because every caller of this reader treats it as "no
+// constraint": a malformed field must not be read as a request for zero shots, which would produce
+// an empty document rather than the fixed one.
+func parseIntField(value string) int {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return 0
+	}
+	total := 0
+	for _, digit := range trimmed {
+		if digit < '0' || digit > '9' {
+			return 0
+		}
+		total = total*10 + int(digit-'0')
+		if total > 10000 {
+			return 0
+		}
+	}
+	return total
+}
+
+// mockShotNumber renders a shot's number the way a script writes one: the scene's number followed
+// by a letter, so scene 3's second shot is "3B".
+func mockShotNumber(scene, shot int) string {
+	const alphabet = "ABCDEFGH"
+	if shot < 0 || shot >= len(alphabet) {
+		return mockSmallInt(scene)
+	}
+	return mockSmallInt(scene) + string(alphabet[shot])
 }

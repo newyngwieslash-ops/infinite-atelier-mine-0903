@@ -1,10 +1,21 @@
 # Implementation Status
 
-> Last updated: 2026-09-23
+> Last updated: 2026-09-24
 > Product: Infinite Atelier Core + Drama Production Pack
-> Current work package: **WP-12 — 硬化、性能、打包与 Release Candidate**
-> Status: **COMPLETE — items 3, 4, 5, 6, 9, 10, 12, 13, 14, 15, 16 and 17 are closed; the
-> release-blocker audit is complete with all eleven CLEARED.** Item 17's end-to-end walk is in section
+> Current work package: **WP-13 — 资产生产 UI：分镜图批量生成、候选批准与 AC-E2E-002 整场景串测**
+> Status: **COMPLETE (section 0q).** The ten desktop bindings that had zero frontend callers now
+> have a path, so the export chain's missing middle is filled: the storyboard table generates panel
+> images in a batch, collects them into candidate versions and approves one per shot — the column the
+> MP4 export joins on. **The acceptance walk found a second real defect**, and a worse one than the
+> code read suggested: `ApprovePanelImage` recorded the image while nothing wrote the panel's
+> `status`, which the export's join requires, so an approval was invisible to the export AND a
+> replacement frame would have exported the OLD one. Fixed, with both halves pinned by regression
+> tests and nine mutations killed. PRD section 19's AC-E2E-002 now passes as ONE scenario —
+> 32,736 characters across five chapters to twelve approved panel images, each traceable to its job
+> and version — where before two canaries covered its halves and neither read its closing clause.
+>
+> **WP-12 remains COMPLETE** — items 3, 4, 5, 6, 9, 10, 12, 13, 14, 15, 16 and 17 are closed; the
+> release-blocker audit is complete with all eleven CLEARED. Item 17's end-to-end walk is in section
 > 0p: it found that `workflow_runs.current_stage` had no writer anywhere in the codebase, so a run
 > executing a stage rendered as "—" in the Studio's runs table — a column the UI read on every render
 > and nothing wrote. That is fixed, pinned by five tests and six mutations, and the full verification
@@ -13,21 +24,140 @@
 > added the scale benchmarks and found two index defects (migration 000021); item 5 built the
 > restore's atomic swap and found a write-ahead-log defect; item 13 made recovery reachable from safe
 > mode; item 16 deleted the dynamic-JavaScript path. WP-01 through WP-11 remain COMPLETE for their
-> recorded scopes. Two capability gaps remain OPEN and are named rather than dropped: the panel-image
-> path has no UI caller (section 0n2) and secure desktop mode has no working video or audio
-> generation (item 16). Neither is one of PRD section 18's eleven blockers.
+> recorded scopes. **One of the two capability gaps the WP-12 header named is now CLOSED**: the
+> panel-image path has a UI caller as of WP-13 (section 0q, ADR-0017), so the export chain is
+> reachable end to end. What remains open is secure desktop mode having no working video or audio
+> generation (item 16), which is not one of PRD section 18's eleven blockers.
 > **A full PRD/ROADMAP cross-check with the remaining-task list lives at
 > `docs/implementation/project-progress-and-remaining-tasks-2026-09-23.md`** — the
 > P0 item there (the asset-production UI's ten zero-caller bindings) is the same gap
 > section 0n2 names, now stated with its priority and the rest of the backlog.
 >
-> **Next work package: WP-13 (planned, NOT started).** The user ruled P0-1 a standalone
-> package — asset-production UI plus the AC-E2E-002 whole-scenario walk as acceptance. The
-> approved plan lives at **`docs/implementation/plans/plan-wp13-asset-production-ui.md`**
-> (ten rulings, all recorded as rebuttable; survey facts with file:line references; the Go walk's
-> nine steps; an explicit not-doing list). **Implementation was paused by the user before any
-> code was written** — the working tree contains no WP-13 changes. Whoever picks it up should
-> read that plan first, then AGENTS section 2's required-reading order.
+> **The next item is handoff P0-2**: FR-150's per-provider concurrency limit, still unimplemented
+> and now more consequential, because WP-13's batch can submit 96 provider calls in one command.
+> The full remaining-task list stays at `docs/implementation/project-progress-and-remaining-tasks-2026-09-23.md`,
+> whose P0-1 is now DONE; P1 to P4 are unchanged.
+
+# 0q. WP-13 result: the asset-production UI, and the defect the walk found (2026-09-24)
+
+WP-13 is COMPLETE. It closed the largest open item in this repository — the ten desktop bindings with
+zero frontend callers, which left the export chain with no middle in the interface — and the
+acceptance walk PRD section 19 asks for found a second real defect on the way.
+
+## What was delivered
+
+**The panel-image chain is reachable.** `storyboard_panel_versions.approved_image_asset_version_id`
+is the column the MP4 export joins on (`timeline.go`, `final_reader.go`), and until this package
+NOTHING in the webview wrote it — so an episode could be exported once its frames were approved and
+no screen in the build approved one. The storyboard table now carries a batch entry and a per-row
+panel drawer, and six commands have their first callers: `CheckStoryboardGate`, `RunImageBatch`,
+`CollectBatchResults`, `CreatePanelVersion`, `ListPanels` (which had none either) and
+`ApprovePanelImage`.
+
+**ADR-0017 records the ten rulings**, each with its alternatives and each marked rebuttable. Two are
+worth naming because they are decisions rather than descriptions: `ApproveCandidate` gets NO UI
+because it is the same act as `ApprovePanelImage` and carries fewer fields, and four of the five
+`AssetsBinding` writes get no control because `CollectBatchResults` already performs two of them and
+the other two serve flows this package does not build. The difference between "nobody called it" and
+"we decided not to" is the record.
+
+**The rules live in `panel-chain.ts`, not in JSX.** This repository's suite is `node:test` with no
+DOM, so a decision that exists only inside a component cannot be asserted at all — the same reason
+`job-scope.ts` and `model-selection.ts` exist. Fourteen decisions are now pure functions with
+sixteen tests over them, and the component imports them rather than restating them.
+
+## THE DEFECT: an approved panel image was invisible to the export
+
+**Found by the acceptance walk, and it was worse than reading the code suggested.**
+`ApprovePanelImage` wrote `approved_image_asset_version_id` and NOTHING wrote the panel's `status`,
+while the timeline's join carries `AND p.status = 'approved'`. A panel created by the production
+path therefore stayed `draft` forever.
+
+The measurement matters more than the reading: with a PREVIOUSLY approved panel on the row, the
+timeline did not report "no media" — it reported the **previous version**, because that panel was
+the one still carrying the status the join wanted. **A user who approved a replacement frame would
+have exported the old one**, and nothing would have reported an error.
+
+The same defect silently disabled a constraint: migration 000010's
+`idx_storyboard_panel_versions_approved ON storyboard_panel_versions(storyboard_item_id) WHERE
+status = 'approved'` exists to make "one approved panel per row" enforceable, and no row ever
+carried the value it constrains.
+
+**The fix** gives the approval the same three steps `approveVersionWithEvent` uses for the other
+four version families: consult `versioning.CanApprove` on the panel's own status, supersede the
+previous approval, then approve — the order the partial index requires, because approving first
+would transiently leave two approved panels on one row. `panel_approval_regression_test.go` pins both
+halves: that the status moves with the image, and that a second approval supersedes the first and
+that the timeline then resolves the NEW frame.
+
+## The AC-E2E-002 walk
+
+`acceptance_e2e002_test.go` walks PRD section 19's 小说到分镜 as ONE scenario, which is what the
+criterion is and what no test did: `canary_script_test.go` and `canary_production_test.go` each cover
+a half, and neither read the artefact the criterion's last clause is graded by.
+
+Nine clauses, all reporting: the 32,736-character five-chapter fixture imported from BYTES through
+the real decoder and chapter splitter; three episodes; the skeleton, strategy and episode-1 script
+with a supervisor and a user gate each and the approved ROW read back; the gap report; **2 character
+and 2 scene assets, with the `asset_generation` stage driven for the first time anywhere in this
+repository**; a board of 12 shots; 12 panel images batched, collected and approved; and the closing
+clause asserted against the export's own join — every shot resolves to an approved version, that
+version names the job that produced it, and both exist.
+
+Two changes were needed to make the criterion satisfiable at all, and both are honest rather than
+convenient:
+
+- **`asset_generation` could not run, for any caller.** The mock wrote `assetId: "mock-asset-1"`, a
+  row that does not exist, and the write tool resolves the asset it is given and refuses an unknown
+  id — the guard that keeps a model from inventing one. So the stage's own tool refused its own
+  mock's call. `StateFields` gained `AssetIDs` (the same reason `ShotIDs` already exists: a model
+  that cannot see the ids can only guess them) and the mock reads them.
+- **The script could only ever be one shot long.** AC-E2E-002 asks for a board of at least twelve
+  shots, and the criterion's shape requirement is a property of the script the episode was written
+  from. `StateFields` gained an OPTIONAL `ShotCount`, and the mock's fixed two-scene document is
+  unchanged when a caller does not ask — which is what keeps every existing duration assertion
+  honest.
+
+## Verification
+
+**Nine mutations, 9/9 killed.** Three of them (the status write, the supersede, the `CanApprove`
+consultation) are the defect's own fix, so the regression tests cannot pass with the fix removed;
+four are the walk's closing assertions; one is the board's shot floor; one restores the mock's
+hardcoded asset id. Every mutation was restored from a byte-exact copy and the restoration was
+verified by `grep` over all three files.
+
+`scripts/verify.sh`, end to end, exit 0:
+
+| gate | result |
+|---|---|
+| `npm run typecheck` | **PASS** |
+| `npm test` | **PASS** — 99 tests, 0 failures (was 76) |
+| `npm run build` | **PASS** |
+| Playwright, incl. AC-CANVAS-004 | **PASS** — 25 passed, 1 pre-existing conditional skip |
+| MONOFORM source build | **PASS** |
+| `go test ./... -count=1` | **PASS** — 56 packages ok, 0 failed |
+| `go vet ./...` | **PASS** |
+| security scans | **PASS** — 625 files |
+| canary / hostile / tool-schema / skill-pack / SBOM `--check` | **PASS** |
+| `wails build` (production) | **PASS** |
+
+`go test -race` remains an ENVIRONMENT FAILURE on this host, unchanged and still not a pass.
+
+**One defect the frontend suite found on its own**, which is worth recording because it is the same
+class as the Go one: `freshCandidates` counted a collected candidate as new when its `versionId` was
+`undefined` rather than absent, so a user would have been told that versions appeared when none did.
+The test caught it before the interface shipped.
+
+## What WP-13 does NOT cover, stated rather than implied
+
+- **FR-150's per-provider concurrency limit is still unimplemented** (handoff P0-2). The batch
+  submits one job per candidate per shot — 12 shots × 8 candidates is 96 provider calls — and the
+  submit modal states the count before making them, which is the only warning this build gives. That
+  is a dependency this package names rather than hides.
+- The **panel image bytes are the mock adapter's**; no paid provider is contacted, as ADR-0017
+  requires.
+- `ApproveCandidate` and four of the five `AssetsBinding` writes remain without UI callers BY
+  DECISION (ADR-0017 rulings 5 and 6), not by omission.
 
 # 0p. WP-12 item 17: the end-to-end acceptance walk, and the ONE DEFECT it found (2026-09-23)
 
@@ -143,9 +273,10 @@ was affected, and the mutation harness's restores were verified before the cache
 
 ## Known limits, unchanged and restated rather than dropped
 
-- **The panel-image / asset-version gap is OPEN and recorded in section 0n2**: no UI path creates a
-  storyboard panel image or an asset version, so the export chain has a missing middle link in the UI
-  even though the bindings and services exist. It is not one of PRD section 18's eleven blockers.
+- **The panel-image / asset-version gap was OPEN when WP-12 reported, and WP-13 CLOSED it** (section
+  0q, ADR-0017): the storyboard table now creates the asset and the panel version, runs the batch,
+  collects the candidates and approves one per row. This bullet is kept as the record of what WP-12
+  left, with the outcome named so a reader of THAT section is not misled about the present.
 - **Secure desktop mode still has no working video or audio generation**, inherited from item 16.
 - `git status` at the end of this package shows six modified files (the four this fix touched, plus
   `STATUS.md` and `TRACEABILITY.md`), the untracked walk, and one untracked document that was already in

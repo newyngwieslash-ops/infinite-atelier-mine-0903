@@ -17,6 +17,7 @@ import {
     updateStoryboardItem,
 } from "@/services/desktop/drama";
 import { exportShotList, isDocumentExportAvailable, saveDocument } from "@/services/desktop/media";
+import { PanelImagePanel } from "@/components/studio/panel-image-panel";
 import type { desktop } from "@/wailsjs/go/models";
 
 /**
@@ -426,6 +427,20 @@ export function StoryboardTableSection({ projectId, episodes, activeEpisodeId, o
             {/* The board as a document: rendered here to be READ, and written only from what was read.
                 The control is disabled when the build carries no document export rather than left to
                 fail on a press, which is the same answer the timeline's document area gives. */}
+            {/* The panel images (ADR-0017). The export composes from an approved image per shot and
+                nothing in the interface could produce one; this is where a board's rows get theirs.
+                It sits under the rows because that is the work it acts on, and it is given the
+                APPROVED version's id rather than the selected one: the batch refuses an unapproved
+                board, so passing the selection would offer a control that fails on its next call. */}
+            {activeVersion?.status === "approved" ? (
+                <PanelImagePanel
+                    projectId={projectId}
+                    episodeId={activeEpisodeId}
+                    storyboardVersionId={activeVersionId}
+                    items={items}
+                    onChanged={onChanged}
+                />
+            ) : null}
             <Space wrap align="end">
                 <Button
                     icon={<Download className="size-4" />}

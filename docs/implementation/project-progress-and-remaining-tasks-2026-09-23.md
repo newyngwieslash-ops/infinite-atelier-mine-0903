@@ -79,7 +79,7 @@
 
 ### P0 — 产品断链（不修则 MVP 主旅程走不通）
 
-1. **资产生产 UI（面板图/资产版本链路）** — 10 个绑定零前端调用：
+1. ~~**资产生产 UI（面板图/资产版本链路）**~~ **DONE — WP-13, 2026-09-24 (STATUS §0q, ADR-0017).** The ten bindings have callers, the storyboard table generates/collects/approves panel images, and the walk found that `ApprovePanelImage` never wrote the panel's `status` — which the export's join requires. The original text follows. **资产生产 UI（面板图/资产版本链路）** — 10 个绑定零前端调用：
    `RunImageBatch`、`CheckStoryboardGate`、`CollectBatchResults`、`ApproveCandidate`、
    `ApprovePanelImage`、`AddVersion`、`AttachFile`、`AttachJobResult`、`AddUsage`、`AddRelation`。
    导出以 `approved_image_asset_version_id` 合成，**而没有任何界面能把一张图批准到那个状态**——

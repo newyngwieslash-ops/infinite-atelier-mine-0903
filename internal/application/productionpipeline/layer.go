@@ -357,6 +357,13 @@ type StateFields struct {
 	// shots — `storyboard_items.shot_id` has no foreign key, so the handler is what keeps
 	// an invented id out — and a model that could not see the ids could only guess them.
 	ShotIDs []string
+	// AssetIDs are the assets the generation stage may write candidate versions against.
+	//
+	// They travel for the same reason `ShotIDs` does: the stage's write tool resolves the asset it
+	// is told to write against and REFUSES an unknown id, so the ids have to be visible to the model
+	// rather than guessed. The gap report says which assets the episode needs by NAME; resolving
+	// those names to rows is a user's act, and its result is what this field carries.
+	AssetIDs []string
 }
 
 // itoa renders a small non-negative integer without importing strconv for one call site.

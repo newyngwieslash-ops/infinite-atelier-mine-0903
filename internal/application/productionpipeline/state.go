@@ -41,6 +41,14 @@ const (
 	// guess them. The convention is the script layer's for a list in one field:
 	// comma-separated inside it, because the separator between fields is a space.
 	fieldShotIDs = "shot_ids="
+	// fieldAssetIDs is the comma-joined list of assets the generation stage may write against.
+	//
+	// It travels for the same reason `shot_ids` does: the stage's write tool looks its asset up and
+	// REFUSES an unknown id, so a model that could not see the ids could only guess them. The gap
+	// report names the assets the episode needs, and a caller that has resolved those names to asset
+	// rows hands them here — which is what a user does when they create the assets the report calls
+	// for.
+	fieldAssetIDs = "asset_ids="
 )
 
 // renderState renders the prompt's workflow-state layer for one attempt.
@@ -73,6 +81,9 @@ func renderState(attempt workflow.StageRun, request stagepipeline.StageRequest, 
 	// named", which is a different statement from "this stage was not given them".
 	if len(fields.ShotIDs) > 0 {
 		parts = append(parts, fieldShotIDs+strings.Join(fields.ShotIDs, ","))
+	}
+	if len(fields.AssetIDs) > 0 {
+		parts = append(parts, fieldAssetIDs+strings.Join(fields.AssetIDs, ","))
 	}
 	for _, field := range []struct {
 		name  string

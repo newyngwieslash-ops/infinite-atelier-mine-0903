@@ -1,5 +1,13 @@
 # WP-13 — 资产生产 UI：分镜图批量生成、候选批准与 AC-E2E-002 整场景串测
 
+> **BUILT — 2026-09-24.** This plan was implemented in full; the record of what shipped, what it
+> found and what it did not cover is STATUS section 0q, and the rulings are ADR-0017. The plan is
+> kept as written (it is the survey the implementation worked from) rather than rewritten, so a
+> reader can compare the intent with the result. **Two things changed during implementation** and
+> both are in section 0q: the acceptance walk found that `ApprovePanelImage` never wrote the
+> panel's `status`, which the export's join requires; and the `asset_generation` stage could not
+> run for ANY caller, because the mock named an asset row nobody created.
+
 依据：交接文档 P0-1（`docs/implementation/project-progress-and-remaining-tasks-2026-09-23.md:79-105`，
 用户原话裁定"P0-1 单独成包"）、STATUS §0n2（十个零调用绑定，"WP-12 最大未了项"）、
 `PRD.md:1765-1778`（AC-E2E-002 七个子句）、`PRD.md:699-747`（FR-070「批量生成分镜图时可

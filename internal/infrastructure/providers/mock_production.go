@@ -138,8 +138,19 @@ func mockGapReportArguments(request providers.TextRequest) json.RawMessage {
 // mockAssetCandidateArguments builds an asset candidate write from the state.
 func mockAssetCandidateArguments(request providers.TextRequest) json.RawMessage {
 	state := mockWorkflowStateOf(request)
+	// THE ASSET COMES FROM THE STATE, and it did not before: this branch used to name a hardcoded
+	// `mock-asset-1`, so the write tool's own lookup refused every call — the tool resolves the asset
+	// and rejects an unknown id, which is the guard that keeps a model from inventing one. A mock
+	// that named a row nobody created therefore made the stage impossible to run, and nothing
+	// noticed because no test drove it. The first asset the state names is used, exactly as the
+	// storyboard branch takes the shots the state names, through the same reader.
+	assetIDs := splitStateList(fieldOnLine(state, "asset_ids="))
+	assetID := ""
+	if len(assetIDs) > 0 {
+		assetID = assetIDs[0]
+	}
 	document := map[string]any{
-		"assetId": "mock-asset-1",
+		"assetId": assetID,
 		"prompt":  "The deterministic mock candidate for the asset this episode needs.",
 		// The state's episode travels in the metadata so a reader of the version can see
 		// which run proposed it, which is what FR-100's audit reads.

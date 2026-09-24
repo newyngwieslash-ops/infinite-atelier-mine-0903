@@ -964,3 +964,130 @@ export async function getApprovalImpact(versionId: string): Promise<desktop.Appr
     const { GetApprovalImpact } = await loadAssetsBinding();
     return GetApprovalImpact(versionId);
 }
+
+// --- The panel-image chain (WP-13) ---
+//
+// ADR-0017. The export composes from `storyboard_panel_versions.approved_image_asset_version_id`
+// — `timeline.go` and `final_reader.go` both join on it and the Final Ruleset's first rule is
+// that every required shot has approved media — and until this package NOTHING in the webview
+// wrote it. These wrappers are the typed path to the commands that do.
+//
+// The order matters and the UI keeps it: the gate is read first (a batch submitted against an
+// unapproved board is refused anyway, and reading first is what lets the button say WHY), then
+// the batch submits, then results collect into CANDIDATE versions, then one candidate is
+// approved. `ApproveCandidate` deliberately has no wrapper: it is the same act as
+// `approvePanelImage` (it delegates to the same service) and its request carries fewer fields,
+// so two entries would only invite a caller to pick the incomplete one.
+
+/**
+ * checkStoryboardGate reports whether a batch may run, by THROWING when it may not.
+ *
+ * That is the binding's own contract (`Promise<void>`), and the message is the gate's reason
+ * rather than a code: `CheckStoryboardGate` reads four facts — the episode's gap report must
+ * resolve and have no unresolved required item, and the named board or version must be
+ * approved — so the refusal is the sentence a user needs to act on. Callers show it verbatim.
+ */
+export async function checkStoryboardGate(request: desktop.CheckStoryboardGateRequest): Promise<void> {
+    if (!isDramaBindingsAvailable()) throw unavailableError();
+    const { CheckStoryboardGate } = await loadDramaBinding();
+    return CheckStoryboardGate(request);
+}
+
+export async function runImageBatch(
+    request: desktop.RunImageBatchRequest,
+): Promise<desktop.RunImageBatchResultDTO> {
+    if (!isDramaBindingsAvailable()) throw unavailableError();
+    const { RunImageBatch } = await loadDramaBinding();
+    return RunImageBatch(request);
+}
+
+export async function collectBatchResults(
+    request: desktop.CollectBatchResultsRequest,
+): Promise<desktop.CollectedCandidateDTO[]> {
+    if (!isDramaBindingsAvailable()) throw unavailableError();
+    const { CollectBatchResults } = await loadDramaBinding();
+    return CollectBatchResults(request);
+}
+
+export async function createPanelVersion(
+    request: desktop.CreatePanelVersionRequest,
+): Promise<desktop.StoryboardPanelVersionDTO> {
+    if (!isDramaBindingsAvailable()) throw unavailableError();
+    const { CreatePanelVersion } = await loadDramaBinding();
+    return CreatePanelVersion(request);
+}
+
+/**
+ * approvePanelImage puts one candidate in force as the panel's canonical image.
+ *
+ * Section 9.5's rule is enforced in the domain (`CanApproveImage`): the image must be one of
+ * the candidates the caller supplied, so the caller passes the WHOLE gallery it is showing
+ * rather than only the chosen one. `expectedRevision` is the parent storyboard ITEM's revision
+ * — not the panel version's — and a stale value is refused rather than merged, which is the
+ * caller's cue to reload and look again.
+ */
+export async function approvePanelImage(
+    request: desktop.ApprovePanelImageRequest,
+): Promise<desktop.StoryboardPanelVersionDTO> {
+    if (!isDramaBindingsAvailable()) throw unavailableError();
+    const { ApprovePanelImage } = await loadDramaBinding();
+    return ApprovePanelImage(request);
+}
+
+// --- Asset writes the UI reaches, and the four it does not (WP-13) ---
+//
+// ADR-0017 ruling 6. `attachFile` is the one of the five AssetsBinding writes the panel chain
+// needs: it links bytes ALREADY in the file store to a version, which is how a user-supplied
+// image becomes part of an asset's lineage.
+//
+// The other four are wrapped here so tests and later packages have a typed path, and they have
+// no control in the interface BY DECISION rather than by omission:
+//   - `attachJobResult` and `addUsage` already run inside `CollectBatchResults`, which calls
+//     both for every collected candidate.
+//   - `addVersion` would serve "register an externally produced image as a version" as its own
+//     flow, which is a UI this package does not build.
+//   - `addRelation` would serve an explicit lineage editor, likewise.
+// Recording the reason is the difference between "nobody called it" and "we chose not to".
+
+export async function attachFile(request: desktop.AttachFileRequest): Promise<desktop.AssetFileDTO> {
+    if (!isAssetsBindingsAvailable()) throw unavailableError();
+    const { AttachFile } = await loadAssetsBinding();
+    return AttachFile(request);
+}
+
+/** addVersion appends a draft version. No UI caller; ADR-0017 ruling 6 records why. */
+export async function addVersion(request: desktop.AddVersionRequest): Promise<desktop.AssetVersionDTO> {
+    if (!isAssetsBindingsAvailable()) throw unavailableError();
+    const { AddVersion } = await loadAssetsBinding();
+    return AddVersion(request);
+}
+
+/** addUsage records what adopts a version. No UI caller; ADR-0017 ruling 6 records why. */
+export async function addUsage(request: desktop.AddUsageRequest): Promise<desktop.AssetUsageDTO> {
+    if (!isAssetsBindingsAvailable()) throw unavailableError();
+    const { AddUsage } = await loadAssetsBinding();
+    return AddUsage(request);
+}
+
+/** addRelation records a lineage edge. No UI caller; ADR-0017 ruling 6 records why. */
+export async function addRelation(request: desktop.AddRelationRequest): Promise<desktop.AssetRelationDTO> {
+    if (!isAssetsBindingsAvailable()) throw unavailableError();
+    const { AddRelation } = await loadAssetsBinding();
+    return AddRelation(request);
+}
+
+/**
+ * attachJobResult turns a job's produced files into a CANDIDATE version.
+ *
+ * No UI caller of its own — `CollectBatchResults` calls it per collected candidate — but it is
+ * wrapped because it is the command §9.5 depends on: it is the only thing that writes the
+ * candidate status a panel can approve, and a test that wants to set up that state directly
+ * should go through the typed path rather than through a raw binding call.
+ */
+export async function attachJobResult(
+    request: desktop.AttachJobResultRequest,
+): Promise<desktop.AssetVersionDTO> {
+    if (!isAssetsBindingsAvailable()) throw unavailableError();
+    const { AttachJobResult } = await loadAssetsBinding();
+    return AttachJobResult(request);
+}
