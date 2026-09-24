@@ -23,6 +23,14 @@ export type ModelChannel = {
     apiKey: string;
     apiFormat: ApiCallFormat;
     models: ChannelModel[];
+    /**
+     * maxConcurrency is how many jobs this channel's provider may run at once (ADR-0018).
+     *
+     * ZERO OR ABSENT MEANS UNLIMITED, which is the reading the Go side gives it and the one an
+     * upgraded installation depends on: a field that defaulted to any other value would throttle
+     * work nobody asked to throttle.
+     */
+    maxConcurrency?: number;
 };
 
 export type AiConfig = {

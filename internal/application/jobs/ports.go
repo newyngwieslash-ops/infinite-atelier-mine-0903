@@ -49,6 +49,22 @@ type Repository interface {
 	// ActiveCounts reports jobs per status for the queue summary.
 	ActiveCounts(ctx context.Context) (map[job.Status]int, error)
 
+	// ProviderConcurrency returns a provider's configured concurrency limit, where
+	// zero means UNLIMITED (ADR-0018). A provider with no config row reports zero
+	// rather than an error: "this build has no limit for it" is an answer the
+	// scheduler acts on, and an error would stop the queue for a configuration
+	// problem it cannot fix.
+	ProviderConcurrency(ctx context.Context, providerConfigID string) (int, error)
+	// ActiveProviderCounts reports how many jobs each provider is running now,
+	// keyed by provider_config_id. It is the READ the scheduler's admission check is
+	// built on, so its definition of "running" is the query's rather than a caller's:
+	// a job counts while it holds a live lease in a non-terminal status, which is what
+	// makes the count survive a restart (a force-closed process's jobs keep both).
+	//
+	// A job abandoned by an EXPIRED lease does NOT count. Its holder is gone, so it is
+	// consuming nobody's quota, and `ClaimableCandidates` already treats it as runnable.
+	ActiveProviderCounts(ctx context.Context, now time.Time) (map[string]int, error)
+
 	// Attempts.
 	StartAttempt(ctx context.Context, attempt job.Attempt) error
 	FinishAttempt(ctx context.Context, attempt job.Attempt) error

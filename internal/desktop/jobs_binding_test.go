@@ -382,6 +382,18 @@ func (r *stubJobRepository) ActiveCounts(context.Context) (map[job.Status]int, e
 	return counts, nil
 }
 
+// ProviderConcurrency and ActiveProviderCounts are the admission check's two reads (ADR-0018). This
+// stub backs the BINDING's tests, whose subject is the transport rather than the scheduler, so it
+// reports every provider as unlimited and nothing in flight — the answers a build with no limits
+// configured gives, which is the behaviour those tests were written against.
+func (r *stubJobRepository) ProviderConcurrency(context.Context, string) (int, error) {
+	return 0, nil
+}
+
+func (r *stubJobRepository) ActiveProviderCounts(context.Context, time.Time) (map[string]int, error) {
+	return map[string]int{}, nil
+}
+
 func (r *stubJobRepository) StartAttempt(context.Context, job.Attempt) error  { return nil }
 func (r *stubJobRepository) FinishAttempt(context.Context, job.Attempt) error { return nil }
 func (r *stubJobRepository) ListAttempts(context.Context, string) ([]job.Attempt, error) {

@@ -3504,6 +3504,7 @@ export namespace desktop {
 	    kind: string;
 	    displayName: string;
 	    baseUrl: string;
+	    maxConcurrency: number;
 	    localApprove: boolean;
 	    enabled: boolean;
 	
@@ -3517,6 +3518,7 @@ export namespace desktop {
 	        this.kind = source["kind"];
 	        this.displayName = source["displayName"];
 	        this.baseUrl = source["baseUrl"];
+	        this.maxConcurrency = source["maxConcurrency"];
 	        this.localApprove = source["localApprove"];
 	        this.enabled = source["enabled"];
 	    }
@@ -5870,6 +5872,7 @@ export namespace providers {
 	    displayName: string;
 	    baseUrl: string;
 	    secretRef: string;
+	    maxConcurrency: number;
 	    localApproved: boolean;
 	    enabled: boolean;
 	    revision: number;
@@ -5886,6 +5889,7 @@ export namespace providers {
 	        this.displayName = source["displayName"];
 	        this.baseUrl = source["baseUrl"];
 	        this.secretRef = source["secretRef"];
+	        this.maxConcurrency = source["maxConcurrency"];
 	        this.localApproved = source["localApproved"];
 	        this.enabled = source["enabled"];
 	        this.revision = source["revision"];

@@ -164,6 +164,35 @@ test("toProviderConfigInput produces the Go-side non-secret shape", () => {
     assert.ok(!JSON.stringify(input).includes("sk-"), "provider config input must not contain a key");
 });
 
+test("toProviderConfigInput sends the concurrency limit, and absent reads as unlimited", () => {
+    // FR-150's 「同供应商并发不超过配置上限」 reaches Go through this field, and the two readings that
+    // matter are the ones this asserts:
+    //
+    //   - a channel saved before WP-14 has NO field, and the wire value must be 0 — which the Go side
+    //     reads as unlimited. Sending `undefined` would serialize as an absent JSON property, which Go
+    //     decodes as 0 anyway, but a NaN or a negative restored from a hand-edited store would be sent
+    //     verbatim and the domain would REFUSE the whole save.
+    //   - a limit the user typed is carried through unchanged.
+    const withoutField = toProviderConfigInput({
+        id: "Relay A", name: "Relay A", baseUrl: "https://relay.example.com", apiKey: "",
+        apiFormat: "openai", models: [],
+    } as never);
+    assert.equal(withoutField.maxConcurrency, 0, "an absent limit must reach Go as 0 (unlimited)");
+
+    const withLimit = toProviderConfigInput({
+        id: "Relay B", name: "Relay B", baseUrl: "https://relay.example.com", apiKey: "",
+        apiFormat: "openai", models: [], maxConcurrency: 3,
+    } as never);
+    assert.equal(withLimit.maxConcurrency, 3);
+
+    // A junk value from a hand-edited store becomes 0 rather than a negative the domain would refuse.
+    const negative = toProviderConfigInput({
+        id: "Relay C", name: "Relay C", baseUrl: "https://relay.example.com", apiKey: "",
+        apiFormat: "openai", models: [], maxConcurrency: -5,
+    } as never);
+    assert.equal(negative.maxConcurrency, 0, "a negative must be clamped, not sent");
+});
+
 test("legacyKeyLocations reports plaintext keys without exposing them", () => {
     const locations = legacyKeyLocations(makeConfig() as never);
     assert.equal(locations.rootKey, true);

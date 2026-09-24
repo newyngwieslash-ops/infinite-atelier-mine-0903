@@ -105,6 +105,10 @@ export type ProviderConfigInput = {
     baseUrl: string;
     localApprove: boolean;
     enabled: boolean;
+    /**
+     * maxConcurrency is the provider's job ceiling, where ZERO MEANS UNLIMITED (ADR-0018).
+     */
+    maxConcurrency: number;
 };
 
 export async function saveProviderConfig(request: ProviderConfigInput): Promise<providers.ConfigDTO | null> {

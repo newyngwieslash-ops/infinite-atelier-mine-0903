@@ -20,6 +20,9 @@ type memoryRepository struct {
 	dependencies map[string][]job.Dependency
 	attempts     map[string][]job.Attempt
 	nextAttempt  map[string]int
+	// providerLimits is the admission check's configuration, keyed by provider id. A nil map means
+	// every provider is unlimited, which is what keeps every test written before WP-14 unchanged.
+	providerLimits map[string]int
 }
 
 func newMemoryRepository() *memoryRepository {
@@ -254,6 +257,54 @@ func (r *memoryRepository) ActiveCounts(ctx context.Context) (map[job.Status]int
 	counts := map[job.Status]int{}
 	for _, record := range r.jobs {
 		counts[record.Status]++
+	}
+	return counts, nil
+}
+
+// providerLimits is the test double's configuration for the admission check, so a test states a
+// provider's ceiling the way a saved config row would.
+func (r *memoryRepository) setProviderLimits(limits map[string]int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.providerLimits = limits
+}
+
+// ProviderConcurrency mirrors the real repository's contract, including the two answers that are
+// not errors: no row and a zero both mean UNLIMITED (ADR-0018).
+func (r *memoryRepository) ProviderConcurrency(ctx context.Context, providerConfigID string) (int, error) {
+	if err := guard(ctx); err != nil {
+		return 0, err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.providerLimits == nil {
+		return 0, nil
+	}
+	return r.providerLimits[providerConfigID], nil
+}
+
+// ActiveProviderCounts counts what the double holds as in flight, by the same definition the SQL
+// uses: a live lease in a non-terminal status. It is what makes the scheduler tests meaningful —
+// a double that counted differently would let a broken admission check pass.
+func (r *memoryRepository) ActiveProviderCounts(ctx context.Context, now time.Time) (map[string]int, error) {
+	if err := guard(ctx); err != nil {
+		return nil, err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	counts := map[string]int{}
+	for _, record := range r.jobs {
+		if record.ProviderConfigID == "" || record.LeaseOwner == "" {
+			continue
+		}
+		if !record.LeaseExpiresAt.After(now) {
+			continue
+		}
+		switch record.Status {
+		case job.StatusRunning, job.StatusWaitingRemote, job.StatusDownloading,
+			job.StatusVerifying, job.StatusRetryWait, job.StatusRecovering:
+			counts[record.ProviderConfigID]++
+		}
 	}
 	return counts, nil
 }

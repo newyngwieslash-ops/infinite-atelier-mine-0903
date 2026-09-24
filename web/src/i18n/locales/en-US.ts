@@ -1015,6 +1015,8 @@ export default {
             systemPromptPlaceholder: "For example: You are a visual director specializing in cinematic, photorealistic imagery.",
         },
         channelEditor: {
+                maxConcurrency: "Max concurrency",
+                maxConcurrencyHint: "How many jobs this provider may run at once. 0 means unlimited.",
             title: "Edit provider",
             name: "Provider name",
             protocol: "Protocol",

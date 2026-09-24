@@ -1,4 +1,4 @@
-import { Button, Drawer, Input, Segmented, Select, Space } from "antd";
+import { Button, Drawer, Input, InputNumber, Segmented, Select, Space } from "antd";
 import { ListPlus, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -108,6 +108,23 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
                 <label className="block md:col-span-2">
                     <span className="mb-1 block text-sm font-medium">{t("config.channelEditor.baseUrl")}</span>
                     <Input value={draft.baseUrl} onChange={(event) => patch({ baseUrl: event.target.value })} placeholder="https://api.example.com" />
+                </label>
+                {/*
+                  The provider's job ceiling (ADR-0018, FR-150's 「同供应商并发不超过配置上限」).
+                  ZERO IS UNLIMITED, and the hint says so: a field showing 0 with no explanation
+                  reads as "no work may run", which is the opposite of what it means.
+                */}
+                <label className="block">
+                    <span className="mb-1 block text-sm font-medium">{t("config.channelEditor.maxConcurrency")}</span>
+                    <InputNumber
+                        className="w-full"
+                        min={0}
+                        max={1000}
+                        value={draft.maxConcurrency ?? 0}
+                        onChange={(value) => patch({ maxConcurrency: Math.max(0, Math.trunc(Number(value ?? 0))) })}
+                        data-testid="channel-max-concurrency"
+                    />
+                    <span className="mt-1 block text-xs text-stone-500">{t("config.channelEditor.maxConcurrencyHint")}</span>
                 </label>
                 {/*
                   Secure mode stores keys in the OS credential store through the

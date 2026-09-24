@@ -1,0 +1,34 @@
+-- WP-14: a per-provider concurrency limit, and why its default matters more than its name.
+--
+-- # Why this migration exists
+--
+-- PRD FR-150 lists 「Provider 并发和速率限制」 among its capabilities and makes the concurrency half an
+-- acceptance criterion in as many words: 「同供应商并发不超过配置上限」. The data to enforce it has been
+-- there since migration 000003 — `generation_jobs.provider_config_id` is written by every submission
+-- — and NOTHING read it for admission control: the scheduler claims by priority and age, and
+-- `provider_configs` had no column to configure a limit in.
+--
+-- That was survivable while a batch was two jobs. WP-13 made it consequential: its panel-image batch
+-- submits one job per candidate per shot, so a 12-shot board at 8 candidates is 96 provider calls
+-- from one command. Against the deterministic mock harmless, and against a real provider the quota
+-- exhaustion the clause exists to prevent.
+--
+-- # Why 0 means UNLIMITED rather than "run none"
+--
+-- This is the one decision in the migration that changes behaviour if it is wrong. Every existing
+-- `provider_configs` row gains `max_concurrency = 0`, and the scheduler reads 0 as "no limit" — so
+-- an upgraded installation behaves EXACTLY as it did before, and a user who wants a limit sets one.
+--
+-- The alternative reading — 0 means "run nothing" — would turn every upgrade into an installation
+-- whose image, video and audio work all stopped until somebody edited a setting. A limit is a
+-- restriction a person asks for, and a default that enforces one silently is a default that breaks
+-- work.
+--
+-- # Why a CHECK and not a lookup table
+--
+-- The value is a small non-negative integer on a row that already exists. The CHECK refuses a
+-- negative, which is the only value that has no meaning: `-1` could be read as "unlimited" by a
+-- caller that did not know about 0, and two spellings of one state is how a reader ends up guessing.
+
+ALTER TABLE provider_configs ADD COLUMN max_concurrency INTEGER NOT NULL DEFAULT 0
+    CHECK (max_concurrency >= 0);

@@ -12,7 +12,12 @@ import (
 
 func openProviderRepo(t *testing.T) *ProviderRepository {
 	t.Helper()
-	handle, err := open(context.Background(), filepath.Join(t.TempDir(), "app.db"), filepath.Join(t.TempDir(), "snapshots"), wp03Migrations(t), time.Now)
+	// THE CURRENT migration set, not the WP-03 one this fixture used to carry. `ProviderRepository`
+	// is live code and its column list moves with the schema, so a test that pinned the repository
+	// against a frozen three-migration database would fail the moment the table gained a column —
+	// which is exactly what WP-14's `max_concurrency` did. The WP-03 set keeps its own tests; a
+	// repository test belongs on the schema the repository is written against.
+	handle, err := open(context.Background(), filepath.Join(t.TempDir(), "app.db"), filepath.Join(t.TempDir(), "snapshots"), wp05Migrations(t), time.Now)
 	if err != nil {
 		t.Fatal(err)
 	}

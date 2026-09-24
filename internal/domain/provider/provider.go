@@ -135,16 +135,36 @@ func SecretRefValue(providerID string) string {
 // Config is a persisted, non-secret provider configuration. The secret value
 // never appears here; SecretRef points at the OS-backed SecretStore entry.
 type Config struct {
-	ID            string
-	Kind          Kind
-	DisplayName   string
-	BaseURL       string
-	SecretRef     string
-	LocalApproved bool
-	Enabled       bool
-	Revision      int64
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
+	ID          string
+	Kind        Kind
+	DisplayName string
+	BaseURL     string
+	SecretRef   string
+	// MaxConcurrency bounds how many jobs this provider may run at once.
+	//
+	// ZERO MEANS UNLIMITED, and that is the reading every caller must share: it is what an
+	// upgraded configuration's default is (ADR-0018), so treating zero as "run nothing" would
+	// stop image, video and audio work on every installation that had not set a limit. A
+	// negative is refused rather than read as a second spelling of unlimited.
+	MaxConcurrency int
+	LocalApproved  bool
+	Enabled        bool
+	Revision       int64
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+}
+
+// MaxConcurrencyCeiling bounds what a configuration may ask for.
+//
+// It exists so a typo cannot become a number the scheduler carries around: a caller who meant 8 and
+// typed 8000 would otherwise have a provider that admits everything, silently — the opposite of what
+// they asked for. The ceiling is far above any provider's real limit and far below anything that
+// would overflow a counter.
+const MaxConcurrencyCeiling = 1000
+
+// IsValidMaxConcurrency reports whether a configured limit may be persisted.
+func IsValidMaxConcurrency(value int) bool {
+	return value >= 0 && value <= MaxConcurrencyCeiling
 }
 
 // ConfigInput is the validated, untrusted creation/update payload shape used
@@ -156,6 +176,8 @@ type ConfigInput struct {
 	BaseURL      string
 	LocalApprove bool
 	Enabled      bool
+	// MaxConcurrency is the limit to store, 0 for unlimited.
+	MaxConcurrency int
 }
 
 // RequestRecord is the redacted audit entry persisted per provider call. It

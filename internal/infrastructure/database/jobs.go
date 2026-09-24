@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/jobs"
@@ -174,6 +175,81 @@ func (r *JobRepository) ClaimableCandidates(ctx context.Context, now time.Time, 
 		return nil, job.FailedJobError(job.CategoryStorage, "Runnable jobs could not be read.")
 	}
 	return records, nil
+}
+
+// ProviderConcurrency returns a provider's configured limit, where zero means unlimited.
+//
+// A provider with no row reports zero: this build has no limit for it, which is the same answer as
+// an explicitly unlimited one, and an error would stop the queue over a configuration the scheduler
+// cannot repair.
+func (r *JobRepository) ProviderConcurrency(ctx context.Context, providerConfigID string) (int, error) {
+	if r == nil || r.db == nil {
+		return 0, job.FailedJobError(job.CategoryStorage, "The job store is unavailable.")
+	}
+	providerConfigID = strings.TrimSpace(providerConfigID)
+	if providerConfigID == "" {
+		return 0, nil
+	}
+	var limit int
+	err := r.db.QueryRowContext(ctx,
+		`SELECT max_concurrency FROM provider_configs WHERE id = ?`, providerConfigID).Scan(&limit)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return 0, nil
+		}
+		return 0, job.FailedJobError(job.CategoryStorage, "The provider's concurrency limit could not be read.")
+	}
+	return limit, nil
+}
+
+// ActiveProviderCounts reports how many jobs each provider is running now.
+//
+// # What "running" means here, and why it is this particular query
+//
+// A job counts while it holds a LIVE LEASE in a non-terminal status. Both halves of that are
+// load-bearing:
+//
+//   - The lease is what makes the count survive a restart. A force-closed application leaves its
+//     jobs in their non-terminal statuses with a lease that has not yet expired, and a restarted
+//     scheduler counting by status alone would be right — but a count kept IN MEMORY would have
+//     started from zero and would admit a second full set of work against a provider already
+//     serving the first (ADR-0018 ruling 3).
+//   - The lease must still be LIVE. A job whose holder died is consuming nobody's quota, and
+//     `ClaimableCandidates` already offers it to the next worker; counting it would permanently
+//     reduce the provider's throughput after a single crash (ruling 4).
+//
+// The status list is the non-terminal set from the migration's CHECK, minus `queued` (not started)
+// and `retry_wait`'s own semantics — a job waiting to retry holds no provider slot, but it DOES
+// hold its claim on the row, so it is counted: the attempt it is between may have left work running
+// remotely, and admitting a replacement pair would multiply the real concurrency.
+func (r *JobRepository) ActiveProviderCounts(ctx context.Context, now time.Time) (map[string]int, error) {
+	if r == nil || r.db == nil {
+		return nil, job.FailedJobError(job.CategoryStorage, "The job store is unavailable.")
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT provider_config_id, COUNT(*) FROM generation_jobs
+		WHERE provider_config_id <> ''
+		  AND lease_owner <> ''
+		  AND lease_expires_at > ?
+		  AND status IN ('running', 'waiting_remote', 'downloading', 'verifying', 'retry_wait', 'recovering')
+		GROUP BY provider_config_id`, now.UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return nil, job.FailedJobError(job.CategoryStorage, "The running jobs per provider could not be read.")
+	}
+	defer rows.Close()
+	counts := map[string]int{}
+	for rows.Next() {
+		var providerID string
+		var count int
+		if err := rows.Scan(&providerID, &count); err != nil {
+			return nil, job.FailedJobError(job.CategoryStorage, "The running jobs per provider could not be read.")
+		}
+		counts[providerID] = count
+	}
+	if err := rows.Err(); err != nil {
+		return nil, job.FailedJobError(job.CategoryStorage, "The running jobs per provider could not be read.")
+	}
+	return counts, nil
 }
 
 // Claim atomically takes ownership of a claimable job.

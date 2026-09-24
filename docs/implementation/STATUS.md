@@ -2,17 +2,20 @@
 
 > Last updated: 2026-09-24
 > Product: Infinite Atelier Core + Drama Production Pack
-> Current work package: **WP-13 — 资产生产 UI：分镜图批量生成、候选批准与 AC-E2E-002 整场景串测**
-> Status: **COMPLETE (section 0q).** The ten desktop bindings that had zero frontend callers now
-> have a path, so the export chain's missing middle is filled: the storyboard table generates panel
-> images in a batch, collects them into candidate versions and approves one per shot — the column the
-> MP4 export joins on. **The acceptance walk found a second real defect**, and a worse one than the
-> code read suggested: `ApprovePanelImage` recorded the image while nothing wrote the panel's
-> `status`, which the export's join requires, so an approval was invisible to the export AND a
-> replacement frame would have exported the OLD one. Fixed, with both halves pinned by regression
-> tests and nine mutations killed. PRD section 19's AC-E2E-002 now passes as ONE scenario —
-> 32,736 characters across five chapters to twelve approved panel images, each traceable to its job
-> and version — where before two canaries covered its halves and neither read its closing clause.
+> Current work package: **WP-14 — FR-150 的每 Provider 并发上限（handoff P0-2）**
+> Status: **COMPLETE (section 0r).** `PRD.md:1168`'s 「同供应商并发不超过配置上限」 is enforced:
+> migration 000022 adds `provider_configs.max_concurrency` (0 = unlimited, so every upgrade behaves
+> exactly as before), the scheduler admits per provider in `dispatch` rather than refusing in
+> `Claim` — so a full provider cannot starve the others — and the count is read from the database
+> with a live-lease condition, which is what makes it survive a restart and ignore a crash's ghosts.
+> Five tests measure the peaks inside the runner (1/2/3 for limits 1/2/none), eight mutations are all
+> killed. **The rate-limit half of FR-150's clause is NOT built and is named** (ADR-0018 ruling 8).
+>
+> **WP-13 remains COMPLETE (section 0q)** — the asset-production UI, which closed the panel-image gap
+> and found that `ApprovePanelImage` never wrote the panel's `status` the export's join requires (a
+> replacement frame would have exported the OLD one). PRD section 19's AC-E2E-002 now passes as ONE
+> scenario: 32,736 characters across five chapters to twelve approved panel images, each traceable
+> to its job and version.
 >
 > **WP-12 remains COMPLETE** — items 3, 4, 5, 6, 9, 10, 12, 13, 14, 15, 16 and 17 are closed; the
 > release-blocker audit is complete with all eleven CLEARED. Item 17's end-to-end walk is in section
@@ -33,10 +36,120 @@
 > P0 item there (the asset-production UI's ten zero-caller bindings) is the same gap
 > section 0n2 names, now stated with its priority and the rest of the backlog.
 >
-> **The next item is handoff P0-2**: FR-150's per-provider concurrency limit, still unimplemented
-> and now more consequential, because WP-13's batch can submit 96 provider calls in one command.
-> The full remaining-task list stays at `docs/implementation/project-progress-and-remaining-tasks-2026-09-23.md`,
-> whose P0-1 is now DONE; P1 to P4 are unchanged.
+> **Handoff P0-1 and P0-2 are both DONE.** The remaining-task list stays at
+> `docs/implementation/project-progress-and-remaining-tasks-2026-09-23.md`, where the P0 section is
+> now closed and **P1 to P4 are unchanged** — P1 opens with FR-100's explicit-stage-dependency
+> ruling, which is a product decision rather than a code task.
+
+# 0r. WP-14 result: FR-150's per-provider concurrency limit (2026-09-24)
+
+WP-14 is COMPLETE. It closes the handoff's P0-2 — `PRD.md:1168`'s 「同供应商并发不超过配置上限」 —
+and it is the item WP-13 made urgent: that package's panel-image batch submits one job per candidate
+per shot, so a 12-shot board at 8 candidates is **96 provider calls from one command**.
+
+## What was wrong, precisely
+
+`generation_jobs.provider_config_id` has been written by every submission since migration 000003.
+**Nothing read it for admission control**: the scheduler claims by `ORDER BY priority DESC,
+created_at ASC` with no provider dimension, and `provider_configs` had no column to configure a limit
+in. The batch's own semaphore (`DefaultMaxImageConcurrency = 2`) bounds the wrong thing — how fast
+jobs are SUBMITTED, not how many EXECUTE — so once queued, the pool ran them at the pool's size
+regardless of which provider served them.
+
+## What was built
+
+**Migration 000022** adds `provider_configs.max_concurrency INTEGER NOT NULL DEFAULT 0 CHECK
+(max_concurrency >= 0)`. **Zero means UNLIMITED**, and that default is the decision the migration
+turns on: every existing row gains 0, so an upgraded installation behaves exactly as it did, and a
+user who wants a limit sets one. The alternative reading would have stopped all image, video and
+audio work on every upgrade until somebody edited a setting.
+
+**Admission happens in `dispatch`, not in `Claim`.** Each pass takes one snapshot of how many jobs
+every provider is running, and a candidate whose provider is at its ceiling is SKIPPED — not failed,
+not claimed. It keeps its place and its priority. This is what keeps a full provider from starving
+the others: a candidate for a different provider is still admissible in the same pass.
+
+**The count comes from the database, not from memory**, and both halves of that are load-bearing:
+
+- A job counts while it holds a **live lease** in a non-terminal status. The lease is what makes the
+  count survive a restart — a force-closed application leaves its jobs running with unexpired
+  leases, and a count kept in memory would have started from zero and admitted a second full set
+  against a provider already serving the first.
+- A job abandoned by an **expired** lease does NOT count. Its holder is gone, so it is consuming
+  nobody's quota, and `ClaimableCandidates` already offers it to the next worker; counting it would
+  permanently reduce that provider's throughput after a single crash.
+
+**A per-pass counter closes the window the snapshot leaves.** Without it, sixteen candidates for one
+provider with a limit of one would all look admissible and all be claimed, because the counts were
+read before any of them moved.
+
+**The limit is configurable from the interface**: a field on the existing channel form, with the
+"0 means unlimited" reading stated in the hint — a field showing 0 with no explanation reads as "no
+work may run", which is the opposite of what it means.
+
+## The rate limit is NOT built, and that is recorded
+
+`PRD.md:1161` names 「并发**和**速率限制」; `:1168`'s acceptance criterion grades only concurrency.
+A token bucket with per-window state is a different mechanism with its own failure modes, and
+building it here would be inventing scope. ADR-0018 ruling 8 names it undone, and the TRACEABILITY
+row carries it so it is not silently dropped.
+
+## Verification
+
+**Five tests, one per way this can be wrong** (ADR-0018's Verification section lists the mapping):
+
+| test | what it catches |
+|---|---|
+| `TestSchedulerHonoursPerProviderConcurrency` | not enforced at all; **and** a full provider starving another. Measured peaks: relay-a=1 (limit 1), relay-b=2 (limit 2), relay-c=3 (unlimited) |
+| `TestAnExpiredLeaseDoesNotCount` | a ghost permanently reducing throughput |
+| `TestALiveLeaseDoesCount` | the previous test passing for the wrong reason |
+| `TestARestartedSchedulerStillHonoursTheLimit` | the count living in memory |
+| `TestZeroMeansUnlimited` | 0 read as "run nothing", which would break every upgrade |
+
+The probes MEASURE rather than infer: the highest number of that provider's jobs in flight is
+recorded inside the runner, at the moment the work is running, because the scheduler's own books
+could agree with a broken check.
+
+**Eight mutations, 8/8 killed**, each restored from a byte-exact copy and the restoration verified by
+grep: the admission skip, the per-pass counter, the `limit > 0` reading, the live-lease SQL clause,
+the expired-lease exclusion, the missing-row answer, and the two wire paths (the DTO field and the
+column's persistence).
+
+Two failures the change caused elsewhere, both fixed and both honest:
+
+- `openProviderRepo` pinned `ProviderRepository` against the frozen WP-03 three-migration set. A
+  repository test belongs on the schema the repository is written against, so it now uses the
+  current set; the WP-03 set keeps its own tests.
+- The desktop job stub needed the two new port methods. It answers "unlimited, nothing in flight",
+  which is what a build with no limits configured gives — the behaviour those binding tests were
+  written against.
+
+`scripts/verify.sh`, end to end, exit 0:
+
+| gate | result |
+|---|---|
+| `npm run typecheck` | **PASS** |
+| `npm test` | **PASS** — 100 tests, 0 failures (was 99) |
+| `npm run build` | **PASS** |
+| Playwright, incl. AC-CANVAS-004 | **PASS** — 25 passed, 1 pre-existing conditional skip |
+| MONOFORM source build | **PASS** |
+| `go test ./... -count=1` | **PASS** — 56 packages ok, 0 failed |
+| `go vet ./...` | **PASS** |
+| security scans | **PASS** — 626 files |
+| canary / hostile / tool-schema / skill-pack / SBOM `--check` | **PASS** |
+| `wails build` (production) | **PASS** |
+
+`go test -race` remains an ENVIRONMENT FAILURE on this host, unchanged and still not a pass.
+
+## What WP-14 does NOT cover
+
+- **The rate limit** (ADR-0018 ruling 8), as above.
+- **Two scheduler processes on one database can each over-admit by one dispatch pass.** This build is
+  a single-process desktop application (AGENTS section 7.3) and the window is one pass, but it is
+  real and ADR-0018 records it rather than claiming it away. A multi-process build would need the
+  admission and the claim in one transaction.
+- No cross-provider global cap beyond the worker pool's size, which already exists.
+- No per-model or per-job-type limits: the PRD does not ask for them.
 
 # 0q. WP-13 result: the asset-production UI, and the defect the walk found (2026-09-24)
 
@@ -150,10 +263,11 @@ The test caught it before the interface shipped.
 
 ## What WP-13 does NOT cover, stated rather than implied
 
-- **FR-150's per-provider concurrency limit is still unimplemented** (handoff P0-2). The batch
-  submits one job per candidate per shot — 12 shots × 8 candidates is 96 provider calls — and the
-  submit modal states the count before making them, which is the only warning this build gives. That
-  is a dependency this package names rather than hides.
+- **FR-150's per-provider concurrency limit was unimplemented when WP-13 reported, and WP-14 built it**
+  (section 0r, ADR-0018). The batch submits one job per candidate per shot — 12 shots × 8 candidates
+  is 96 provider calls — and the submit modal still states the count before making them; what changed
+  is that the scheduler now admits those calls at the provider's own configured ceiling. This bullet is
+  kept as the record of the dependency WP-13 named, with its outcome.
 - The **panel image bytes are the mock adapter's**; no paid provider is contacted, as ADR-0017
   requires.
 - `ApproveCandidate` and four of the five `AssetsBinding` writes remain without UI callers BY

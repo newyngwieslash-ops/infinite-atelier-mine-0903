@@ -198,15 +198,20 @@ type AuditPort interface {
 
 // ConfigDTO is the safe transport view of a provider configuration.
 type ConfigDTO struct {
-	ID            string `json:"id"`
-	Kind          string `json:"kind"`
-	DisplayName   string `json:"displayName"`
-	BaseURL       string `json:"baseUrl"`
-	SecretRef     string `json:"secretRef"`
-	LocalApproved bool   `json:"localApproved"`
-	Enabled       bool   `json:"enabled"`
-	Revision      int64  `json:"revision"`
-	UpdatedAt     string `json:"updatedAt,omitempty"`
+	ID          string `json:"id"`
+	Kind        string `json:"kind"`
+	DisplayName string `json:"displayName"`
+	BaseURL     string `json:"baseUrl"`
+	SecretRef   string `json:"secretRef"`
+	// MaxConcurrency is how many jobs this provider may run at once, where ZERO means
+	// UNLIMITED (ADR-0018). The comment is on the wire shape as well as the domain type
+	// because the interface is where a user meets the reading: a field that showed 0 without
+	// saying what it means would read as "no work may run".
+	MaxConcurrency int    `json:"maxConcurrency"`
+	LocalApproved  bool   `json:"localApproved"`
+	Enabled        bool   `json:"enabled"`
+	Revision       int64  `json:"revision"`
+	UpdatedAt      string `json:"updatedAt,omitempty"`
 }
 
 // Service is the application service orchestrating configs, secrets status,
@@ -253,6 +258,12 @@ func (s *Service) CreateOrUpdateConfig(ctx context.Context, input provider.Confi
 	if input.DisplayName == "" || len(input.DisplayName) > 100 {
 		return provider.Config{}, provider.NewConfigurationError()
 	}
+	// A limit outside the range is REFUSED rather than clamped: a caller who asked for 8000 and
+	// silently got 1000 would believe their provider admits more than it does, and the refusal
+	// names the range it can act on.
+	if !provider.IsValidMaxConcurrency(input.MaxConcurrency) {
+		return provider.Config{}, provider.NewConfigurationError()
+	}
 	existing, err := s.repository.GetConfig(ctx, input.ID)
 	if err != nil {
 		providerErr, ok := provider.AsProviderError(err)
@@ -276,6 +287,7 @@ func (s *Service) CreateOrUpdateConfig(ctx context.Context, input provider.Confi
 	config.BaseURL = input.BaseURL
 	config.LocalApproved = input.LocalApprove
 	config.Enabled = input.Enabled
+	config.MaxConcurrency = input.MaxConcurrency
 	config.SecretRef = provider.SecretRefValue(config.ID)
 	config.UpdatedAt = now
 	if err := s.repository.SaveConfig(ctx, config); err != nil {

@@ -10,14 +10,15 @@ import (
 // carries the secret reference only; it can never carry a secret value.
 func ToConfigDTO(config provider.Config) ConfigDTO {
 	dto := ConfigDTO{
-		ID:            config.ID,
-		Kind:          string(config.Kind),
-		DisplayName:   config.DisplayName,
-		BaseURL:       config.BaseURL,
-		SecretRef:     config.SecretRef,
-		LocalApproved: config.LocalApproved,
-		Enabled:       config.Enabled,
-		Revision:      config.Revision,
+		ID:             config.ID,
+		Kind:           string(config.Kind),
+		DisplayName:    config.DisplayName,
+		BaseURL:        config.BaseURL,
+		SecretRef:      config.SecretRef,
+		MaxConcurrency: config.MaxConcurrency,
+		LocalApproved:  config.LocalApproved,
+		Enabled:        config.Enabled,
+		Revision:       config.Revision,
 	}
 	if !config.UpdatedAt.IsZero() {
 		dto.UpdatedAt = config.UpdatedAt.UTC().Format(time.RFC3339)

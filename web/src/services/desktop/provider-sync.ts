@@ -26,6 +26,9 @@ export function toProviderConfigInput(channel: ModelChannel): ProviderConfigInpu
         baseUrl,
         localApprove: isLocalAddress(baseUrl),
         enabled: true,
+        // Absent reads as 0, which the Go side reads as unlimited. The Math.max is what keeps a
+        // channel saved before WP-14 — or a hand-edited store — from sending a negative or a NaN.
+        maxConcurrency: Math.max(0, Math.trunc(channel.maxConcurrency || 0)),
     };
 }
 

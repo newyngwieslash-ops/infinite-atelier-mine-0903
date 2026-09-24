@@ -3,6 +3,7 @@ package jobs
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/job"
@@ -110,12 +111,42 @@ const settleTimeout = 5 * time.Second
 
 // dispatch claims as many runnable jobs as the workers can take. A bounded
 // batch keeps each pass short so cancellation stays responsive.
+//
+// # The per-provider admission check, and why it is here rather than in Claim
+//
+// FR-150's second acceptance criterion is 「同供应商并发不超过配置上限」, and the candidates arrive in
+// PRIORITY order with no provider dimension — so a naive implementation would either refuse a job
+// inside the claim (spending the pass on work it cannot run, and letting one provider's full queue
+// occupy the head of every batch) or claim everything and check afterwards (which is what the
+// request limit already does, and it bounds submission rather than execution).
+//
+// So each pass takes ONE snapshot of how many jobs every provider is running, and a candidate whose
+// provider is at its ceiling is SKIPPED — not failed, not claimed. It keeps its place and its
+// priority, and the next pass offers it again. This is what keeps a full provider from starving the
+// others: a candidate for a different provider is still admissible in the same pass.
+//
+// The snapshot is taken once per pass, so `claimedThisPass` closes the window the snapshot leaves:
+// without it, sixteen candidates for one provider with a limit of one would all look admissible and
+// all be claimed, because the counts were read before any of them moved.
 func (s *Service) dispatch(ctx context.Context, work chan<- job.Job) {
 	const batch = 16
-	candidates, err := s.repository.ClaimableCandidates(ctx, s.now(), batch)
+	now := s.now()
+	candidates, err := s.repository.ClaimableCandidates(ctx, now, batch)
 	if err != nil || len(candidates) == 0 {
 		return
 	}
+	// The admission state for this pass. A failure to READ it is not a reason to stop the
+	// scheduler: an unreadable count means the limit cannot be enforced THIS pass, and the
+	// alternative — refusing all work — would turn a transient storage fault into a stalled queue.
+	// The limits are what the safety of the check rests on, so a provider whose limit could not be
+	// read is treated as UNLIMITED rather than as zero: a read failure must not silently stop work.
+	running, runningErr := s.repository.ActiveProviderCounts(ctx, now)
+	if runningErr != nil {
+		running = map[string]int{}
+	}
+	claimedThisPass := map[string]int{}
+	limits := map[string]int{}
+	limitRead := map[string]bool{}
 	for _, candidate := range candidates {
 		if ctx.Err() != nil {
 			return
@@ -132,10 +163,30 @@ func (s *Service) dispatch(ctx context.Context, work chan<- job.Job) {
 			}
 			continue
 		}
-		claim, err := s.repository.Claim(ctx, candidate.ID, s.newID("worker"), s.now().Add(DefaultLeaseTTL), s.now())
+		if providerID := strings.TrimSpace(candidate.ProviderConfigID); providerID != "" {
+			if !limitRead[providerID] {
+				limit, readErr := s.repository.ProviderConcurrency(ctx, providerID)
+				if readErr != nil {
+					// Unreadable is UNLIMITED, for the reason above.
+					limit = 0
+				}
+				limits[providerID] = limit
+				limitRead[providerID] = true
+			}
+			if limit := limits[providerID]; limit > 0 {
+				if running[providerID]+claimedThisPass[providerID] >= limit {
+					// At the ceiling: skip, keeping the job's place in the queue.
+					continue
+				}
+			}
+		}
+		claim, err := s.repository.Claim(ctx, candidate.ID, s.newID("worker"), now.Add(DefaultLeaseTTL), now)
 		if err != nil {
 			// Lost the race or the job moved on; try the next candidate.
 			continue
+		}
+		if providerID := strings.TrimSpace(claim.ProviderConfigID); providerID != "" {
+			claimedThisPass[providerID]++
 		}
 		select {
 		case work <- claim:

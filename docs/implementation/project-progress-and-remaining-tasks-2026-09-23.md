@@ -51,7 +51,7 @@
 | FR-120 | Persistent Memory | **Delivered (WP-10)，3 项界限具名** | 嵌入是 Provider/Fake 而非本地 ONNX（v1）；**语义通道候选窗=最新 500 条**（更早记忆不可达——产品决策待裁，已有测试钉住现状）；召回评测集（v1） |
 | FR-130 | 画布语义化 | **Delivered (WP-05)** | — |
 | FR-140 | Provider Gateway | Partial（WP-02/03/07/11/12 累计） | **Embedding、声明式 Manifest、per-Stage 模型键未实现**（ADR-0012 §5 具名延后）；legacy 浏览器直连路径保留（仅开发模式可达，安全模式抛错） |
-| FR-150 | Persistent Job Manager | Partial（WP-03 交付核心） | **缩略图/导入/导出/迁移四类 job 未实现**；**每 Provider 并发上限未实现**（FR-150 验收明文要求"同供应商并发不超过配置上限"） |
+| FR-150 | Persistent Job Manager | Partial（WP-03 交付核心） | **缩略图/导入/导出/迁移四类 job 未实现**；~~**每 Provider 并发上限未实现**~~ **已由 WP-14 实现（STATUS §0r，ADR-0018）**：`provider_configs.max_concurrency`（迁移 000022，0=不限）、dispatch 准入、数据库计数含租约有效期判据。**速率限制仍未做，已具名**（ADR-0018 裁定 8） |
 | FR-160 | 存储与血缘 | Partial（内容寻址/去重/引用已在） | **垃圾回收（展示将删内容+可取消）未实现**；血缘 UI 只有资产页一列入口 |
 | FR-170 | 备份/恢复/迁移 | Partial/unsafe（**判定格已过时**） | WP-12 已交付 restore 原子交换+确认+回滚（AC-BACKUP-002 PASS）；**剩余**：备份格式版本迁移测试（"旧版本有迁移测试"子句）；加密敏感备份 ADR-0016 裁定不进 v1 |
 | FR-180 | 设置/日志/诊断/隐私 | Partial（WP-01/02 交付地基） | **用户设置页（三 Tab：渠道/偏好/备份）无诊断导出、无缓存清理、无隐私控制**；诊断包脱敏预览导出未实现 |
@@ -77,7 +77,7 @@
 
 ## 5. 还需要开发的任务（按优先级排序）
 
-### P0 — 产品断链（不修则 MVP 主旅程走不通）
+### P0 — 产品断链（不修则 MVP 主旅程走不通）**——两项均已 DONE**
 
 1. ~~**资产生产 UI（面板图/资产版本链路）**~~ **DONE — WP-13, 2026-09-24 (STATUS §0q, ADR-0017).** The ten bindings have callers, the storyboard table generates/collects/approves panel images, and the walk found that `ApprovePanelImage` never wrote the panel's `status` — which the export's join requires. The original text follows. **资产生产 UI（面板图/资产版本链路）** — 10 个绑定零前端调用：
    `RunImageBatch`、`CheckStoryboardGate`、`CollectBatchResults`、`ApproveCandidate`、
@@ -85,7 +85,7 @@
    导出以 `approved_image_asset_version_id` 合成，**而没有任何界面能把一张图批准到那个状态**——
    "导入→剧本→分镜图→导出 MP4"的 MVP 主旅程在 UI 里断在中间。（STATUS §0n2 称之为"WP-12
    最大未了项"。）
-2. **FR-150 的每 Provider 并发上限** — 验收合同明文（"同供应商并发不超过配置上限"），
+2. ~~**FR-150 的每 Provider 并发上限**~~ **DONE — WP-14, 2026-09-24 (STATUS §0r, ADR-0018).** The limit is `provider_configs.max_concurrency` (migration 000022, 0 = unlimited), enforced in `dispatch`, with the in-flight count read from the database under a live-lease condition. Five tests, eight mutations killed. **The RATE limit stays undone and is named** (ADR-0018 ruling 8). The original text follows. **FR-150 的每 Provider 并发上限** — 验收合同明文（"同供应商并发不超过配置上限"），
    现在只有全局 worker 池。批量分镜图一旦接真实 Provider 就会打爆配额。
 
 ### P1 — 验收合同内缺口（条款写了、没全交付）

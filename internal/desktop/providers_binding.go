@@ -20,12 +20,16 @@ type ProvidersBinding struct {
 
 // ProviderConfigRequest is the frontend-supplied configuration payload.
 type ProviderConfigRequest struct {
-	ID           string `json:"id"`
-	Kind         string `json:"kind"`
-	DisplayName  string `json:"displayName"`
-	BaseURL      string `json:"baseUrl"`
-	LocalApprove bool   `json:"localApprove"`
-	Enabled      bool   `json:"enabled"`
+	ID          string `json:"id"`
+	Kind        string `json:"kind"`
+	DisplayName string `json:"displayName"`
+	BaseURL     string `json:"baseUrl"`
+	// MaxConcurrency bounds this provider's jobs running at once, where ZERO means UNLIMITED
+	// (ADR-0018). It is a plain int rather than a pointer because the UI's field has a value:
+	// an empty box means zero, and zero is the reading that admits work.
+	MaxConcurrency int  `json:"maxConcurrency"`
+	LocalApprove   bool `json:"localApprove"`
+	Enabled        bool `json:"enabled"`
 }
 
 // TextRequestDTO is the frontend-supplied text generation payload.
@@ -68,12 +72,13 @@ func (b *ProvidersBinding) SaveConfig(request ProviderConfigRequest) (providers.
 		return providers.ConfigDTO{}, bindingUnavailable()
 	}
 	config, err := service.CreateOrUpdateConfig(ctx, provider.ConfigInput{
-		ID:           request.ID,
-		Kind:         provider.Kind(request.Kind),
-		DisplayName:  request.DisplayName,
-		BaseURL:      request.BaseURL,
-		LocalApprove: request.LocalApprove,
-		Enabled:      request.Enabled,
+		ID:             request.ID,
+		Kind:           provider.Kind(request.Kind),
+		DisplayName:    request.DisplayName,
+		BaseURL:        request.BaseURL,
+		LocalApprove:   request.LocalApprove,
+		Enabled:        request.Enabled,
+		MaxConcurrency: request.MaxConcurrency,
 	})
 	if err != nil {
 		return providers.ConfigDTO{}, toAppError(err)
