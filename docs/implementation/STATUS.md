@@ -20,6 +20,14 @@
 > `docs/implementation/project-progress-and-remaining-tasks-2026-09-23.md`** — the
 > P0 item there (the asset-production UI's ten zero-caller bindings) is the same gap
 > section 0n2 names, now stated with its priority and the rest of the backlog.
+>
+> **Next work package: WP-13 (planned, NOT started).** The user ruled P0-1 a standalone
+> package — asset-production UI plus the AC-E2E-002 whole-scenario walk as acceptance. The
+> approved plan lives at **`docs/implementation/plans/plan-wp13-asset-production-ui.md`**
+> (ten rulings, all recorded as rebuttable; survey facts with file:line references; the Go walk's
+> nine steps; an explicit not-doing list). **Implementation was paused by the user before any
+> code was written** — the working tree contains no WP-13 changes. Whoever picks it up should
+> read that plan first, then AGENTS section 2's required-reading order.
 
 # 0p. WP-12 item 17: the end-to-end acceptance walk, and the ONE DEFECT it found (2026-09-23)
 
