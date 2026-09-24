@@ -22,6 +22,8 @@ import (
 // result.
 type Service struct {
 	engine   *agentruntime.Engine
+	// state reads a run's stages for the dependency gate. Production passes the engine.
+	state StageStateReader
 	runtime  *agentruntime.Runtime
 	workflow *appworkflow.Service
 	assembly SkillSource
@@ -29,6 +31,16 @@ type Service struct {
 	layer    Layer
 	episodes EpisodeProjectLookup
 	checks   StageChecker
+}
+
+// StageStateReader loads a run's stage state.
+//
+// It is a PORT rather than a direct call to `Engine.Load` so the dependency gate can be exercised
+// without a runtime, a database and a model: the gate's whole input is "which stages have passed",
+// and a test that had to wire the engine to state it would fail for reasons unrelated to the gate.
+// `Engine` satisfies this interface, so the production path is unchanged.
+type StageStateReader interface {
+	Load(ctx context.Context, workflowRunID string) (agentruntime.RunState, error)
 }
 
 // StageChecker runs the deterministic rules for one artifact.
@@ -95,6 +107,9 @@ func New(options Options) *Service {
 		layer:    options.Layer,
 		episodes: options.Episodes,
 		checks:   options.Checks,
+		// The engine IS the production reader. Naming it here rather than at the gate's call site
+		// keeps the gate's dependency on "something that can read a run" explicit.
+		state: options.Engine,
 	}
 }
 
@@ -139,6 +154,43 @@ func (s *Service) stageAgents(stage Stage) (StageAgents, error) {
 	return agents, nil
 }
 
+// requireDependencies refuses a stage whose declared prerequisites have not passed.
+//
+// FR-100's 「状态迁移不允许跳过未满足依赖的阶段」, and ADR-0019 records the ruling that made it a
+// declared graph rather than an inferred one. The refusal NAMES the stages that are missing, because
+// the caller's next step is either to run them or to understand why the pipeline stopped — and a
+// message that said only "dependencies unmet" would leave a user to guess which.
+//
+// A stage that declares nothing is admitted, which is every layer's first stage. A stage the layer
+// does not drive never reaches this: `stageAgents` refuses it first, so an unknown stage cannot be
+// admitted by declaring nothing.
+func (s *Service) requireDependencies(ctx context.Context, workflowRunID string, stage Stage) error {
+	required := s.layer.DependsOn(stage)
+	if len(required) == 0 {
+		return nil
+	}
+	if s.state == nil {
+		// A build whose reader was not wired refuses rather than admitting: the gate exists to
+		// stop a stage whose prerequisites are unverified, and "I could not check" is not "they
+		// are satisfied".
+		return agent.UnavailableError()
+	}
+	state, err := s.state.Load(ctx, workflowRunID)
+	if err != nil {
+		return err
+	}
+	unmet := state.UnmetDependencies(required)
+	if len(unmet) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(unmet))
+	for _, name := range unmet {
+		names = append(names, string(name))
+	}
+	return agent.InvalidError(
+		"This stage needs " + strings.Join(names, " and ") + " to have passed first.")
+}
+
 // RunStage starts one attempt, runs it, and parks the stage for review.
 //
 // A REFUSAL LEAVES THE ATTEMPT WHERE THE RUNTIME PUT IT. The attempt was created and
@@ -159,6 +211,18 @@ func (s *Service) RunStage(ctx context.Context, request StageRequest) (StageResu
 	workflowRunID := trimOrEmpty(request.WorkflowRunID)
 	if workflowRunID == "" {
 		return StageResult{}, agent.InvalidError("A stage run must name the workflow run it belongs to.")
+	}
+	// THE DECLARED DEPENDENCIES ARE CHECKED BEFORE THE ATTEMPT EXISTS, and the position matters for
+	// the same reason the revision read's does: an attempt created and then refused for an unmet
+	// prerequisite would be a stage in play that nothing can run, and a caller could not tell that
+	// from a slow model.
+	//
+	// This is FR-100's 「状态迁移不允许跳过未满足依赖的阶段」, and it is checked HERE rather than in
+	// the engine because the dependency graph is the LAYER's knowledge — `Engine.StartStage` serves a
+	// stage name and knows nothing about which pipeline declared it. The engine still enforces what is
+	// its own: one active attempt per stage, and no restart of a passed one.
+	if err := s.requireDependencies(ctx, workflowRunID, request.Stage); err != nil {
+		return StageResult{}, err
 	}
 	// The revision's findings and pins are read BEFORE the attempt exists, because an
 	// attempt created and then refused for a missing decision would be a stage in play with

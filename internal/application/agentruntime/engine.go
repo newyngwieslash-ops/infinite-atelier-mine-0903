@@ -239,6 +239,36 @@ func (s StageState) Latest() (workflow.StageRun, bool) {
 // AttemptCount is how many attempts the stage has had.
 func (s StageState) AttemptCount() int { return len(s.Attempts) }
 
+// Passed reports whether any attempt of this stage has reached the passed status.
+//
+// It is ANY ATTEMPT rather than the newest, and that is the reading a dependency gate needs: a stage
+// that passed and was then superseded by a revision still produced the approved artifact its
+// successor reads — `IsStageTerminal` deliberately does not treat passed as final for exactly this
+// reason (workflow.go) — so a gate that insisted on the NEWEST attempt being passed would refuse a
+// stage whose input is sitting there approved.
+func (s StageState) Passed() bool {
+	for _, attempt := range s.Attempts {
+		if attempt.Status == workflow.StagePassed {
+			return true
+		}
+	}
+	return false
+}
+
+// UnmetDependencies returns the stages in `required` that have not passed.
+//
+// It is a method on RunState rather than a loop at the call site so the two readers of the rule —
+// the pipeline's gate and its tests — ask the same question.
+func (s RunState) UnmetDependencies(required []workflow.StageName) []workflow.StageName {
+	unmet := make([]workflow.StageName, 0, len(required))
+	for _, stage := range required {
+		if !s.Stages[stage].Passed() {
+			unmet = append(unmet, stage)
+		}
+	}
+	return unmet
+}
+
 // RunState is a run and its stages.
 type RunState struct {
 	Run    workflow.WorkflowRun

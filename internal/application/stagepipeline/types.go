@@ -73,6 +73,18 @@ type Layer interface {
 	Name() string
 	// Stages lists the stages this layer drives, in pipeline order.
 	Stages() []Stage
+	// DependsOn returns the stages that must have PASSED before this one may start.
+	//
+	// It is a declaration rather than something inferred from `Stages()` order, because
+	// PRD FR-100 names 「显式阶段依赖」: reading a predecessor out of a list's position would
+	// make the dependency an accident of ordering, and the two would drift the first time the
+	// list moved for an unrelated reason.
+	//
+	// An EMPTY list is a real answer and not an omission: a layer's first stage depends on
+	// nothing, and a stage whose inputs are optional states so rather than guessing. The
+	// mechanism checks the FULL list before creating an attempt, so a stage with two
+	// prerequisites is refused until both have passed.
+	DependsOn(stage Stage) []Stage
 	// AgentsFor returns the agents serving one stage. The boolean is false for a stage
 	// this layer does not drive, and the mechanism REFUSES rather than substituting.
 	AgentsFor(stage Stage) (StageAgents, bool)

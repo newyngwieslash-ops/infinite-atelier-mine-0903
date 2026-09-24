@@ -87,6 +87,51 @@ func Stages() []Stage {
 	}
 }
 
+// DependsOn states what must have PASSED before each stage may start.
+//
+// # THE GRAPH IS DERIVED FROM WHAT EACH STAGE READS, NOT FROM THE GATE LIST'S ORDER
+//
+// PRD FR-100's list, AGENT_CONTRACTS section 10.1's list and this package's `Stages()` order all
+// agree on a SEQUENCE, and none of them is a dependency statement — a vetted sequence and a
+// declared graph are different claims, and reading one out of the other is how a gate refuses work
+// that is fine. Each entry below names the artifact the stage actually loads:
+//
+//	director_plan         ← the script (planning reads the scenes it will shoot)
+//	asset_gap_analysis    ← the script, and NOT the plan. FR-050's "资产缺口分析" asks what the
+//	                        SCRIPT needs; it reads the script's scenes and produces a report about
+//	                        them, so requiring a plan would refuse a gap report for an episode
+//	                        nobody has planned yet — which is work that today succeeds.
+//	asset_generation      ← the gap report (it produces what the report asked for)
+//	storyboard_table      ← the plan, and NOT the gap report. A board is drawn from a plan; it
+//	                        cites the plan's version, and the batch that later needs the gap report
+//	                        checks for it ITSELF (`CheckStoryboardGate`, batch.go) — which is the
+//	                        right place for that check, because it is about imaging rather than
+//	                        about boarding.
+//	storyboard_panel      ← the board (a panel is a row's image; there are no rows before it)
+//	final_episode         ← the board, because the final review reads the board's rows and the
+//	                        media approved for them
+//
+// # What this graph deliberately does NOT do
+//
+// It does not require the SCRIPT chain from the production stages, because the two pipelines are
+// separate layers over one run and the production layer cannot name a script stage it does not
+// drive. The script's own prerequisite for a plan is enforced where the plan is WRITTEN: the stage
+// needs an approved script version to name, and `StateFields.ScriptVersionID` is empty without one.
+func DependsOn(stage Stage) []Stage {
+	switch stage {
+	case StageDirectorPlan, StageAssetGapAnalysis:
+		return nil
+	case StageAssetGeneration:
+		return []Stage{StageAssetGapAnalysis}
+	case StageStoryboardTable:
+		return []Stage{StageDirectorPlan}
+	case StageStoryboardPanel, StageFinalEpisode:
+		return []Stage{StageStoryboardTable}
+	default:
+		return nil
+	}
+}
+
 // WriteToolPrefix is what every production write tool's key starts with.
 const WriteToolPrefix = "storyboard.create_"
 
@@ -199,7 +244,8 @@ var _ stagepipeline.Layer = (*Layer)(nil)
 func (l *Layer) Name() string { return "productionpipeline" }
 
 // Stages lists the five stages in pipeline order.
-func (l *Layer) Stages() []Stage { return Stages() }
+func (l *Layer) Stages() []Stage               { return Stages() }
+func (l *Layer) DependsOn(stage Stage) []Stage { return DependsOn(stage) }
 
 // AgentsFor returns the agents serving one stage.
 func (l *Layer) AgentsFor(stage Stage) (stagepipeline.StageAgents, bool) {

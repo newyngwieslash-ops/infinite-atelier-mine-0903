@@ -57,3 +57,4 @@
 | 0016 | Encrypted sensitive backups are not in v1 | Accepted |
 | 0017 | Asset-production UI: the panel-image chain, its approve control, and the AC-E2E-002 walk | Accepted |
 | 0018 | Per-provider concurrency limits, and the rate limit this record does not build | Accepted |
+| 0019 | Explicit stage dependencies: a declared graph, checked before the attempt exists | Accepted |

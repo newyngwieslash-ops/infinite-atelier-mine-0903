@@ -71,6 +71,26 @@ func Stages() []Stage {
 	return []Stage{StageStorySkeleton, StageAdaptationStrategy, StageScriptGeneration}
 }
 
+// DependsOn states what must have PASSED before each stage may start.
+//
+// FR-040's chain in as many words: 「故事骨架 → 改编策略 → 剧本」, where a strategy is written
+// from an approved skeleton and a script from both. The skeleton depends on nothing — it is this
+// layer's entry point, and the events it reads are imported facts rather than a stage's output.
+func DependsOn(stage Stage) []Stage {
+	switch stage {
+	case StageStorySkeleton:
+		return nil
+	case StageAdaptationStrategy:
+		return []Stage{StageStorySkeleton}
+	case StageScriptGeneration:
+		return []Stage{StageStorySkeleton, StageAdaptationStrategy}
+	default:
+		// A stage this layer does not drive declares nothing, and the mechanism refuses it
+		// before this answer is consulted.
+		return nil
+	}
+}
+
 // LiveStageAgents is the STATED map from a stage to the two agents that serve it, under
 // the name WP-08 gave it.
 //
@@ -163,7 +183,8 @@ var _ stagepipeline.Layer = (*Layer)(nil)
 func (l *Layer) Name() string { return "scriptpipeline" }
 
 // Stages lists the three stages in pipeline order.
-func (l *Layer) Stages() []Stage { return Stages() }
+func (l *Layer) Stages() []Stage                  { return Stages() }
+func (l *Layer) DependsOn(stage Stage) []Stage    { return DependsOn(stage) }
 
 // AgentsFor returns the agents serving one stage.
 func (l *Layer) AgentsFor(stage Stage) (stagepipeline.StageAgents, bool) {

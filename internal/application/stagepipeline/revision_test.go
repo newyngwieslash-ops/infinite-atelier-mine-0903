@@ -149,6 +149,11 @@ type testLayer struct{}
 
 func (testLayer) Name() string                                         { return "testpipeline" }
 func (testLayer) Stages() []Stage                                      { return []Stage{"a_stage"} }
+
+// DependsOn declares nothing, which is the honest answer for a stub whose single stage has no
+// predecessor — and it is why this file's tests are unaffected by the dependency gate: a stage that
+// declares nothing is always admitted.
+func (testLayer) DependsOn(Stage) []Stage { return nil }
 func (testLayer) AgentsFor(Stage) (StageAgents, bool)                  { return StageAgents{ArtifactType: "x"}, true }
 func (testLayer) StateFor(workflow.StageRun, StageRequest) string      { return "" }
 func (testLayer) Approve(context.Context, Stage, string, string) error { return nil }
