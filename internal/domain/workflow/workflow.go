@@ -482,6 +482,58 @@ func (r StageRun) IsActive() bool {
 	}
 }
 
+// RunStageProjection is the run-level stage pointer a transition leaves behind.
+//
+// DOMAIN_MODEL §11.1 keeps two facts on the run — which stage it is on
+// (`current_stage`) and which attempt of that stage is in play
+// (`active_stage_run_id`) — and the pair is what makes FR-100's 「应用重启恢复」
+// possible: on restart the run says which attempt was in play. It is a PROJECTION of
+// the stage rows rather than a second record of them, which is why it is derived from
+// the attempt that moved: a writer that maintained it by hand would eventually disagree
+// with the attempts, and nothing would notice.
+type RunStageProjection struct {
+	// Current is the stage the run is on, empty when the pointer names nothing.
+	Current StageName
+	// ActiveStageRunID is the attempt in play, empty under the same condition.
+	ActiveStageRunID string
+}
+
+// StagePointer is the projection a run already carries.
+func (r WorkflowRun) StagePointer() RunStageProjection {
+	return RunStageProjection{Current: r.CurrentStage, ActiveStageRunID: r.ActiveStageRunID}
+}
+
+// ProjectRunStage derives the pointer a transition of `stage` leaves behind.
+//
+// The rule follows the ATTEMPT's lifetime, and it has three cases rather than the two
+// the column names suggest:
+//
+//   - An attempt still in play names itself. IsActive is the domain's own predicate for
+//     "in play" (§11.2's 「最多一个 active attempt」), so a queued attempt counts and a
+//     run whose stage has just been created already reports where it is.
+//   - A PASSED attempt keeps its name. IsStageTerminal deliberately refuses to call
+//     passed final, because §11.2 lets a passed attempt be superseded and the next
+//     attempt replaces it; between those two moments the run is on that stage, and
+//     clearing the pointer there would blank the stage at the moment a reader most wants
+//     to see it.
+//   - Anything else — failed, cancelled, superseded — clears the pointer, but ONLY when
+//     the pointer already names that attempt. Without the guard, a superseded attempt of
+//     an earlier stage would erase the attempt of the stage the run has since moved on
+//     to, and the run would lose its stage at the exact moment a revision started.
+//
+// A transition that does not concern the run's present attempt returns the pointer
+// unchanged, so a caller can write the result unconditionally rather than reasoning
+// about which case it is in.
+func ProjectRunStage(current RunStageProjection, stage StageRun) RunStageProjection {
+	if stage.IsActive() || stage.Status == StagePassed {
+		return RunStageProjection{Current: stage.Stage, ActiveStageRunID: stage.ID}
+	}
+	if current.ActiveStageRunID != stage.ID {
+		return current
+	}
+	return RunStageProjection{}
+}
+
 // Severity is how serious a review finding is (AGENT_CONTRACTS §7.6).
 //
 // Both review_reports.severity and review_issues.severity use it, and section

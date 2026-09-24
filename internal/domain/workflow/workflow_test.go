@@ -800,3 +800,121 @@ func TestWorkflowEventValidate(t *testing.T) {
 		})
 	}
 }
+
+// TestProjectRunStageIsThePointerRule pins the three cases of DOMAIN_MODEL section 11.1's
+// stage pointer, because the rule is what a run list renders and every case is reachable
+// from the pipeline: an attempt that is queued names itself, one that has passed does too
+// (it is the stage the run is ON), and one that has ended clears the pointer only when it
+// is the attempt the run had named.
+//
+// The E2E walk covers exactly one of these paths. The other two are the ones a mutation
+// survives without, which is why they are pinned here: dropping the passed case blanks the
+// stage the moment a gate approves, and dropping the identity guard erases the new stage's
+// attempt when an older one is superseded.
+func TestProjectRunStageIsThePointerRule(t *testing.T) {
+	run := WorkflowRun{ID: "run-1", ProjectID: "p-1", WorkflowType: "episode_production", Status: RunRunning}
+	pointer := func(current StageName, active string) RunStageProjection {
+		return RunStageProjection{Current: current, ActiveStageRunID: active}
+	}
+	attempt := func(id string, stage StageName, status StageStatus) StageRun {
+		return StageRun{ID: id, WorkflowRunID: run.ID, Stage: stage, Attempt: 1, Status: status}
+	}
+
+	cases := []struct {
+		name  string
+		from  RunStageProjection
+		stage StageRun
+		want  RunStageProjection
+	}{
+		{
+			"an empty run adopts a queued attempt",
+			pointer("", ""),
+			attempt("s-1", "storyboard_table", StagePending),
+			pointer("storyboard_table", "s-1"),
+		},
+		{
+			"a running attempt names itself",
+			pointer("storyboard_table", "s-1"),
+			attempt("s-1", "storyboard_table", StageRunning),
+			pointer("storyboard_table", "s-1"),
+		},
+		{
+			"an attempt at the user gate names itself",
+			pointer("storyboard_table", "s-1"),
+			attempt("s-1", "storyboard_table", StageWaitingUser),
+			pointer("storyboard_table", "s-1"),
+		},
+		{
+			// The case a "terminal means clear" reading gets wrong: passed is not
+			// IsStageTerminal, and the run is still on that stage.
+			"a passed attempt keeps its name",
+			pointer("storyboard_table", "s-1"),
+			attempt("s-1", "storyboard_table", StagePassed),
+			pointer("storyboard_table", "s-1"),
+		},
+		{
+			"a failed attempt clears the pointer that named it",
+			pointer("storyboard_table", "s-1"),
+			attempt("s-1", "storyboard_table", StageFailed),
+			pointer("", ""),
+		},
+		{
+			"a cancelled attempt clears the pointer that named it",
+			pointer("storyboard_table", "s-1"),
+			attempt("s-1", "storyboard_table", StageCancelled),
+			pointer("", ""),
+		},
+		{
+			"a superseded attempt clears the pointer that named it",
+			pointer("storyboard_table", "s-1"),
+			attempt("s-1", "storyboard_table", StageSuperseded),
+			pointer("", ""),
+		},
+		{
+			// The identity guard: an attempt of an EARLIER stage ending must not
+			// erase the stage the run has moved on to.
+			"a superseded earlier attempt leaves a newer pointer alone",
+			pointer("storyboard_panel_generation", "s-2"),
+			attempt("s-1", "storyboard_table", StageSuperseded),
+			pointer("storyboard_panel_generation", "s-2"),
+		},
+		{
+			"a failed earlier attempt leaves a newer pointer alone",
+			pointer("storyboard_panel_generation", "s-2"),
+			attempt("s-1", "storyboard_table", StageFailed),
+			pointer("storyboard_panel_generation", "s-2"),
+		},
+		{
+			"a cancelled unattached attempt leaves the pointer alone",
+			pointer("storyboard_table", "s-1"),
+			attempt("s-2", "storyboard_table", StageCancelled),
+			pointer("storyboard_table", "s-1"),
+		},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			got := ProjectRunStage(testCase.from, testCase.stage)
+			if got != testCase.want {
+				t.Fatalf("ProjectRunStage(%+v, %s/%s) = %+v, want %+v",
+					testCase.from, testCase.stage.ID, testCase.stage.Status, got, testCase.want)
+			}
+		})
+	}
+}
+
+// TestThePointerNamesAnAttemptThatCanBeInPlay is the invariant migration 000011 states and
+// section 11.2 repeats ("最多一个 active attempt"), read through the projection: whenever
+// the pointer names an attempt, that attempt is one of the statuses IsActive accepts, or
+// passed. A pointer naming anything else would send a recovery path to a row that had
+// already finished.
+func TestThePointerNamesAnAttemptThatCanBeInPlay(t *testing.T) {
+	for _, status := range StageStatuses {
+		stage := StageRun{ID: "s-1", WorkflowRunID: "run-1", Stage: "storyboard_table", Attempt: 1, Status: status}
+		got := ProjectRunStage(RunStageProjection{}, stage)
+		names := got.ActiveStageRunID == stage.ID
+		want := stage.IsActive() || status == StagePassed
+		if names != want {
+			t.Fatalf("a %q attempt projects to %+v; naming an attempt and being in play must agree", status, got)
+		}
+	}
+}

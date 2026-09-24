@@ -3,12 +3,147 @@
 > Last updated: 2026-09-23
 > Product: Infinite Atelier Core + Drama Production Pack
 > Current work package: **WP-12 — 硬化、性能、打包与 Release Candidate**
-> Status: **IN PROGRESS — items 3, 4, 5, 6, 9, 10, 12, 13, 14, 15 and 16 are closed; the release-blocker
-> audit is complete with all eleven CLEARED. What remains is named in section 0p.** Items 3 and 4
+> Status: **COMPLETE — items 3, 4, 5, 6, 9, 10, 12, 13, 14, 15, 16 and 17 are closed; the
+> release-blocker audit is complete with all eleven CLEARED.** Item 17's end-to-end walk is in section
+> 0p: it found that `workflow_runs.current_stage` had no writer anywhere in the codebase, so a run
+> executing a stage rendered as "—" in the Studio's runs table — a column the UI read on every render
+> and nothing wrote. That is fixed, pinned by five tests and six mutations, and the full verification
+> gate (typecheck, 76 frontend tests, 25 Playwright tests, 56 Go packages, vet, security scans, all
+> fixture checks, the SBOM check, and the Wails production build) passes end to end. Items 3 and 4
 > added the scale benchmarks and found two index defects (migration 000021); item 5 built the
-> restore's atomic swap and found a write-ahead-log defect; item 13 made recovery reachable from
-> safe mode; item 16 deleted the dynamic-JavaScript path. WP-01 through WP-11 remain COMPLETE for
-> their recorded scopes.
+> restore's atomic swap and found a write-ahead-log defect; item 13 made recovery reachable from safe
+> mode; item 16 deleted the dynamic-JavaScript path. WP-01 through WP-11 remain COMPLETE for their
+> recorded scopes. Two capability gaps remain OPEN and are named rather than dropped: the panel-image
+> path has no UI caller (section 0n2) and secure desktop mode has no working video or audio
+> generation (item 16). Neither is one of PRD section 18's eleven blockers.
+> **A full PRD/ROADMAP cross-check with the remaining-task list lives at
+> `docs/implementation/project-progress-and-remaining-tasks-2026-09-23.md`** — the
+> P0 item there (the asset-production UI's ten zero-caller bindings) is the same gap
+> section 0n2 names, now stated with its priority and the rest of the backlog.
+
+# 0p. WP-12 item 17: the end-to-end acceptance walk, and the ONE DEFECT it found (2026-09-23)
+
+Item 17 ("最终 E2E：完整生产链路") is CLOSED, and the walk found a defect that no unit test in the
+repository could have: a column the UI reads on every render, written by nothing. It is fixed, the
+fix is pinned by five tests and six mutations, and the full verification gate passes.
+
+## The walk: AC-E2E-003, and what it forced the code to prove
+
+`internal/infrastructure/database/acceptance_e2e003_test.go` walks PRD section 16.2's
+**"强制关闭后重启"** scenario through the real services, in two process lifetimes that share only the
+database file:
+
+1. a project, an episode, a canvas node and a video asset, all written through the production
+   services;
+2. a run with one stage parked at its **user gate** and one stage still **executing**;
+3. a video job the scheduler really submitted and parked on the provider, plus a second one whose
+   remote handle was never recorded;
+4. the forced close, then a **restart from the same file** — a second composition over the same
+   database, with the recovery scan run and its report read *before* the scheduler starts, so the
+   classification is the scan's own rather than the poll that follows hiding it.
+
+Five clauses then report: (1) the project opens and its canvas renders; (2) **the workflow shows the
+stage it actually reached**; (3) a recoverable job is resumed and **polled rather than re-submitted**;
+(4) an unrecoverable one fails explicitly and can be retried; (5) the interrupted work's artifacts are
+what the restart added.
+
+## The defect: `workflow_runs.current_stage` had no writer
+
+**Clause 2 failed, and the failure was real.** A run demonstrably executing
+`storyboard_panel_generation` reported `currentStage=""` and `activeStageRunId=""`, and the Studio's
+runs table renders that pair as the run's stage — `value || "—"` in `sections.tsx`. The stage ROWS
+were correct, so the criterion held for a reader who opened the storyboard view and not for one who
+read the run list.
+
+The cause was exactly the "interface with no real path" shape AGENTS section 12 forbids, in a column
+rather than an interface: `current_stage` and `active_stage_run_id` were in the schema, in the SELECT
+list, in the DTO, in the TypeScript model and in a rendered table — and the only statement that
+touched either was `UpdateRun`, whose only production caller (`TransitionRun`) copied both fields
+from the row it had just read. A no-op that read like a writer. `grep` over `.go`, `.ts` and `.tsx`
+found no other candidate.
+
+## The fix: a derived value with a domain rule and ONE writer
+
+- **The rule is in the domain**: `workflow.ProjectRunStage(pointer, stage)` with
+  `RunStageProjection`. It follows the ATTEMPT's lifetime, and it has three cases rather than the two
+  the column names suggest — an attempt in play names itself (`IsActive`); a **passed** attempt keeps
+  its name (`IsStageTerminal` deliberately refuses to call passed final, so a gate approval must not
+  blank the stage); and anything else clears the pointer **only when it named that attempt**, because
+  a superseded attempt of an EARLIER stage would otherwise erase the stage the run has moved on to.
+- **The write is the repository's**: `WorkflowRepository.projectRunStage`, called from `UpdateStage`
+  **inside the same transaction as the stage change**, so the two cannot disagree across a crash. It
+  writes the two pointer columns and deliberately leaves `updated_at` and `revision` alone — the
+  revision is the token a user's pause or cancel compares against, and the timestamp orders a run
+  list that must not reshuffle under a reader.
+- **`UpdateRun` no longer carries the columns at all**, which is what makes each one have exactly one
+  writer. That was not tidiness: `projectRunStage` does not bump the revision, so a `TransitionRun`
+  that read the run before a stage moved still passes its compare-and-swap, and the old statement
+  would have written the stale copy back over the top. `TestWorkflowRunTransitionDoesNotRegressTheStagePointer`
+  constructs precisely that interleaving; mutation m5 restores the old statement and is killed by it.
+- **`CreateStage` projects too**, because an attempt the machine has created but not yet started is
+  exactly what a crash between the two leaves behind.
+
+## The assertions, and the mutations that keep them honest
+
+- `TestProjectRunStageIsThePointerRule` — the ten cases of the rule, including both the passed case
+  and the identity guard.
+- `TestThePointerNamesAnAttemptThatCanBeInPlay` — a cross-product invariant over all eleven stage
+  statuses: naming an attempt and being in play must agree, with passed the one documented exception.
+- `TestWorkflowRepositoryProjectsTheRunStagePointer` — the write path through real SQLite: create
+  alone projects, a status change moves it, a run transition leaves it alone, an ended attempt clears
+  it, and a retry takes it back.
+
+**Six mutations, 6/6 killed**, each restored from a byte-exact copy afterwards (verified by `grep`
+over all four source files). m1/m2 remove the projection from `UpdateStage`/`CreateStage`, m3 removes
+the identity guard, m4 removes the passed case, m5 restores the defective `UpdateRun`, m6 makes the
+rule keep the previous stage. Three of them SURVIVED the first harness run and the tests were
+strengthened in response — `m1`, `m2` and `m5` each named a path the walk never exercised, which is
+what a mutation harness is for.
+
+The clause-2 assertion was also MOVED rather than weakened: it now reads the state the restart
+recovered, at the moment the criterion is about. It previously sat after the walk closed the
+interrupted attempt out and created a second one, where the run is legitimately on the retry — an
+assertion of the old attempt there would have asserted that the retry did not happen. It also now
+checks `ListRuns`, the read path the runs table actually walks, rather than a single-row read.
+
+## The full gate
+
+`scripts/verify.sh`, end to end, exit 0:
+
+| gate | result |
+|---|---|
+| `npm run typecheck` | **PASS** |
+| `npm test` | **PASS** — 76 tests, 0 failures (was 67 in section 0n) |
+| `npm run build` | **PASS** |
+| Playwright, incl. AC-CANVAS-004 | **PASS** — 25 passed, 1 pre-existing conditional skip (WP-04's headless file-picker case) |
+| MONOFORM source build | **PASS** |
+| `go test ./... -count=1` | **PASS** — 56 packages ok, 0 failed |
+| `go vet ./...` | **PASS** |
+| `node scripts/security-scan.mjs` | **PASS** — 618 files, 1 audited exception, 3 named legacy files |
+| canary / hostile-input / tool-schema / skill-pack / SBOM `--check` | **PASS** |
+| `wails build` (production) | **PASS** — `build/bin/InfiniteAtelier.exe` in 26.8s |
+| `git diff --check` | **PASS** |
+
+`go test -race ./...` remains an **ENVIRONMENT FAILURE** on this host (`cc1.exe: 64-bit mode not
+compiled in`), exactly as section 0n recorded. It is not a pass and is not reported as one.
+
+**One environment failure was hit and cleared during this gate**: C: reached 100% (50 MB free) because
+the Go build cache had grown to 39 GB, and `go build` failed with "There is not enough space on the
+disk" rather than a test failure. `go clean -cache` freed 41 GB; subsequent runs set
+`GOCACHE=/d/go-build-cache` so a full rebuild cannot refill C:. No source file, database or fixture
+was affected, and the mutation harness's restores were verified before the cache was touched.
+
+## Known limits, unchanged and restated rather than dropped
+
+- **The panel-image / asset-version gap is OPEN and recorded in section 0n2**: no UI path creates a
+  storyboard panel image or an asset version, so the export chain has a missing middle link in the UI
+  even though the bindings and services exist. It is not one of PRD section 18's eleven blockers.
+- **Secure desktop mode still has no working video or audio generation**, inherited from item 16.
+- `git status` at the end of this package shows six modified files (the four this fix touched, plus
+  `STATUS.md` and `TRACEABILITY.md`), the untracked walk, and one untracked document that was already in
+  the working tree before this session and is **not mine** —
+  `Infinite-Atelier-OpenCode集成交付性评估与完整实施方案.md`. It is left untouched, unstaged and
+  uncommitted, per AGENTS section 4.2.
 
 # 0n. WP-12 items 10 and 12, and the release-blocker audit (2026-09-23)
 

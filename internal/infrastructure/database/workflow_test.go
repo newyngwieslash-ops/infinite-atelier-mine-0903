@@ -511,3 +511,268 @@ func TestWorkflowRepositoryRefusesAnUndocumentedStatus(t *testing.T) {
 	}
 	foreignKeysClean(t, db)
 }
+
+// TestWorkflowRepositoryProjectsTheRunStagePointer is the repository half of the run's stage
+// pointer: DOMAIN_MODEL section 11.1's `current_stage`/`active_stage_run_id`, which the
+// Studio's runs table renders and which FR-100's restart-recovery reads to learn which
+// attempt was in play.
+//
+// The rule itself is pinned in the domain (TestProjectRunStageIsThePointerRule). What this
+// test pins is the WRITE PATH, because that is where the defect was: both columns existed,
+// both were read, and nothing wrote them — `UpdateRun` carried them and its only production
+// caller copied them from the row it had just read, so a run driven from its first stage to
+// its last reported an empty stage. So each assertion here drives a real statement
+// (CreateStage, UpdateStage, UpdateRun) and reads the run row back from SQLite.
+//
+// Three paths, and each one is a transition the E2E walk does not reach:
+//
+//   - CREATE alone must project, because an attempt the machine has created but not yet
+//     started is exactly what a crash between the two leaves behind.
+//   - an ENDED attempt must CLEAR the pointer, which is a write that no other statement in
+//     the package performs.
+//   - a RUN status change AFTER a stage moved must leave the pointer where the stage machine
+//     put it, which is what the removed `SET current_stage = ?` used to break.
+func TestWorkflowRepositoryProjectsTheRunStagePointer(t *testing.T) {
+	db := dramaRepoHandle(t)
+	dramaSeedParents(t, db)
+	repo := NewWorkflowRepository(db)
+	ctx := context.Background()
+	generator := dramaIDGenerator()
+	now := dramaTime()
+
+	runID := mustNewID(t, generator)
+	dramaCreateRun(t, repo, runID, mustNewID(t, generator), 1)
+
+	pointerOf := func() (workflow.StageName, string) {
+		t.Helper()
+		run, err := repo.GetRun(ctx, runID)
+		if err != nil {
+			t.Fatalf("GetRun: %v", err)
+		}
+		return run.CurrentStage, run.ActiveStageRunID
+	}
+	if current, active := pointerOf(); current != "" || active != "" {
+		t.Fatalf("a fresh run points at %q/%q, want nothing", current, active)
+	}
+
+	// --- create alone projects -------------------------------------------------
+	stageID := mustNewID(t, generator)
+	if err := repo.CreateStage(ctx, workflow.StageRun{
+		ID: stageID, WorkflowRunID: runID, Stage: "storyboard_table", Attempt: 1,
+		Status: workflow.StagePending, CreatedAt: now, Revision: 1,
+	}, workflow.WorkflowEvent{
+		ID: mustNewID(t, generator), WorkflowRunID: runID, StageRunID: stageID,
+		EventType: "stage_run_created", ToStatus: string(workflow.StagePending),
+		ActorType: versioning.CreatedByUser, CreatedAt: now,
+	}); err != nil {
+		t.Fatalf("CreateStage: %v", err)
+	}
+	if current, active := pointerOf(); current != "storyboard_table" || active != stageID {
+		t.Fatalf("after creating the attempt the run points at %q/%q, want storyboard_table/%s",
+			current, active, stageID)
+	}
+
+	// --- a status change moves it ---------------------------------------------
+	stage, err := repo.GetStage(ctx, stageID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stage.Status = workflow.StageRunning
+	stage.StartedAt = now
+	if err := repo.UpdateStage(ctx, stage, 1, workflow.WorkflowEvent{
+		ID: mustNewID(t, generator), WorkflowRunID: runID, StageRunID: stageID,
+		EventType: "stage_run_status_changed", FromStatus: string(workflow.StagePending),
+		ToStatus: string(workflow.StageRunning), ActorType: versioning.CreatedByUser, CreatedAt: now,
+	}); err != nil {
+		t.Fatalf("UpdateStage to running: %v", err)
+	}
+	if current, active := pointerOf(); current != "storyboard_table" || active != stageID {
+		t.Fatalf("a running attempt left the run at %q/%q, want storyboard_table/%s", current, active, stageID)
+	}
+
+	// --- a run transition leaves the stage machine's answer alone -------------
+	//
+	// This is the assertion the old `UpdateRun` failed. The run's status is the caller's to
+	// move; the stage pointer is derived, and a read-modify-write of the run must not be able
+	// to carry a stale copy of it back over the top.
+	run, err := repo.GetRun(ctx, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run.Status = workflow.RunRunning
+	run.UpdatedAt = now.Add(time.Minute)
+	if err := repo.UpdateRun(ctx, run, run.Revision, workflow.WorkflowEvent{
+		ID: mustNewID(t, generator), WorkflowRunID: runID,
+		EventType: "workflow_run_status_changed", FromStatus: string(workflow.RunPending),
+		ToStatus: string(workflow.RunRunning), ActorType: versioning.CreatedByUser,
+		CreatedAt: now.Add(time.Minute),
+	}); err != nil {
+		t.Fatalf("UpdateRun: %v", err)
+	}
+	if current, active := pointerOf(); current != "storyboard_table" || active != stageID {
+		t.Fatalf("a run status change left the pointer at %q/%q, want storyboard_table/%s — the derived pointer is not this statement's to write",
+			current, active, stageID)
+	}
+	// And the columns the caller DID move are the ones that changed, so the assertion above is
+	// about the pointer rather than about the statement having silently done nothing.
+	moved, err := repo.GetRun(ctx, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if moved.Status != workflow.RunRunning || moved.Revision != run.Revision+1 {
+		t.Fatalf("the run status change did not land: %+v", moved)
+	}
+
+	// --- an ended attempt clears it -------------------------------------------
+	stage, err = repo.GetStage(ctx, stageID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stage.Status = workflow.StageFailed
+	stage.ErrorCode = "STAGE_INTERRUPTED"
+	stage.FinishedAt = now.Add(2 * time.Minute)
+	if err := repo.UpdateStage(ctx, stage, stage.Revision, workflow.WorkflowEvent{
+		ID: mustNewID(t, generator), WorkflowRunID: runID, StageRunID: stageID,
+		EventType: "stage_run_status_changed", FromStatus: string(workflow.StageRunning),
+		ToStatus: string(workflow.StageFailed), ActorType: versioning.CreatedByUser,
+		CreatedAt: now.Add(2 * time.Minute),
+	}); err != nil {
+		t.Fatalf("UpdateStage to failed: %v", err)
+	}
+	if current, active := pointerOf(); current != "" || active != "" {
+		t.Fatalf("the attempt that ended left the run pointing at %q/%q, so a recovery path would chase a finished attempt",
+			current, active)
+	}
+
+	// --- and a newer attempt takes it back ------------------------------------
+	//
+	// A run whose stage has ended is BETWEEN stages rather than finished, which is the state a
+	// retry does not need permission to leave. This is also the state transition the E2E walk
+	// drives, which is why the two together cover it.
+	retryID := mustNewID(t, generator)
+	if err := repo.CreateStage(ctx, workflow.StageRun{
+		ID: retryID, WorkflowRunID: runID, Stage: "storyboard_table", Attempt: 2,
+		Status: workflow.StagePending, CreatedAt: now.Add(3 * time.Minute), Revision: 1,
+	}, workflow.WorkflowEvent{
+		ID: mustNewID(t, generator), WorkflowRunID: runID, StageRunID: retryID,
+		EventType: "stage_run_created", ToStatus: string(workflow.StagePending),
+		ActorType: versioning.CreatedByUser, CreatedAt: now.Add(3 * time.Minute),
+	}); err != nil {
+		t.Fatalf("CreateStage (retry): %v", err)
+	}
+	if current, active := pointerOf(); current != "storyboard_table" || active != retryID {
+		t.Fatalf("the retry left the run at %q/%q, want storyboard_table/%s", current, active, retryID)
+	}
+
+	foreignKeysClean(t, db)
+}
+
+// TestWorkflowRunTransitionDoesNotRegressTheStagePointer is the INTERLEAVING that makes the
+// pointer's single-writer rule load-bearing rather than tidy.
+//
+// `projectRunStage` deliberately does not bump the run's revision — a stage moving must not
+// invalidate a user's pending pause or cancel — so a `TransitionRun` that read the row before
+// a stage moved still holds a valid revision at its compare-and-swap. If that statement also
+// carried `current_stage`/`active_stage_run_id` (as it did until this was fixed), it would
+// write the copy it read back over the top, and the run would point at the PREVIOUS stage
+// while the new attempt was executing. Nothing would report an error: the run's status moved,
+// its revision moved, and only the derived pointer regressed.
+//
+// So the sequence is the production one — read, stage moves, write — rather than a synthetic
+// corruption, and the assertion is that the derived pointer is the stage machine's answer and
+// not the reader's.
+func TestWorkflowRunTransitionDoesNotRegressTheStagePointer(t *testing.T) {
+	db := dramaRepoHandle(t)
+	dramaSeedParents(t, db)
+	repo := NewWorkflowRepository(db)
+	ctx := context.Background()
+	generator := dramaIDGenerator()
+	now := dramaTime()
+
+	runID := mustNewID(t, generator)
+	dramaCreateRun(t, repo, runID, mustNewID(t, generator), 1)
+
+	stage := func(stageName workflow.StageName, attempt int, at time.Time) workflow.StageRun {
+		t.Helper()
+		id := mustNewID(t, generator)
+		if err := repo.CreateStage(ctx, workflow.StageRun{
+			ID: id, WorkflowRunID: runID, Stage: stageName, Attempt: attempt,
+			Status: workflow.StagePending, CreatedAt: at, Revision: 1,
+		}, workflow.WorkflowEvent{
+			ID: mustNewID(t, generator), WorkflowRunID: runID, StageRunID: id,
+			EventType: "stage_run_created", ToStatus: string(workflow.StagePending),
+			ActorType: versioning.CreatedByUser, CreatedAt: at,
+		}); err != nil {
+			t.Fatalf("CreateStage(%s): %v", stageName, err)
+		}
+		record, err := repo.GetStage(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return record
+	}
+
+	first := stage("storyboard_table", 1, now)
+
+	// --- the read that goes stale --------------------------------------------
+	//
+	// This is what `TransitionRun` holds between its `GetRun` and its `UpdateRun`: a run whose
+	// pointer names the stage in play at the moment of the read.
+	inFlight, err := repo.GetRun(ctx, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inFlight.CurrentStage != "storyboard_table" || inFlight.ActiveStageRunID != first.ID {
+		t.Fatalf("the run read for the transition points at %q/%q, want storyboard_table/%s",
+			inFlight.CurrentStage, inFlight.ActiveStageRunID, first.ID)
+	}
+
+	// --- a stage moves under the reader --------------------------------------
+	finished := first
+	finished.Status = workflow.StagePassed
+	finished.FinishedAt = now.Add(time.Minute)
+	if err := repo.UpdateStage(ctx, finished, first.Revision, workflow.WorkflowEvent{
+		ID: mustNewID(t, generator), WorkflowRunID: runID, StageRunID: first.ID,
+		EventType: "stage_run_status_changed", FromStatus: string(workflow.StagePending),
+		ToStatus: string(workflow.StagePassed), ActorType: versioning.CreatedByUser,
+		CreatedAt: now.Add(time.Minute),
+	}); err != nil {
+		t.Fatalf("UpdateStage to passed: %v", err)
+	}
+	second := stage("storyboard_panel_generation", 1, now.Add(2*time.Minute))
+	if after, err := repo.GetRun(ctx, runID); err != nil {
+		t.Fatal(err)
+	} else if after.CurrentStage != "storyboard_panel_generation" || after.ActiveStageRunID != second.ID {
+		t.Fatalf("the run points at %q/%q after the next stage began, want storyboard_panel_generation/%s",
+			after.CurrentStage, after.ActiveStageRunID, second.ID)
+	}
+
+	// --- and the transition's write must not undo it -------------------------
+	//
+	// The revision the reader holds is still current, which is the whole point: the pointer
+	// write above does not touch it. So this succeeds, and what it writes is the caller's own
+	// columns.
+	inFlight.Status = workflow.RunRunning
+	inFlight.UpdatedAt = now.Add(3 * time.Minute)
+	if err := repo.UpdateRun(ctx, inFlight, inFlight.Revision, workflow.WorkflowEvent{
+		ID: mustNewID(t, generator), WorkflowRunID: runID,
+		EventType: "workflow_run_status_changed", FromStatus: string(workflow.RunPending),
+		ToStatus: string(workflow.RunRunning), ActorType: versioning.CreatedByUser,
+		CreatedAt: now.Add(3 * time.Minute),
+	}); err != nil {
+		t.Fatalf("UpdateRun: %v", err)
+	}
+	after, err := repo.GetRun(ctx, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Status != workflow.RunRunning {
+		t.Fatalf("the run status change did not land: %+v", after)
+	}
+	if after.CurrentStage != "storyboard_panel_generation" || after.ActiveStageRunID != second.ID {
+		t.Fatalf("the run transition moved the stage pointer back to %q/%q; the pointer is derived from the attempts and must not be written by a read-modify-write of the run, which holds a copy from before the stage moved",
+			after.CurrentStage, after.ActiveStageRunID)
+	}
+
+	foreignKeysClean(t, db)
+}

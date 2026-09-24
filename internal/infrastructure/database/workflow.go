@@ -125,13 +125,29 @@ func (r *WorkflowRepository) GetRun(ctx context.Context, id string) (workflow.Wo
 
 // UpdateRun persists a change guarded by the expected revision, with the event
 // recording it, in one transaction.
+//
+// # Why this statement does NOT write the stage pointer
+//
+// current_stage and active_stage_run_id are DOMAIN_MODEL section 11.1's record of which
+// stage attempt is in play, and they are a PROJECTION of the stage rows — derived, not
+// edited. Until this was fixed both columns had two writers and neither was the stage
+// machine: this statement carried them, and its only production caller (TransitionRun)
+// copied them from the row it had just read, so a run driven from its first stage to its
+// last kept the schema's empty default and the Studio rendered the run's stage as a dash.
+// The columns are now written by projectStageOntoRun, next to the stage write they
+// describe, and this statement leaves them exactly as stored. That is what makes each
+// column have ONE writer, which is the property whose absence produced the defect.
+//
+// Leaving them out is also what keeps this statement safe: it is a read-modify-write of a
+// record the caller loaded, and a caller's copy of a DERIVED value is stale the moment any
+// stage moves.
 func (r *WorkflowRepository) UpdateRun(ctx context.Context, record workflow.WorkflowRun, expectedRevision int64, event workflow.WorkflowEvent) error {
 	return r.withinTx(ctx, func(repo *WorkflowRepository) error {
 		result, err := repo.conn().ExecContext(ctx, `UPDATE workflow_runs
-			SET current_stage = ?, status = ?, active_stage_run_id = ?, configuration_json = ?,
+			SET status = ?, configuration_json = ?,
 			    retry_count = ?, updated_at = ?, completed_at = ?, revision = revision + 1
 			WHERE id = ? AND revision = ?`,
-			string(record.CurrentStage), string(record.Status), record.ActiveStageRunID,
+			string(record.Status),
 			record.ConfigurationJSON, record.RetryCount, formatTime(record.UpdatedAt),
 			formatTime(record.CompletedAt), record.ID, expectedRevision)
 		if err != nil {
@@ -201,7 +217,14 @@ func (r *WorkflowRepository) CreateStage(ctx context.Context, record workflow.St
 			}
 			return storageError("WORKFLOW_WRITE_FAILED", "The stage attempt could not be saved.", err)
 		}
-		return repo.insertEvent(ctx, event)
+		if err := repo.insertEvent(ctx, event); err != nil {
+			return err
+		}
+		// A brand-new attempt is in play, so it names itself on the run: FR-100's
+		// restart-recovery reads `current_stage`/`active_stage_run_id` to learn which
+		// attempt was running, and an attempt the machine has created but not yet started
+		// is exactly the one a crash between the two would leave behind.
+		return repo.projectRunStage(ctx, record)
 	})
 }
 
@@ -224,6 +247,11 @@ func (r *WorkflowRepository) GetStage(ctx context.Context, id string) (workflow.
 
 // UpdateStage persists a change guarded by the expected revision, with the
 // event recording it, in one transaction.
+//
+// The transaction also carries the RUN's stage pointer, because a stage status is what the
+// pointer is derived from and the two must not be able to disagree: a crash between them
+// would leave a run naming a stage that never started, or pointed at an attempt that had
+// already ended.
 func (r *WorkflowRepository) UpdateStage(ctx context.Context, record workflow.StageRun, expectedRevision int64, event workflow.WorkflowEvent) error {
 	return r.withinTx(ctx, func(repo *WorkflowRepository) error {
 		result, err := repo.conn().ExecContext(ctx, `UPDATE stage_runs
@@ -244,8 +272,53 @@ func (r *WorkflowRepository) UpdateStage(ctx context.Context, record workflow.St
 		if affected == 0 {
 			return workflow.ConflictError("This stage attempt changed in another window. Reload it and try again.")
 		}
-		return repo.insertEvent(ctx, event)
+		if err := repo.insertEvent(ctx, event); err != nil {
+			return err
+		}
+		return repo.projectRunStage(ctx, record)
 	})
+}
+
+// projectRunStage writes DOMAIN_MODEL section 11.1's stage pointer from the attempt that
+// just moved.
+//
+// # Why the run row itself does not move with it
+//
+// Only the two pointer columns are written. `updated_at` and `revision` are deliberately
+// left alone, and the reason is what each one is for: the revision is the token a
+// caller-initiated command compares against (TransitionRun's compare-and-swap), so a stage
+// moving must not invalidate a user's pause or cancel; and the timestamp orders a run list,
+// which must not reshuffle under a reader while a background stage executes. The pointer
+// itself is DERIVED, so it is neither of those things — and since UpdateRun no longer
+// carries the columns, no other statement can overwrite them.
+//
+// The rule lives in the domain (workflow.ProjectRunStage) rather than here: this function's
+// job is to read the row, ask the domain, and write the answer inside the transaction that
+// moved the stage.
+func (r *WorkflowRepository) projectRunStage(ctx context.Context, stage workflow.StageRun) error {
+	var current, active string
+	err := r.conn().QueryRowContext(ctx,
+		`SELECT current_stage, active_stage_run_id FROM workflow_runs WHERE id = ?`,
+		stage.WorkflowRunID).Scan(&current, &active)
+	if err != nil {
+		// A stage row cannot exist without its run (the foreign key guarantees it), so this
+		// is a storage fault rather than a caller's mistake, and it must fail the
+		// transaction rather than leave the pointer unprojected.
+		return storageError("WORKFLOW_READ_FAILED", "The workflow run could not be read.", err)
+	}
+	next := workflow.ProjectRunStage(
+		workflow.RunStageProjection{Current: workflow.StageName(current), ActiveStageRunID: active},
+		stage,
+	)
+	if next.Current == workflow.StageName(current) && next.ActiveStageRunID == active {
+		return nil
+	}
+	if _, err := r.conn().ExecContext(ctx,
+		`UPDATE workflow_runs SET current_stage = ?, active_stage_run_id = ? WHERE id = ?`,
+		string(next.Current), next.ActiveStageRunID, stage.WorkflowRunID); err != nil {
+		return storageError("WORKFLOW_WRITE_FAILED", "The workflow run's stage could not be updated.", err)
+	}
+	return nil
 }
 
 // ListStages returns a run's attempts oldest first.
