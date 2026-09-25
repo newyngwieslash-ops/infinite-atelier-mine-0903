@@ -1280,7 +1280,7 @@ export default {
             title: "Import source text",
             choose: "Choose a file",
             noFile: "No file chosen",
-            accepted: "TXT, Markdown or DOCX. The bytes decide the format, not the extension.",
+            accepted: "TXT, Markdown, DOCX or PDF. The bytes decide the format, not the extension; a PDF must have a text layer, since a scan reads as nothing.",
             confirm: "Import",
             format: "Format",
             encoding: "Encoding",

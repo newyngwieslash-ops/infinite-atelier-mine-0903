@@ -33,6 +33,14 @@ const (
 	FormatMarkdown Format = "markdown"
 	// FormatDOCX is an Office Open XML document, which is a ZIP container.
 	FormatDOCX Format = "docx"
+	// FormatPDF is a Portable Document Format file, which carries its text in
+	// content streams behind an encoding a reader has to honour (WP-19).
+	//
+	// It is a container rather than a text encoding, which is why it is a format
+	// and not an Encoding: the bytes are neither UTF-8 nor UTF-16, and what comes
+	// out of the extractor IS UTF-8 — so the encoding detector sees already-decoded
+	// text, exactly as it does for a DOCX.
+	FormatPDF Format = "pdf"
 	// FormatPasted is text a user typed or pasted rather than uploaded. It has
 	// no original file, which is why the schema allows an empty physical file
 	// reference.
@@ -40,7 +48,7 @@ const (
 )
 
 // Formats lists the documented formats in a stable order.
-var Formats = []Format{FormatText, FormatMarkdown, FormatDOCX, FormatPasted}
+var Formats = []Format{FormatText, FormatMarkdown, FormatDOCX, FormatPDF, FormatPasted}
 
 // IsValidFormat reports whether a format may be stored.
 func IsValidFormat(value Format) bool {
@@ -290,6 +298,11 @@ func StoryDocumentType(format Format) story.DocumentType {
 	case FormatPasted:
 		return story.DocumentNotes
 	default:
+		// DOCX and PDF both land here, and that is the mapping rather than an
+		// omission: a Word file and a PDF are how a NOVEL arrives from a
+		// publisher or an author, and neither container says anything about what
+		// the text is for. The caller may override it, which is the point of the
+		// function's contract.
 		return story.DocumentNovel
 	}
 }

@@ -20,11 +20,11 @@
     "properties": [
       {
         "name": "infinite-atelier:go-components",
-        "value": "130"
+        "value": "131"
       },
       {
         "name": "infinite-atelier:go-linked",
-        "value": "18"
+        "value": "19"
       },
       {
         "name": "infinite-atelier:go-test",
@@ -2439,6 +2439,47 @@
         {
           "license": {
             "id": "MIT"
+          }
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:golang/github.com/ledongthuc/pdf@v0.0.0-20260907135840-6c8c28e0e8a0",
+      "name": "github.com/ledongthuc/pdf",
+      "version": "v0.0.0-20260907135840-6c8c28e0e8a0",
+      "purl": "pkg:golang/github.com/ledongthuc/pdf@v0.0.0-20260907135840-6c8c28e0e8a0",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "infinite-atelier:ecosystem",
+          "value": "go"
+        },
+        {
+          "name": "infinite-atelier:tier",
+          "value": "linked"
+        },
+        {
+          "name": "infinite-atelier:direct",
+          "value": "true"
+        },
+        {
+          "name": "infinite-atelier:go.sum-source-hash",
+          "value": "h1:7Q+xNAZFmnfYOMweHN3c/PDFUKKfY1pVJ26K++QvVfU="
+        },
+        {
+          "name": "infinite-atelier:go.sum-go.mod-hash",
+          "value": ""
+        },
+        {
+          "name": "infinite-atelier:license-source",
+          "value": "LICENSE in the module cache"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-3-Clause"
           }
         }
       ]

@@ -70,6 +70,16 @@ func detectFormat(content []byte, hint string) (importing.Format, error) {
 		return "", importing.InvalidError("The document is larger than an import accepts.")
 	}
 	normalizedHint := strings.ToLower(strings.TrimSpace(hint))
+	// THE MAGIC BYTES DECIDE, which is this function's own rule applied to a third container. The
+	// order matters only for cost: a PDF signature is four bytes at the front, so it is checked
+	// before the ZIP signatures are looked for anywhere.
+	if hasPDFSignature(content) {
+		if normalizedHint != "" && normalizedHint != "pdf" &&
+			normalizedHint != string(importing.FormatPDF) {
+			return "", importing.InvalidError("That file is a PDF, not the text document its name suggests.")
+		}
+		return importing.FormatPDF, nil
+	}
 	if hasZipSignature(content) {
 		if normalizedHint != "" && normalizedHint != "docx" &&
 			normalizedHint != string(importing.FormatDOCX) {
@@ -80,6 +90,11 @@ func detectFormat(content []byte, hint string) (importing.Format, error) {
 	switch normalizedHint {
 	case "md", "markdown":
 		return importing.FormatMarkdown, nil
+	case "pdf":
+		// The hint says PDF but the bytes are not one. Reporting the mismatch rather than importing
+		// binary as prose means the user learns their file is damaged, which is the same ruling the
+		// DOCX branch below makes and for the same reason.
+		return "", importing.InvalidError("That file is named as a PDF but does not begin with a PDF header.")
 	case "docx":
 		// The hint says DOCX but the bytes are not a ZIP. Reporting the mismatch
 		// rather than importing as text means the user learns their file is
@@ -92,6 +107,21 @@ func detectFormat(content []byte, hint string) (importing.Format, error) {
 		// already decided, and everything that is not an archive is text.
 		return importing.FormatText, nil
 	}
+}
+
+// hasPDFSignature reports whether the bytes open with the PDF header.
+//
+// The spec allows leading bytes before `%PDF-` (a convention some producers use to make a file look
+// like something else to a naive scanner), so the search is over the first kilobyte rather than at
+// offset zero. The bound keeps the scan cheap and keeps a file that merely CONTAINS the string
+// somewhere in its middle from being mistaken for a PDF — the header has to be at the front, where
+// a PDF reader would look for it.
+func hasPDFSignature(content []byte) bool {
+	window := content
+	if len(window) > 1024 {
+		window = window[:1024]
+	}
+	return bytes.Contains(window, []byte("%PDF-"))
 }
 
 // hasZipSignature reports whether the bytes open with a ZIP header.
@@ -116,10 +146,16 @@ func hasZipSignature(content []byte) bool {
 // DOCX's body is XML, whose character encoding the XML declaration states, so it
 // comes out of this step already decoded.
 func extractText(content []byte, format importing.Format) ([]byte, error) {
-	if format != importing.FormatDOCX {
+	switch format {
+	case importing.FormatDOCX:
+		return docxText(content)
+	case importing.FormatPDF:
+		// A PDF's bytes are neither UTF-8 nor UTF-16, so this step is what makes the text a document
+		// the encoding detector can then pass through unchanged — the same division a DOCX has.
+		return pdfText(content)
+	default:
 		return content, nil
 	}
-	return docxText(content)
 }
 
 // docxText reads a DOCX body and returns its text as UTF-8.

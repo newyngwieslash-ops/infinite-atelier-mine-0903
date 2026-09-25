@@ -41,8 +41,14 @@ export type ImportFlowProps = {
     onImported: () => void;
 };
 
-/** ACCEPTED_EXTENSIONS is what the file picker offers; the bytes still decide. */
-const ACCEPTED_EXTENSIONS = ".txt,.md,.markdown,.docx";
+/**
+ * ACCEPTED_EXTENSIONS is what the file picker offers; the bytes still decide.
+ *
+ * `.pdf` was added in WP-19. The list is a CONVENIENCE for the picker's default filter and never a
+ * check: the core's `detectFormat` reads the magic bytes, so a file whose name lies is refused or
+ * interpreted by what it actually is, and a `.pdf` that is really text imports as text.
+ */
+const ACCEPTED_EXTENSIONS = ".txt,.md,.markdown,.docx,.pdf";
 
 export function ImportFlow({ projectId, onImported }: ImportFlowProps) {
     const { t } = useTranslation();

@@ -1278,7 +1278,7 @@ export default {
             title: "导入原始正文",
             choose: "选择文件",
             noFile: "尚未选择文件",
-            accepted: "支持 TXT、Markdown 或 DOCX。格式由字节决定,不由扩展名决定。",
+            accepted: "支持 TXT、Markdown、DOCX 或 PDF。格式由字节决定,不由扩展名决定;PDF 必须是带文字层的,扫描件读了会是空的。",
             confirm: "导入",
             format: "格式",
             encoding: "编码",

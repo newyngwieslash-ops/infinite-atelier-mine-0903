@@ -2,8 +2,8 @@
 
 > Last updated: 2026-09-25
 > Product: Infinite Atelier Core + Drama Production Pack
-> Current work package: **WP-18 — P3 item 22, the summary ladder and the recall metrics**
-> Status: **COMPLETE (section 0w). 11 mutations, 11/11 killed; the full gate passes.**
+> Current work package: **WP-19 — P3 item 24, PDF import**
+> Status: **COMPLETE (section 0x). 11 mutations, 11/11 killed; the full gate passes.**
 > **WP-16 remains COMPLETE (section 0u)** — the complete asset ruleset, two categories that had no
 > emitter, and the classification reaching the UI. **WP-15 remains COMPLETE for its scope**: P1's ten
 > items are all closed (section 0s), so the acceptance contract has no outstanding clause it can
@@ -46,6 +46,89 @@
 > `docs/implementation/project-progress-and-remaining-tasks-2026-09-23.md`, where the P0 section is
 > now closed and **P1 to P4 are unchanged** — P1 opens with FR-100's explicit-stage-dependency
 > ruling, which is a product decision rather than a code task.
+
+# 0x. WP-19: PDF import, and the two probes that chose the library (2026-09-25)
+
+WP-19 works **P3 item 24** (PDF 导入). ADR-0023 carries the reasoning; this section records what
+changed and what the probing found.
+
+## The probe, and what it settled
+
+A Chinese PDF carrying a `ToUnicode` CMap was built by hand and handed to both candidate libraries.
+That CMap is the whole question: a Chinese document stores CID codes into a subset font, and a reader
+learns which character each code means only from the CMap.
+
+| library | result on `沈砚的渡口` | verdict |
+|---|---|---|
+| `rsc.io/pdf` v0.1.1 | `"\x10\x00\x10\x01…"` — the RAW GLYPH CODES | **rejected** |
+| `github.com/ledongthuc/pdf` | `"沈砚的渡口"` | chosen |
+
+**`rsc.io/pdf` cannot read Chinese** — it sees the font's ToUnicode entry and does not apply it. It is
+the obvious first choice, which is why the rejection is recorded rather than assumed.
+
+The chosen library was then fuzzed, because an importer parses untrusted bytes: **120 corrupted
+variants produced THREE PANICS** (`invalid real .`, `unexpected non-name key`, `missing endobj`), all
+from `lex.go`'s `errorf`, which is how the library reports malformed input. Zero hangs, and four
+hand-built hostile files all returned errors. So it is usable **with a recover** and unusable without
+one.
+
+## What was built
+
+- `internal/application/importing/pdf.go` (new): the extractor, with the recover wrapped as narrowly
+  as the finding demands, a page bound, a per-page text bound, and a distinct refusal for a document
+  with no text layer — a scan is a different problem from a corrupt file and has a different remedy.
+- `internal/domain/importing`: `FormatPDF` joins the vocabulary, which stays closed.
+- `parse.go`: the `%PDF-` magic bytes decide the format, in the header's first kilobyte rather than
+  anywhere in the file, and a hint that contradicts the bytes is refused — the pipeline's own rule.
+- The frontend picker offers `.pdf`, and both locales' hint text says a PDF must have a text layer.
+- `THIRD_PARTY_NOTICES.md` and the SBOM carry the new dependency's BSD-3-Clause terms.
+
+## The gate caught the dependency, which is the point
+
+`sh scripts/verify.sh` FAILED on the first run after the module was added: `sbom/cyclonedx.json` had
+drifted from what the generator produces. Regenerating it detected `BSD-3-Clause` for the new
+component, which is the licence AGENTS §6 requires to be checked. **A gate that failed on a legitimate
+change and told us what to do is a gate working**, and it is recorded here rather than as an
+inconvenience.
+
+## TWO TESTS THAT PINNED PDF AS REFUSED WERE UPDATED, WITH THEIR REASONING QUOTED
+
+`TestFormatAndEncodingVocabularies` asserted that `pdf` was not a valid format, and its comment said
+why: "the specification puts it in V1, so it must stay refused by an MVP import". WP-19 IS that V1
+item. The assertion flips to the new state and the old reasoning is quoted in place, so a reader who
+remembers the old rule finds out that it changed and where — rather than discovering the test is gone.
+
+## What the mutation run found
+
+**11 mutations, and THREE survived the first run**, each recorded because the pattern recurs:
+
+1. **The first version of the recover mutation was wrong** — it still CALLED `recover()`, which is
+   what stops the panic, so it proved nothing. Removed properly, it is killed: the corruption test
+   takes the process down without it.
+2. **The page bound had no test.** No fixture had more than two pages, so a limit that exists in the
+   source and nowhere else survived deletion. Probing it with real pages took NINE MINUTES — a test
+   nobody would run — and doctoring the page tree made the refusal come from the parser rather than
+   from the bound. So the limits became a VALUE the extractor takes, and the test asserts the real
+   comparison on a small document.
+3. **The per-page text bound had no test**, for the same structural reason: reaching four megabytes
+   through this library means lexing four megabytes character by character, which the measurement put
+   at minutes. The same parameterised limits fixed it.
+
+The final count is **11 mutations, 11/11 killed**, each restored byte-identically.
+
+## Verification
+
+| command | result |
+|---|---|
+| `go test ./... -count=1` | **PASS** - 57 packages ok, 0 failed |
+| `npm test` / `npm run typecheck` | **PASS** - 113 tests, 0 failures; typecheck clean |
+| `sh scripts/verify.sh` | **PASS**, exit 0 (25 Playwright, security scans over 665 files, all fixture checks, SBOM, Wails production build) |
+
+## STILL OPEN, named
+
+**P3's remaining five items**: 17 (local ONNX embeddings), 19 (MONOFORM deep integration), 21 (real
+video providers — needs paid-provider authorisation), 23 (fuller timeline with effects and mixing),
+25 (stable Windows install/upgrade — needs `makensis`).
 
 # 0w. WP-18: the ladder's third rung, a defect it exposed, and the recall metrics (2026-09-25)
 

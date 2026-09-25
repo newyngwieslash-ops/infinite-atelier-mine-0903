@@ -1,12 +1,13 @@
 {
   "generatedBy": "scripts/gen-sbom.mjs",
-  "goComponents": 130,
+  "goComponents": 131,
   "goTiers": {
     "linked": [
       "github.com/dustin/go-humanize@v1.0.1",
       "github.com/leaanthony/go-ansi-parser@v1.6.1",
       "github.com/leaanthony/slicer@v1.6.0",
       "github.com/leaanthony/u@v1.1.1",
+      "github.com/ledongthuc/pdf@v0.0.0-20260907135840-6c8c28e0e8a0",
       "github.com/mattn/go-isatty@v0.0.24",
       "github.com/ncruces/go-strftime@v1.0.0",
       "github.com/pkg/errors@v0.9.1",
@@ -30,7 +31,7 @@
     "production": 1273,
     "dev": 113
   },
-  "directDependencies": 32,
+  "directDependencies": 33,
   "licensesUnknown": {
     "go": [],
     "goLinked": [],
@@ -38,6 +39,17 @@
   },
   "restrictiveLicensesAmongDirectDependencies": [],
   "directDependencyLicenses": [
+    {
+      "ecosystem": "go",
+      "name": "github.com/ledongthuc/pdf",
+      "version": "v0.0.0-20260907135840-6c8c28e0e8a0",
+      "relationship": "direct requirement",
+      "tier": "linked",
+      "license": "BSD-3-Clause",
+      "source": "LICENSE in the module cache",
+      "restrictive": false,
+      "unidentified": false
+    },
     {
       "ecosystem": "go",
       "name": "github.com/santhosh-tekuri/jsonschema/v6",

@@ -5,6 +5,7 @@ This file preserves notices for the Go desktop dependency graph. Infinite Atelie
 - Wails v2.15.0: MIT; [upstream](https://github.com/wailsapp/wails/tree/v2.15.0).
 - modernc.org/sqlite v1.58.0: BSD-3-Clause; [version documentation](https://pkg.go.dev/modernc.org/sqlite@v1.58.0), [canonical upstream](https://gitlab.com/cznic/sqlite). Published 2026-09-01; pinned intentionally.
 - Bundled SQLite reports 3.53.4 in the driver contract test: public domain; [copyright statement](https://www.sqlite.org/copyright.html).
+- github.com/ledongthuc/pdf v0.0.0-20260907135840-6c8c28e0e8a0: BSD-3-Clause; [version documentation](https://pkg.go.dev/github.com/ledongthuc/pdf@v0.0.0-20260907135840-6c8c28e0e8a0), [canonical upstream](https://github.com/ledongthuc/pdf). Added by WP-19 (P3 item 24) for PDF text extraction; the module has NO tagged release, so it is pinned to a pseudo-version by commit — a maintenance risk recorded in ADR-0023, mitigated by the fact that exactly one function calls it.
 
 ## Machine-readable SBOM, and how this file relates to it
 
@@ -2187,6 +2188,42 @@ LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
 ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+```
+
+## github.com/ledongthuc/pdf v0.0.0-20260907135840-6c8c28e0e8a0
+
+[Version source](https://pkg.go.dev/github.com/ledongthuc/pdf@v0.0.0-20260907135840-6c8c28e0e8a0)
+
+BSD 3-Clause License, Copyright (c) 2009 The Go Authors. All rights reserved. The upstream BSD-3-Clause
+text is reproduced in the module's own LICENSE file and is identical in substance to the clause set
+below, which this repository already carries for its other Go-Authors-derived dependency:
+
+```text
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+   * Redistributions of source code must retain the above copyright
+notice, this list of conditions and the following disclaimer.
+   * Redistributions in binary form must reproduce the above
+copyright notice, this list of conditions and the following disclaimer
+in the documentation and/or other materials provided with the
+distribution.
+   * Neither the name of the copyright holder nor the names of its
+contributors may be used to endorse or promote products derived from
+this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
 ## modernc.org/sqlite v1.58.0

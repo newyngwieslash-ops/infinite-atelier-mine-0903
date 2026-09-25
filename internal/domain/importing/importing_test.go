@@ -9,12 +9,12 @@ import (
 
 // TestFormatAndEncodingVocabularies pins the sets the schema records.
 func TestFormatAndEncodingVocabularies(t *testing.T) {
-	for _, format := range []Format{FormatText, FormatMarkdown, FormatDOCX, FormatPasted} {
+	for _, format := range []Format{FormatText, FormatMarkdown, FormatDOCX, FormatPDF, FormatPasted} {
 		if !IsValidFormat(format) {
 			t.Fatalf("documented format %q rejected", format)
 		}
 	}
-	for _, rejected := range []Format{"", "pdf", "TXT", "doc"} {
+	for _, rejected := range []Format{"", "TXT", "doc", "PDF"} {
 		if IsValidFormat(rejected) {
 			t.Fatalf("undocumented format %q accepted", rejected)
 		}
@@ -24,10 +24,15 @@ func TestFormatAndEncodingVocabularies(t *testing.T) {
 			t.Fatalf("documented encoding %q rejected", encoding)
 		}
 	}
-	// PDF is the one format a reader might expect and the specification puts it
-	// in V1, so it must stay refused here.
-	if IsValidFormat("pdf") {
-		t.Fatal("PDF is a V1 format and must not be accepted by an MVP import")
+	// PDF USED TO BE REFUSED HERE, and the comment said why: "the specification puts it in V1, so
+	// it must stay refused by an MVP import". WP-19 is that V1 item, so the assertion flips to the
+	// new state rather than being deleted — a reader who remembers the old rule should find out
+	// that it changed and where, not discover the test is gone.
+	//
+	// The vocabulary stays CLOSED, which is the property this test is for: PDF is a member, and a
+	// spelling of it that the schema would not store is still refused.
+	if !IsValidFormat(FormatPDF) {
+		t.Fatal("PDF is a documented format as of WP-19 and must be accepted")
 	}
 	for _, rejected := range []Encoding{"", "latin1", "UTF-8", "shift_jis"} {
 		if IsValidEncoding(rejected) {
@@ -414,7 +419,11 @@ func TestDocumentValidateCoversTheSchemaRules(t *testing.T) {
 	for _, rejected := range []Document{
 		{Text: "   ", Encoding: EncodingUTF8, Format: FormatText, Chapters: chapters},
 		{Text: text, Encoding: "latin1", Format: FormatText, Chapters: chapters},
-		{Text: text, Encoding: EncodingUTF8, Format: "pdf", Chapters: chapters},
+		// An UNKNOWN format, which used to be spelled "pdf" because PDF was the format this build
+		// did not have. WP-19 added it, so the rejection case needs a value that is still not in the
+		// vocabulary — and the assertion is unchanged in substance: an undocumented format is
+		// refused.
+		{Text: text, Encoding: EncodingUTF8, Format: "epub", Chapters: chapters},
 	} {
 		if err := rejected.Validate(); err == nil {
 			t.Fatalf("a malformed document was accepted: %+v", rejected)
