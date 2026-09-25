@@ -81,7 +81,11 @@ func composeMedia(handle *database.Handle, script *appscript.Service, store *fil
 		// The file store writes BYTES and the repository records the row they are addressable by. The
 		// pair is what `asset_files.file_hash` has a foreign key to, so a composed export without the
 		// row could not be cited by anything.
-		Files:    mediaFileStore{store: store, repository: database.NewFileRepository(connection)},
+		Files: mediaFileStore{store: store, repository: database.NewFileRepository(connection)},
+		// The audio reader resolves an approved line's version to the bytes the store holds — the join
+		// between a version and a hash that only the asset tables know. Without it an episode with
+		// dialogue refuses to export rather than producing a silent film (WP-20).
+		Audio:    database.NewAssetRepository(connection),
 		Exports:  exportRepository,
 		Temp:     mediaTempDir{dir: tempDir},
 		Subtitle: subtitleService,

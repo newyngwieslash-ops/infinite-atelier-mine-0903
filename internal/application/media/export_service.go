@@ -42,6 +42,24 @@ type StoredObject struct {
 	Size       int64
 }
 
+// AudioFileReader resolves an approved audio version to the bytes the store holds.
+//
+// # Why this is a port of its own rather than a method on FileStore
+//
+// `FileStore.Open` takes a STORAGE KEY, which is the file's content hash — and an export knows a
+// VERSION identifier, not a hash. The join between the two lives in the asset tables: a version has
+// an `asset_files` row whose role is `primary`, and that row names the hash. Putting that query behind
+// this port keeps the export service out of the asset schema, which is the same division every other
+// read in this package keeps.
+//
+// It is a per-version call rather than a batch because the caller already holds the ids and the count
+// is bounded by the mix limit. A batch would be an optimisation for a case the bound makes small.
+type AudioFileReader interface {
+	// AudioFileFor returns the primary file's hash for one asset version. found=false means the
+	// version has no primary file, which is a version nothing can play.
+	AudioFileFor(ctx context.Context, assetVersionID string) (hash string, found bool, err error)
+}
+
 // ExportRepository records what an export was.
 type ExportRepository interface {
 	CreateExport(ctx context.Context, record ExportRecord) error
@@ -124,6 +142,10 @@ type ExportOptions struct {
 	Timeline TimelineService
 	Engine   MediaEngine
 	Files    FileStore
+	// Audio resolves an approved audio version to its bytes. It is REQUIRED for an episode with
+	// audio: a build composed without it composes silent films, and `Available` refuses rather than
+	// letting that happen quietly — see `buildMix`.
+	Audio    AudioFileReader
 	Exports  ExportRepository
 	Temp     TempDir
 	Subtitle SubtitleReader
@@ -144,6 +166,7 @@ type ExportService struct {
 	timeline TimelineService
 	engine   MediaEngine
 	files    FileStore
+	audio    AudioFileReader
 	exports  ExportRepository
 	temp     TempDir
 	subtitle SubtitleReader
@@ -157,6 +180,7 @@ func NewExportService(options ExportOptions) *ExportService {
 		timeline: options.Timeline,
 		engine:   options.Engine,
 		files:    options.Files,
+		audio:    options.Audio,
 		exports:  options.Exports,
 		temp:     options.Temp,
 		subtitle: options.Subtitle,
@@ -326,12 +350,25 @@ func (s *ExportService) Export(ctx context.Context, request ExportRequest) (Expo
 		})
 	}
 
+	// THE SOUND, which the export used to omit entirely: the request carried segments and a subtitle
+	// path and no audio at all, so every film was silent while the timeline reported that the episode
+	// had audio. The mix is built before the compose call so a refusal (no reader, a version with no
+	// file, too many clips) happens before any encoding work.
+	mix, audioReferences, err := s.buildMix(ctx, scratch, timeline)
+	if err != nil {
+		return ExportRecord{}, domainmedia.Manifest{}, err
+	}
+	// Every clip that was composed is a manifest reference, which is what makes the sound traceable
+	// in the same way the picture is: a reader can see which approved audio version a film contains.
+	manifest.References = append(manifest.References, audioReferences...)
+
 	outputPath := filepath.Join(scratch, "episode.mp4")
 	result, err := s.engine.Compose(ctx, ComposeRequest{
 		Segments:     segments,
 		Width:        size.Width,
 		Height:       size.Height,
 		FPS:          fps,
+		AudioMix:     mix,
 		SubtitlePath: subtitlePath,
 		SubtitleMode: mode,
 		OutputPath:   outputPath,
@@ -389,6 +426,118 @@ func (s *ExportService) Export(ctx context.Context, request ExportRequest) (Expo
 		return ExportRecord{}, domainmedia.Manifest{}, err
 	}
 	return record, manifest, nil
+}
+
+// buildMix turns the timeline's audio into the mix the engine composes (FR-080's 简单混音).
+//
+// # What this fixes, stated as the defect it was
+//
+// The export used to pass NO audio at all: `Compose` was given the segments and a subtitle path, and
+// `ComposeRequest` had no audio field in the call. Every export was therefore a silent film while
+// `TimelineShot.HasAudio` reported that the episode had audio — the acceptance walk recorded the
+// silence as a known limit rather than as a bug, and this function is what closes it.
+//
+// # How a clip's position is decided
+//
+// A dialogue clip is placed at its SHOT's start. The timeline already computes that running total —
+// it places the cues against it — so the shot carries `StartMS` and this function does not redo the
+// arithmetic: a second implementation of "where does shot six begin" is a second answer, and the two
+// would eventually disagree about the film.
+//
+// # Why the order is dialogue, then effects, then music
+//
+// The engine mixes by summing, so the order does not change the sound — it changes the NUMBERING in
+// ffmpeg's argument list, which is what a failure a reader sees refers to. Putting dialogue first
+// means "the third input is a line" stays true as a project grows, which is what makes an error
+// message about input 3 actionable. A music bed is last because it is the one clip whose placement
+// does not depend on a shot.
+func (s *ExportService) buildMix(ctx context.Context, scratch string, timeline Timeline) (AudioMix, []domainmedia.ManifestReference, error) {
+	dialogue := make([]AudioClip, 0, len(timeline.Shots))
+	music := make([]AudioClip, 0, 1)
+	references := make([]domainmedia.ManifestReference, 0)
+	for _, shot := range timeline.Shots {
+		for index, versionID := range shot.AudioVersionIDs {
+			clip, reference, err := s.audioClipFor(ctx, scratch, versionID, AudioRoleDialogue, shot.StartMS,
+				"shot "+itoa(shot.Ordinal)+" line "+itoa(index+1))
+			if err != nil {
+				return AudioMix{}, nil, err
+			}
+			dialogue = append(dialogue, clip)
+			references = append(references, reference)
+		}
+	}
+	// The mix is bounded, and the bound is checked HERE rather than left to the engine: a refusal
+	// that names the count is actionable, while an ffmpeg argument-limit failure says nothing about
+	// what the user should remove.
+	if len(dialogue)+len(music) > MaxAudioClips() {
+		return AudioMix{}, nil, LimitError(
+			"That episode's dialogue needs more audio clips than one composition mixes. Export a scene at a time.")
+	}
+	clips := make([]AudioClip, 0, len(dialogue)+len(music))
+	clips = append(clips, dialogue...)
+	clips = append(clips, music...)
+	return AudioMix{Clips: clips}, references, nil
+}
+
+// audioClipFor stages one approved audio version and builds its clip.
+//
+// It is the same staging the picture takes — bytes copied into this export's own scratch directory
+// under a name this adapter chose — because the engine must never be handed a path into the store.
+func (s *ExportService) audioClipFor(ctx context.Context, scratch, versionID string, role AudioRole, startMS int, label string) (AudioClip, domainmedia.ManifestReference, error) {
+	if s.audio == nil {
+		// Fail closed rather than composing a silent film: an episode WITH audio whose export dropped
+		// it is the defect this function exists to fix, and reproducing it quietly would be worse
+		// than refusing. A build with no audio reader cannot export a voiced episode.
+		return AudioClip{}, domainmedia.ManifestReference{}, NotAvailableError(
+			"This build cannot read an episode's audio, so it will not export a silent film in its place.")
+	}
+	hash, found, err := s.audio.AudioFileFor(ctx, versionID)
+	if err != nil {
+		return AudioClip{}, domainmedia.ManifestReference{}, err
+	}
+	if !found {
+		return AudioClip{}, domainmedia.ManifestReference{}, InvalidError(
+			"An approved line of dialogue has no audio file, so the film cannot be composed.")
+	}
+	reader, err := s.files.Open(ctx, hash)
+	if err != nil {
+		return AudioClip{}, domainmedia.ManifestReference{}, err
+	}
+	defer reader.Close()
+	name := "audio-" + safeSegment(label) + ".m4a"
+	path := filepath.Join(scratch, name)
+	file, err := os.Create(path)
+	if err != nil {
+		return AudioClip{}, domainmedia.ManifestReference{}, StorageError(
+			"The dialogue could not be staged for export.", err)
+	}
+	defer file.Close()
+	if _, err := io.Copy(file, reader); err != nil {
+		return AudioClip{}, domainmedia.ManifestReference{}, StorageError(
+			"The dialogue could not be staged for export.", err)
+	}
+	return AudioClip{Role: role, Path: path, StartMS: startMS, Label: label},
+		domainmedia.ManifestReference{Kind: domainmedia.RefAssetVersion, ID: versionID, Hash: hash},
+		nil
+}
+
+// safeSegment renders a label as a filename segment.
+//
+// The label is built from a shot ordinal and a line index — integers — so this is not sanitising
+// user text; it is making the CONTRACT explicit, so that a later change which put a filename or a
+// user string in a label cannot silently reach the filesystem.
+func safeSegment(label string) string {
+	builder := strings.Builder{}
+	for _, symbol := range label {
+		switch {
+		case symbol >= 'a' && symbol <= 'z', symbol >= 'A' && symbol <= 'Z',
+			symbol >= '0' && symbol <= '9', symbol == '-':
+			builder.WriteRune(symbol)
+		default:
+			builder.WriteRune('-')
+		}
+	}
+	return builder.String()
 }
 
 // materialise copies one shot's approved media out of the store and into the scratch directory.

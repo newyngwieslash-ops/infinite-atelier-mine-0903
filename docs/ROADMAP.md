@@ -685,7 +685,7 @@ WP-12 交付 Release Candidate 之后，工作不再按 WP 序号推进，而按
 | P0 | 产品断链：资产生产 UI（面板图链路）、每 Provider 并发上限 | **DONE** — WP-13（STATUS §0q，ADR-0017）、WP-14（STATUS §0r，ADR-0018） |
 | P1 | 验收合同内缺口，十项（FR-030/070/100/110/150/160/170/180、AC-E2E-002/006） | **DONE** — WP-15（STATUS §0s/§0t，ADR-0019） |
 | P2 | 发布工程：Windows 安装包与签名、干净 VM、`go test -race`、CI/远程执行 | 安装包**接线完成、缺 `makensis`**；`-race` **已在本机运行且零数据竞争**（STATUS §0t）；干净 VM 与 CI **本机无法完成，如实记为 OPEN** |
-| P3 | PRD §16 的 v1.0 范围，九项（本地 ONNX embedding、事件图谱可视化、MONOFORM 深度集成、完整资产一致性检查、真实视频 Provider、层级摘要与记忆中心、更完整时间线、PDF 导入、Windows 稳定安装升级） | **逐项成包进行中** — 第 20 项（完整资产一致性检查）由 WP-16 完成（STATUS §0u，ADR-0020），第 18 项（事件图谱可视化）由 WP-17 完成（STATUS §0v，ADR-0021），第 22 项（层级摘要与记忆中心）由 WP-18 完成（STATUS §0w，ADR-0022），第 24 项（PDF 导入）由 WP-19 完成（STATUS §0x，ADR-0023）；其余五项各为一个独立包 |
+| P3 | PRD §16 的 v1.0 范围，九项（本地 ONNX embedding、事件图谱可视化、MONOFORM 深度集成、完整资产一致性检查、真实视频 Provider、层级摘要与记忆中心、更完整时间线、PDF 导入、Windows 稳定安装升级） | **逐项成包进行中** — 第 20 项（完整资产一致性检查）由 WP-16 完成（STATUS §0u，ADR-0020），第 18 项（事件图谱可视化）由 WP-17 完成（STATUS §0v，ADR-0021），第 22 项（层级摘要与记忆中心）由 WP-18 完成（STATUS §0w，ADR-0022），第 24 项（PDF 导入）由 WP-19 完成（STATUS §0x，ADR-0023），第 23 项（更完整时间线与混音）由 WP-20 完成（STATUS §0y，ADR-0024）；其余四项各为一个独立包 |
 | P4 | 文档债：TRACEABILITY 过时判定、本清单回填 ROADMAP | **DONE** — WP-15（STATUS §0s）与本节 |
 
 ## P3 的执行约定

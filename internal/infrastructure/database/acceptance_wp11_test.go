@@ -124,6 +124,10 @@ func newMediaHarness(t *testing.T) *mediaHarness {
 	})
 	harness.service = appmedia.NewExportService(appmedia.ExportOptions{
 		Timeline: *harness.timeline, Engine: engine, Files: files, Exports: exports,
+		// The audio reader, which is what makes the walk's export carry the dialogue it attached.
+		// WP-20 added it: before that the export passed no audio at all, so the walk's film was
+		// silent and the test recorded the silence as a known limit.
+		Audio:    NewAssetRepository(db),
 		Temp:     scratchTemp{root: filepath.Join(root, "temp")},
 		Subtitle: harness.subtitle, Clock: mediaClock{at: harness.now}, IDs: harness,
 	})

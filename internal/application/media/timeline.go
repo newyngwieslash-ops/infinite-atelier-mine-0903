@@ -47,6 +47,16 @@ type TimelineShot struct {
 	PanelVersionID string
 	// HasAudio reports whether any audio version is approved for a line in this shot's scene.
 	HasAudio bool
+	// AudioVersionIDs are the approved audio versions for that scene's lines, which is what the
+	// export composes. The timeline carries them so the export does not have to re-read the board:
+	// two reads of the same join could disagree, and the export's whole job is to record what it
+	// actually used.
+	AudioVersionIDs []string
+	// StartMS is where this shot begins in the film, which is the sum of the durations before it.
+	// It is what places a dialogue clip: a line's audio belongs at its shot's start, and without
+	// this the export would have to recompute the running total — a second implementation of the
+	// arithmetic the timeline already did.
+	StartMS int
 	// CueCount is how many subtitle cues fall inside this shot's span.
 	CueCount int
 }
@@ -119,10 +129,23 @@ type BoardRow struct {
 	MediaHash string
 	// MediaKind is the asset's own type, so a caller knows whether it is composing a frame or a clip.
 	MediaKind string
-	// AudioApproved reports whether audio is approved for any line in this row's scene. It is a
-	// boolean rather than a list because the timeline reports completeness, and the export reads the
-	// actual files through the same join.
+	// AudioApproved reports whether audio is approved for any line in this row's scene. It is what the
+	// timeline reports for COMPLETENESS — "is this shot's scene voiced" — and it is a boolean because
+	// a reader of a timeline wants a yes or no rather than a list of files.
 	AudioApproved bool
+	// AudioVersionIDs are the approved audio versions for the lines of this row's scene, in a stable
+	// order.
+	//
+	// IT EXISTS BECAUSE THE EXPORT NEEDS THE FILES, and the comment above used to claim the export
+	// "reads the actual files through the same join" — a join that did not exist. The consequence was
+	// measured rather than imagined: `ExportService.compose` built a `ComposeRequest` with segments and
+	// a subtitle path and NO audio at all, so every export was a silent film while
+	// `TimelineShot.HasAudio` reported that the episode had audio. The acceptance walk recorded the
+	// silence as a known limit; this field is what closes it.
+	//
+	// The ids are versions rather than paths because the store's bytes are content-addressed and the
+	// export materialises them into its own scratch directory — the same path the picture takes.
+	AudioVersionIDs []string
 }
 
 // TimelineOptions configures the service.
@@ -210,15 +233,19 @@ func (s *TimelineService) Read(ctx context.Context, request TimelineRequest) (Ti
 	for _, row := range rows {
 		durationMS := row.DurationSecs * 1000
 		shot := TimelineShot{
-			Ordinal:        row.Ordinal,
-			ItemID:         row.ItemID,
-			ShotID:         row.ShotID,
-			DurationMS:     durationMS,
-			MediaVersionID: row.ApprovedVersionID,
-			MediaHash:      row.MediaHash,
-			MediaKind:      row.MediaKind,
-			PanelVersionID: row.PanelVersionID,
-			HasAudio:       row.AudioApproved,
+			Ordinal:         row.Ordinal,
+			ItemID:          row.ItemID,
+			ShotID:          row.ShotID,
+			DurationMS:      durationMS,
+			MediaVersionID:  row.ApprovedVersionID,
+			MediaHash:       row.MediaHash,
+			MediaKind:       row.MediaKind,
+			PanelVersionID:  row.PanelVersionID,
+			HasAudio:        row.AudioApproved,
+			AudioVersionIDs: row.AudioVersionIDs,
+			// The shot starts where everything before it ended, which is the same running total the
+			// cue placement below uses — computed once, here, so the two cannot disagree.
+			StartMS: position,
 		}
 		if row.ApprovedVersionID == "" {
 			timeline.MissingMedia++

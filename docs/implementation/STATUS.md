@@ -2,8 +2,9 @@
 
 > Last updated: 2026-09-25
 > Product: Infinite Atelier Core + Drama Production Pack
-> Current work package: **WP-19 — P3 item 24, PDF import**
-> Status: **COMPLETE (section 0x). 11 mutations, 11/11 killed; the full gate passes.**
+> Current work package: **WP-20 — P3 item 23, the audio mix**
+> Status: **COMPLETE (section 0y). 10 mutations, 10/10 killed; the full gate passes.**
+> **Four P3 items remain**, and each is named in ROADMAP section 6 with what it needs.
 > **WP-16 remains COMPLETE (section 0u)** — the complete asset ruleset, two categories that had no
 > emitter, and the classification reaching the UI. **WP-15 remains COMPLETE for its scope**: P1's ten
 > items are all closed (section 0s), so the acceptance contract has no outstanding clause it can
@@ -46,6 +47,92 @@
 > `docs/implementation/project-progress-and-remaining-tasks-2026-09-23.md`, where the P0 section is
 > now closed and **P1 to P4 are unchanged** — P1 opens with FR-100's explicit-stage-dependency
 > ruling, which is a product decision rather than a code task.
+
+# 0y. WP-20: the audio mix, and the silent film it closed (2026-09-25)
+
+WP-20 works **P3 item 23** (更完整的时间线、音效和混音). ADR-0024 carries the reasoning; this section
+records what changed and what building it found.
+
+## The finding that was worse than a missing feature
+
+**THE EXPORT PRODUCED A SILENT FILM.** `ComposeRequest.AudioPaths` existed, and
+`ExportService.compose` never passed it: the request carried segments and a subtitle path and no audio
+at all. An episode with approved dialogue composed a film without it, while `TimelineShot.HasAudio`
+reported that the episode had audio. **The acceptance walk recorded the silence in its own comment as
+a known limit** — "the walk does NOT attach audio to the composition, and saying so here is the point"
+— and its assertion was "at least two streams", which the subtitle track satisfied. That is how a gap
+survives three packages: the test was honest about what it did, and what it did could not see the
+defect.
+
+Two more findings shaped the work:
+
+- **THE ADAPTER CONCATENATED RATHER THAN MIXED**: `concat=n=N:v=0:a=1`, with its own comment naming the
+  limit ("FR-080 puts offsets and mixing in V1"). Two files played one after the other, and every line
+  played where the previous one ended rather than where its shot is.
+- **`BoardRow.AudioApproved` THREW AWAY WHAT THE QUERY FOUND**: the SQL computed a COUNT of approved
+  audio versions and the scanner reduced it to a boolean, so the export could not know WHICH versions
+  to compose. The comment claimed "the export reads the actual files through the same join" — a join
+  that did not exist.
+
+## What was built
+
+- `internal/application/media/audio.go` (new): `AudioRole` (dialogue / music / effect), `AudioClip`
+  with a start and a gain, `AudioMix`, and the role defaults. Music defaults to 0.35 because a bed at
+  unity under a spoken line is unintelligible, and that is the one mixing decision this build makes for
+  a user.
+- `internal/infrastructure/media/ffmpeg.go`: the mix as one `filter_complex` — `adelay` for placement,
+  `volume` for level, `amix` to layer — with **two flags that are defects if missing**: `normalize=0`
+  (amix divides by the input count by default, so the mix would get quieter as the episode got busier)
+  and no `-shortest` (which would truncate a film to its shortest clip's end).
+- `BoardRow.AudioVersionIDs` and `TimelineShot.{AudioVersionIDs, StartMS}`: the ids the export needs,
+  and the position the timeline already computes when it places the cues.
+- `ExportService.buildMix` and the `AudioFileReader` port, with a **fail-closed refusal** when a build
+  cannot read audio: reproducing the silent-film defect quietly would be worse than failing.
+- The acceptance walk now asserts **THREE streams** — picture, subtitle, sound — where it asserted two.
+
+## The defect the mix uncovered
+
+**NAMING ANY `-map` DISABLES FFMPEG'S AUTOMATIC STREAM SELECTION.** The subtitle sidecar used to be
+picked up implicitly; adding `-map 0:v:0 -map [mixed]` for the mix silently dropped it, and the walk
+failed with "the film carries 2 streams" where three were expected. That is the second time in this
+package's history that composing a REAL film found what reading arguments could not, and it is why the
+mix test measures loudness rather than asserting flag text.
+
+## The security scan refused the test, and was right
+
+The first version of the mix test drove ffmpeg itself, and `sh scripts/verify.sh` **FAILED**: two test
+files matched the `os/exec` rule. SECURITY section 5 permits `os/exec` in one audited file and the
+allowlist is exact — file plus rule plus owner plus reason, no wildcards. **Widening it for tests would
+have defeated the rule it exists for**, so the measurement moved INTO the adapter as
+`FFmpegEngine.MeanVolumeDB`, which is where every other process this application starts already is.
+`runReadingStderr` and `commandFor` exist so the two callers share the rules that matter.
+
+## Verification
+
+| command | result |
+|---|---|
+| `go test ./... -count=1` | **PASS** - 57 packages ok, 0 failed |
+| `npm test` / `npm run typecheck` | **PASS** - 113 tests, 0 failures; typecheck clean |
+| `sh scripts/verify.sh` | **PASS**, exit 0 (25 Playwright, security scans over 668 files, all fixture checks, SBOM, Wails production build) |
+| mutations | **10, 10/10 killed**, each restored byte-identically |
+
+**ONE MUTATION SURVIVED THE FIRST RUN**: placing every dialogue clip at zero left the suite GREEN,
+because the acceptance walk's one audible line is on the FIRST shot, whose start IS zero — the property
+was exercised and nothing observed it. `TestADialogueClipIsPlacedAtItsShot` gives the audio to the
+second shot so the difference is measurable, and the mutation is killed now.
+
+## STILL OPEN, named rather than implied
+
+- **多角色声线映射** (FR-080 V1): `AudioRequest.Voice` travels per TTS submission, so a voice IS chosen
+  per line — but nothing STORES "character X speaks with voice Y", so a user retypes it for every line.
+  A mapping table and a picker; not a mix.
+- **音效建议与生成适配's 建议 half**: `AudioRoleEffect` exists and mixes, and nothing SUGGESTS an effect
+  for a shot.
+- **背景音乐导入** is reachable through the mix (`AudioRoleMusic`, a stated start, a gain) and has no UI
+  control yet: a user cannot point at a music file from the timeline section.
+- **P3's remaining three items**: 17 (local ONNX embeddings), 19 (MONOFORM deep integration), 21 (real
+  video providers — needs paid-provider authorisation), 25 (stable Windows install/upgrade — needs
+  `makensis`).
 
 # 0x. WP-19: PDF import, and the two probes that chose the library (2026-09-25)
 

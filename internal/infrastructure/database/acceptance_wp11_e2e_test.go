@@ -239,12 +239,15 @@ func TestE2EWP11AnEpisodeWalksFromScriptToExport(t *testing.T) {
 	if info.DurationMS < 11000 || info.DurationMS > 13000 {
 		t.Fatalf("the film is %dms for three four-second shots", info.DurationMS)
 	}
-	// Three streams: the picture, the muxed subtitle track, and the audio a composer would find
-	// absent — the walk does NOT attach audio to the composition, and saying so here is the point:
-	// the audio asset exists and the film does not carry it, because `Compose` is given the segments
-	// and a subtitle path and no audio path.
-	if info.Streams < 2 {
-		t.Fatalf("the film carries %d streams, so the subtitle track was not muxed", info.Streams)
+	// THREE STREAMS: the picture, the subtitle track, and the AUDIO.
+	//
+	// This assertion used to say the opposite — that the film did NOT carry the audio, because
+	// `Compose` was given the segments and a subtitle path and no audio path at all. WP-20 wired the
+	// mix, so the check flips from "at least the subtitle" to "all three", and the number is what
+	// makes it visible: a build that stopped passing the mix would fail here rather than quietly
+	// producing a silent film again.
+	if info.Streams < 3 {
+		t.Fatalf("the film carries %d streams, so a picture, a subtitle track and the dialogue were not all muxed", info.Streams)
 	}
 
 	// --- 7. THE FINAL RULESET, over the episode as it now stands.
@@ -592,4 +595,117 @@ func (h *mediaHarness) probeExport(t *testing.T, ctx context.Context, storageKey
 		return appmedia.MediaInfo{}, err
 	}
 	return h.engine.Probe(ctx, staged, appmedia.DefaultProbeLimits())
+}
+
+// TestADialogueClipIsPlacedAtItsShot is the mix's placement, measured in a real film.
+//
+// # Why this needed its own test
+//
+// A mutation that placed every dialogue clip at zero left the whole suite GREEN: the acceptance walk
+// has one audible line and its shot is the first, whose start IS zero — so the walk could not tell a
+// correct placement from a broken one. That is the same shape as a limit with no test: the property is
+// exercised and nothing observes it.
+//
+// This test gives the AUDIO to the SECOND shot, whose start is its predecessor's duration. A build
+// that placed the clip at zero would put the line over the first shot instead, and the measurement
+// below is what sees it: the film is cut into halves and the SECOND half must be the louder one,
+// because that is where the sound is.
+func TestADialogueClipIsPlacedAtItsShot(t *testing.T) {
+	harness := newMediaHarness(t)
+	ctx := context.Background()
+	// Two shots of three seconds each, so the second begins at 3000ms.
+	harness.approvedBoard(t, 2, 3)
+	// The audio is attached to the SECOND shot's row rather than the first, which is what makes the
+	// expected start non-zero.
+	var secondShotID string
+	if err := harness.db.QueryRowContext(ctx,
+		`SELECT shot_id FROM storyboard_items ORDER BY ordinal LIMIT 1 OFFSET 1`).Scan(&secondShotID); err != nil {
+		t.Fatal(err)
+	}
+	harness.attachAudioToShot(t, ctx, secondShotID, "placement-audio-asset", "placement-audio-version")
+
+	exported, _, err := harness.service.Export(ctx, appmedia.ExportRequest{
+		EpisodeID: "drama-episode", Quality: domainmedia.QualityPreview,
+	})
+	if err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+	// The record names the output, and the store holds the bytes.
+	reader, err := harness.files.Open(ctx, exported.OutputFileHash)
+	if err != nil {
+		t.Fatalf("opening the export: %v", err)
+	}
+	defer reader.Close()
+	film := filepath.Join(t.TempDir(), "placed.mp4")
+	file, err := os.Create(film)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.Copy(file, reader); err != nil {
+		file.Close()
+		t.Fatal(err)
+	}
+	file.Close()
+
+	// The first second and a half carries ONE thing — silence — and the second half of the film
+	// carries the tone. Silence measures as -inf or a very low level, so the comparison is between
+	// "nothing" and "something" rather than between two tones: the sound must be in the second half.
+	firstLevel := harness.meanVolume(t, film, 0, 1000)
+	secondLevel := harness.meanVolume(t, film, 3200, 1000)
+	if secondLevel <= firstLevel {
+		t.Fatalf("the first second measures %.1fdB and the third %.1fdB: the line was not placed at its shot",
+			firstLevel, secondLevel)
+	}
+}
+
+// attachAudioToShot writes an audio asset, version, file and usage for one shot.
+func (h *mediaHarness) attachAudioToShot(t *testing.T, ctx context.Context, shotID, assetID, versionID string) {
+	t.Helper()
+	tone := tone(t, ctx)
+	hash := h.put(t, assetID+".wav", tone)
+	if _, err := h.db.ExecContext(ctx, `INSERT INTO assets
+		(id, project_id, asset_type, name, current_approved_version_id, status, created_at, updated_at, revision)
+		VALUES (?, 'drama-project', 'audio', ?, '', 'active',
+		 '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 1)`, assetID, assetID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.db.ExecContext(ctx, `INSERT INTO asset_versions
+		(id, asset_id, version_number, status, created_by_type, generation_job_id, created_at)
+		VALUES (?, ?, 1, 'approved', 'user', ?, '2026-01-01T00:00:00Z')`,
+		versionID, assetID, versionID+"-job"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.db.ExecContext(ctx, `INSERT INTO asset_files
+		(id, asset_version_id, file_hash, role, ordinal, created_at)
+		VALUES (?, ?, ?, 'primary', 0, '2026-01-01T00:00:00Z')`, versionID+"-file", versionID, hash); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.db.ExecContext(ctx, `UPDATE assets SET current_approved_version_id = ?
+		WHERE id = ?`, versionID, assetID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.db.ExecContext(ctx, `INSERT INTO asset_usages
+		(id, asset_version_id, consumer_type, consumer_id, usage_role, created_at)
+		VALUES (?, ?, 'shot', ?, 'audio', '2026-01-01T00:00:00Z')`,
+		versionID+"-usage", versionID, shotID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// meanVolume measures a window of a film through the ENGINE's own method.
+//
+// # Why not drive ffmpeg here
+//
+// This helper first started the process itself, and the repository's dynamic-execution scan refused
+// it — correctly: SECURITY section 5 permits `os/exec` in the MediaEngine adapter and nowhere else,
+// and widening the allowlist for a test would have defeated the rule rather than satisfied it. The
+// measurement lives in `FFmpegEngine.MeanVolumeDB`, which is where every other process this
+// application starts already is.
+func (h *mediaHarness) meanVolume(t *testing.T, path string, startMS, durationMS int) float64 {
+	t.Helper()
+	level, err := h.engine.MeanVolumeDB(context.Background(), path, startMS, durationMS, 2*time.Minute)
+	if err != nil {
+		t.Fatalf("measuring %s: %v", path, err)
+	}
+	return level
 }

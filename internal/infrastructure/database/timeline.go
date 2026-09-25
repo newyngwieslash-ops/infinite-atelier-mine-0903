@@ -78,9 +78,13 @@ func (r *ExportRepository) CurrentBoardVersion(ctx context.Context, episodeID st
 // four approved report as eight shots, which is a timeline that lost half the episode. The caller
 // counts the nulls instead, and that count is what refuses an export.
 //
-// The audio column counts approved audio versions whose lines fall in the row's scene. It is a
-// boolean because the timeline reports COMPLETENESS; the export reads the actual files through the
-// same join when it needs them.
+// The audio column is the approved audio versions whose lines fall in the row's scene, GROUPED into
+// a string rather than counted.
+//
+// It used to be a COUNT, and the count was thrown away into a boolean by the scanner — so the export
+// could not know WHICH versions to compose even though the query had found them. The consequence was
+// a silent film: `ExportService` built its request with no audio at all. `group_concat` keeps the ids
+// in one column so the read stays one query, and the caller splits them.
 func (r *ExportRepository) BoardFacts(ctx context.Context, storyboardVersionID string) ([]appmedia.BoardRow, error) {
 	conn := r.conn()
 	if conn == nil {
@@ -92,11 +96,11 @@ func (r *ExportRepository) BoardFacts(ctx context.Context, storyboardVersionID s
 			COALESCE(p.approved_image_asset_version_id, '') AS approved_version_id,
 			COALESCE(a.asset_type, '') AS media_kind,
 			COALESCE(f.file_hash, '') AS media_hash,
-			(SELECT COUNT(*) FROM asset_usages au
+			COALESCE((SELECT group_concat(au.asset_version_id, ',') FROM asset_usages au
 				JOIN assets aa ON aa.id = (SELECT asset_id FROM asset_versions WHERE id = au.asset_version_id)
 				WHERE au.consumer_type = 'shot' AND au.consumer_id = i.shot_id
 				  AND aa.asset_type = 'audio'
-				  AND au.asset_version_id = aa.current_approved_version_id) AS audio_count
+				  AND au.asset_version_id = aa.current_approved_version_id), '') AS audio_versions
 		FROM storyboard_items i
 		LEFT JOIN storyboard_panel_versions p
 			ON p.storyboard_item_id = i.id AND p.status = 'approved'
@@ -112,19 +116,56 @@ func (r *ExportRepository) BoardFacts(ctx context.Context, storyboardVersionID s
 	facts := []appmedia.BoardRow{}
 	for rows.Next() {
 		var row appmedia.BoardRow
-		var audioCount int
+		var audioVersions string
 		if err := rows.Scan(&row.ItemID, &row.ShotID, &row.Ordinal, &row.DurationSecs,
 			&row.PanelVersionID, &row.ApprovedVersionID, &row.MediaKind, &row.MediaHash,
-			&audioCount); err != nil {
+			&audioVersions); err != nil {
 			return nil, media.StorageError("The storyboard rows could not be read.", err)
 		}
-		row.AudioApproved = audioCount > 0
+		row.AudioApproved = audioVersions != ""
+		// The ids come back comma-separated and EMPTY for a row with no audio, which is the ordinary
+		// state of a board whose lines have not been voiced yet.
+		if audioVersions != "" {
+			row.AudioVersionIDs = strings.Split(audioVersions, ",")
+		}
 		facts = append(facts, row)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, media.StorageError("The storyboard rows could not be read.", err)
 	}
 	return facts, nil
+}
+
+// AudioFileFor returns the primary file's hash for one asset version.
+//
+// # Why the primary role and not any file
+//
+// A version may carry several files: a primary, a thumbnail, a source. The one an audio player reads
+// is the primary, and picking a different one would hand the engine a thumbnail to decode as sound.
+// `role = 'primary'` is also what the panel image's own read selects, so a version of either kind
+// answers the same question the same way.
+//
+// The interface this satisfies is declared in the application layer, and the assertion that this
+// repository satisfies it lives there too — the shape every adapter in this package follows.
+func (r *AssetRepository) AudioFileFor(ctx context.Context, assetVersionID string) (string, bool, error) {
+	conn := r.conn()
+	if conn == nil {
+		return "", false, media.StorageError("The asset store is unavailable.", nil)
+	}
+	var hash string
+	err := conn.QueryRowContext(ctx, `SELECT file_hash FROM asset_files
+		WHERE asset_version_id = ? AND role = 'primary' ORDER BY file_hash ASC LIMIT 1`,
+		assetVersionID).Scan(&hash)
+	if err == sql.ErrNoRows {
+		// A version with no primary file is a version nothing can play. It is a not-found rather than
+		// an error because the caller decides what to do: the export refuses with a message naming the
+		// line, and a listing view would simply show no file.
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, media.StorageError("The audio file could not be read.", err)
+	}
+	return hash, true, nil
 }
 
 // ApprovedCues returns an episode's approved subtitle cues in order, with how many spoken lines the

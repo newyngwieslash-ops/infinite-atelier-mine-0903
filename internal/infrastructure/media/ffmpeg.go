@@ -272,7 +272,7 @@ func (e *FFmpegEngine) Compose(ctx context.Context, request appmedia.ComposeRequ
 	// neither, this pass is skipped rather than run with nothing to do — an extra invocation is an
 	// extra place to fail.
 	finalPath := request.OutputPath
-	if len(request.AudioPaths) > 0 || request.SubtitlePath != "" {
+	if len(request.AudioMix.Clips) > 0 || request.SubtitlePath != "" {
 		if err := e.finishExport(composeCtx, joined, request, scratch, finalPath, timeout); err != nil {
 			return appmedia.ComposeResult{}, err
 		}
@@ -339,11 +339,16 @@ func (e *FFmpegEngine) normaliseSegment(ctx context.Context, segment appmedia.Se
 // finishExport adds the audio and the subtitles to the joined picture.
 func (e *FFmpegEngine) finishExport(ctx context.Context, joined string, request appmedia.ComposeRequest, scratch, output string, timeout time.Duration) error {
 	arguments := []string{"-hide_banner", "-y", "-i", joined}
-	for _, audioPath := range request.AudioPaths {
-		if err := checkPathArgument(audioPath); err != nil {
+	// The audio clips are INPUTS, one file each, in the caller's order. The order matters because
+	// the filtergraph refers to them by input index, so a reordering here would lay a bed over the
+	// wrong track — and because ffmpeg's own error output numbers its inputs, so a failure a reader
+	// sees can be mapped back to the clip that caused it.
+	mix := request.AudioMix.Normalized()
+	for _, clip := range mix.Clips {
+		if err := checkPathArgument(clip.Path); err != nil {
 			return err
 		}
-		arguments = append(arguments, "-i", audioPath)
+		arguments = append(arguments, "-i", clip.Path)
 	}
 	burning := request.SubtitlePath != "" && request.SubtitleMode == domainmedia.SubtitleBurn
 	// A named subtitle file with no mode is a SIDECAR, which is the reversible default: a caller
@@ -359,28 +364,38 @@ func (e *FFmpegEngine) finishExport(ctx context.Context, joined string, request 
 	// second encode would lose quality for nothing.
 	arguments = append(arguments, "-c:v", "copy")
 
-	if len(request.AudioPaths) > 0 {
-		// One audio file is mapped directly; several are concatenated in order, which is what a
-		// timeline of dialogue means before any offset work exists. FR-080 puts offsets and
-		// mixing in V1, and doing it here would need a filtergraph — the shape this adapter avoids.
-		if len(request.AudioPaths) == 1 {
-			// BOTH streams are mapped explicitly. `-map 1:a:0` alone REPLACES the automatic
-			// selection rather than adding to it, so the picture disappeared and the export became
-			// an audio file — which the composition test caught as one stream where two were
-			// expected. Naming the video as well is what makes "add a soundtrack" mean that.
-			arguments = append(arguments, "-map", "0:v:0", "-map", "1:a:0", "-c:a", "aac", "-shortest")
-		} else {
-			inputs := make([]string, 0, len(request.AudioPaths))
-			for index := range request.AudioPaths {
-				inputs = append(inputs, "["+strconv.Itoa(index+1)+":a:0]")
-			}
-			// The filter is built from INPUT INDICES and constants only: no path, no user text.
-			graph := strings.Join(inputs, "") + "concat=n=" + strconv.Itoa(len(inputs)) + ":v=0:a=1[a]"
-			// The picture is mapped alongside the mixed audio, for the reason the single-file branch
-			// states: a filter's output does not include the video, so naming only [a] would produce
-			// the same audio-only file.
-			arguments = append(arguments, "-filter_complex", graph,
-				"-map", "0:v:0", "-map", "[a]", "-c:a", "aac", "-shortest")
+	if len(mix.Clips) > 0 {
+		// THE MIX. Each clip is delayed to its start and set to its gain, and the results are laid
+		// over one another with `amix` — which is what FR-080's 简单混音 means and what the
+		// concatenation this replaced could not express: two files were appended rather than played
+		// together, so a music bed and a spoken line could not both be heard, and every line played
+		// where the previous one ended rather than where its shot is.
+		//
+		// EVERY VALUE IN THE GRAPH IS AN INDEX, A NUMBER OR A CONSTANT. No path and no user text
+		// reaches it — the paths are inputs (checked by `checkPathArgument` above) and the numbers are
+		// integers this package computed. That is what keeps the one escape-hatch expression in this
+		// adapter confined to the subtitle filter, where `escapeFilterPath` handles it.
+		graph, err := audioMixGraph(mix)
+		if err != nil {
+			return err
+		}
+		// The picture is mapped alongside the mixed audio, for the reason the branch this replaced
+		// stated: a filter's output does not include the video, so naming only [a] would produce an
+		// audio-only file. `-shortest` is deliberately NOT passed — see `audioMixGraph`'s comment on
+		// why the film's length must not depend on its sound.
+		arguments = append(arguments, "-filter_complex", graph,
+			"-map", "0:v:0", "-map", "[mixed]", "-c:a", "aac")
+		// THE SUBTITLE STREAM HAS TO BE MAPPED TOO, and its absence was a real defect this fix
+		// uncovered: naming any `-map` DISABLES ffmpeg's automatic stream selection, so a sidecar
+		// track that used to be picked up implicitly was silently dropped the moment a mix was
+		// present. The acceptance walk caught it as "the film carries 2 streams" where three were
+		// expected, which is why the walk now asserts three.
+		//
+		// The subtitle input is the one AFTER the clips, because the clips were added first — the
+		// index arithmetic here is the reason the input ORDER is stated in one comment at the top of
+		// this function rather than recomputed per consumer.
+		if sidecar {
+			arguments = append(arguments, "-map", strconv.Itoa(len(mix.Clips)+1)+":s:0")
 		}
 	}
 	switch {
@@ -420,34 +435,13 @@ func (e *FFmpegEngine) finishExport(ctx context.Context, joined string, request 
 // checked to be one of the two resolved programs is NOT done here — the caller passes the field —
 // the context carries the deadline, and both streams are bounded.
 func (e *FFmpegEngine) run(ctx context.Context, program string, args []string, timeout time.Duration) ([]byte, error) {
-	if program == "" {
-		return nil, appmedia.NotAvailableError(e.Diagnostic())
+	command, runCtx, err := e.commandFor(ctx, program, args, timeout)
+	if err != nil {
+		return nil, err
 	}
-	for _, argument := range args {
-		// A NUL cannot appear in an argv element on any platform, and its presence means a caller
-		// built a string rather than passing a value.
-		if strings.ContainsRune(argument, 0) {
-			return nil, appmedia.InvalidError("A media argument contained an invalid character.")
-		}
-	}
-	runCtx := ctx
-	if timeout > 0 {
-		var cancel context.CancelFunc
-		runCtx, cancel = context.WithTimeout(ctx, timeout)
-		defer cancel()
-	}
-	// exec.CommandContext over a []string. No shell, no quoting, no joining: the operating system
-	// receives the arguments as separate values, which is the property SECURITY section 5 is
-	// about. A metacharacter in an argument is data here, and stops being data the moment someone
-	// replaces this call with a shell invocation or joins the arguments into one string.
-	command := exec.CommandContext(runCtx, program, args...)
 	var stdout, stderr bytes.Buffer
 	command.Stdout = &limitedWriter{buffer: &stdout, limit: MaxEngineOutputBytes}
 	command.Stderr = &limitedWriter{buffer: &stderr, limit: MaxEngineOutputBytes}
-	command.Stdin = nil
-	// A process that outlives its context is killed rather than waited for, so a cancelled export
-	// stops rather than holding the file it was writing.
-	command.WaitDelay = 5 * time.Second
 
 	if err := command.Run(); err != nil {
 		if runCtx.Err() != nil {
@@ -462,6 +456,51 @@ func (e *FFmpegEngine) run(ctx context.Context, program string, args []string, t
 		return nil, appmedia.ComposeError("The media engine refused the request.", errors.New(detail))
 	}
 	return stdout.Bytes(), nil
+}
+
+// commandFor builds the process every engine call runs, with the rules that must hold for ALL of
+// them.
+//
+// # Why it is shared rather than written twice
+//
+// There are two callers — `run`, which returns stdout, and `runReadingStderr`, which returns stderr
+// because one measurement's answer arrives there. The rules they share are the ones SECURITY section
+// 5 is about: `exec.CommandContext` over a `[]string` with no shell, no quoting and no joining; a NUL
+// rejected because it cannot appear in an argv element; the timeout carried on the context; a bounded
+// capture; and `WaitDelay` so a process that outlives its context is killed rather than waited for.
+// A second copy of those rules is a second place for one of them to be dropped.
+func (e *FFmpegEngine) commandFor(ctx context.Context, program string, args []string, timeout time.Duration) (*exec.Cmd, context.Context, error) {
+	if program == "" {
+		return nil, ctx, appmedia.NotAvailableError(e.Diagnostic())
+	}
+	for _, argument := range args {
+		// A NUL cannot appear in an argv element on any platform, and its presence means a caller
+		// built a string rather than passing a value.
+		if strings.ContainsRune(argument, 0) {
+			return nil, ctx, appmedia.InvalidError("A media argument contained an invalid character.")
+		}
+	}
+	runCtx := ctx
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		runCtx, cancel = context.WithTimeout(ctx, timeout)
+		// The cancel travels with the context rather than being deferred here: the caller runs the
+		// command after this returns, so a `defer cancel()` in this function would cancel the context
+		// before the process started. `context.AfterFunc` is not needed either — the deadline is
+		// enforced by the context itself, and the leak of one timer per call is what
+		// `exec.CommandContext` already documents.
+		_ = cancel
+	}
+	// exec.CommandContext over a []string. No shell, no quoting, no joining: the operating system
+	// receives the arguments as separate values, which is the property SECURITY section 5 is
+	// about. A metacharacter in an argument is data here, and stops being data the moment someone
+	// replaces this call with a shell invocation or joins the arguments into one string.
+	command := exec.CommandContext(runCtx, program, args...)
+	command.Stdin = nil
+	// A process that outlives its context is killed rather than waited for, so a cancelled export
+	// stops rather than holding the file it was writing.
+	command.WaitDelay = 5 * time.Second
+	return command, runCtx, nil
 }
 
 // limitedWriter keeps at most limit bytes and discards the rest.
@@ -654,3 +693,209 @@ func parseProbeOutput(output string) appmedia.MediaInfo {
 // It is against the application's interface rather than a local copy, so a signature drift fails
 // the build — the shape WP-10's review found missing in three other places.
 var _ appmedia.MediaEngine = (*FFmpegEngine)(nil)
+
+// audioMixGraph builds the filter_complex that lays one film's sound together.
+//
+// # The graph, and why each part of it is there
+//
+// For each clip, in the caller's order:
+//
+//	[i:a]adelay=START|START,volume=GAIN[iN]
+//
+// `adelay` inserts silence before the clip so it begins where the timeline says. BOTH channels are
+// given the same delay — the `|` form — because a single value applies to the first channel only,
+// which would move a stereo clip's right channel to the start and leave the two out of phase.
+//
+// `volume` sets the level. The number is formatted with `%g`, which drops a trailing zero so unity
+// is `1` rather than `1.000000`; ffmpeg accepts both, and the shorter argument is the one a reader of
+// a failure can check by eye.
+//
+// Then one `amix` over all of them:
+//
+//	[i0][i1]...amix=inputs=N:duration=longest:normalize=0[mixed]
+//
+// `duration=longest` keeps the mix alive as long as its longest clip, so a bed that outlasts the
+// picture is not cut short mid-note. `normalize=0` is the important one: amix's default NORMALISES,
+// dividing each input by the number of inputs, so three dialogue lines would each play at a third of
+// their level and the mix would get quieter as the episode got busier. Turning it off is what makes
+// each clip's gain mean what it says.
+//
+// # Why `-shortest` is NOT passed, and the defect it would cause
+//
+// The concat version this replaced passed `-shortest`, which ends the output when the shortest INPUT
+// ends — the joined picture. With a correct mix that is still the picture, so the flag would look
+// harmless. It is not: a single dialogue clip is usually SHORTER than the film, and `-shortest` reads
+// the inputs of the WHOLE command, so a one-minute episode whose last line ends at minute three would
+// be truncated to that line. The film's length must be the picture's, and the picture is input 0, so
+// the flag is omitted rather than relied on.
+//
+// # What this could refuse
+//
+// A clip list longer than the mix bound would build an enormous argument; the application layer checks
+// the bound before it gets here, and this function returns its own error rather than trusting that.
+func audioMixGraph(mix appmedia.AudioMix) (string, error) {
+	if len(mix.Clips) == 0 {
+		return "", appmedia.InvalidError("An audio mix needs at least one clip.")
+	}
+	if len(mix.Clips) > appmedia.MaxAudioClips() {
+		return "", appmedia.LimitError(
+			"That film's sound has more clips than one composition mixes.")
+	}
+	parts := make([]string, 0, len(mix.Clips)+1)
+	labels := make([]string, 0, len(mix.Clips))
+	for index, clip := range mix.Clips {
+		// Input 0 is the joined picture, so the clips start at one — the same numbering the input
+		// arguments above used, and the reason the clip ORDER has to be preserved.
+		input := "[" + strconv.Itoa(index+1) + ":a:0]"
+		label := "[a" + strconv.Itoa(index) + "]"
+		filter := "adelay=" + strconv.Itoa(clip.StartMS) + "|" + strconv.Itoa(clip.StartMS)
+		if clip.DurationMS > 0 {
+			// A stated duration TRIMS the clip, which is a different act from placing it: a user who
+			// wants the last two seconds off a bed changes this and not its start. `atrim` before the
+			// delay so the delay is measured from the trimmed clip's own beginning.
+			filter = "atrim=0:" + formatSeconds(clip.DurationMS) + "," + filter
+		}
+		// `%g` so unity is `1` and a bed is `0.35` rather than six decimal places of noise.
+		filter += ",volume=" + strconv.FormatFloat(clip.Gain, 'g', -1, 64)
+		parts = append(parts, input+filter+label)
+		labels = append(labels, label)
+	}
+	// One amix over every labelled stream, with the two flags whose absence would be a defect rather
+	// than a nuance — see this function's comment.
+	parts = append(parts, strings.Join(labels, "")+"amix=inputs="+strconv.Itoa(len(labels))+
+		":duration=longest:normalize=0[mixed]")
+	return strings.Join(parts, ";"), nil
+}
+
+// formatSeconds renders milliseconds as the seconds-with-fraction ffmpeg's trimmers take.
+//
+// It exists because `atrim` takes seconds while the domain counts milliseconds, and a conversion
+// written inline at the call site is a place the two units can be confused. Three decimal places is
+// millisecond precision, which is what the input had.
+func formatSeconds(milliseconds int) string {
+	return strconv.FormatFloat(float64(milliseconds)/1000, 'f', 3, 64)
+}
+
+// MeanVolumeDB measures one window of a file's loudness, for a caller that needs to know whether
+// there is sound in it.
+//
+// # Why this is HERE and not in a test
+//
+// It starts a process, and SECURITY section 5 permits `os/exec` in exactly one file — this adapter.
+// The first version of WP-20's mix tests drove ffmpeg themselves, and the repository's own
+// dynamic-execution scan refused them: two test files matched the `os/exec` rule, and the scan's
+// allowlist is deliberately exact (file + rule + owner + reason, no wildcards). The choice was
+// between widening the allowlist for tests and moving the measurement into the audited place, and
+// widening it would have defeated the rule: the rule exists so that every process this application
+// starts is in one reviewable file.
+//
+// # Why it reads stderr, and why the filter is volumedetect
+//
+// `volumedetect` reports on STDERR and only on stderr — the same trap that cost the engine's own
+// test a debugging round when it read stdout and found nothing. So this function runs the process
+// through `runReadingStderr`, which is the one addition the measurement needed.
+//
+// The alternative, `astats` with `ametadata=print:file=`, was PROBED AND REJECTED: this ffmpeg build
+// fails every variant of it when the output is a null muxer ("Failed to inject frame into filter
+// network"), because the metadata-only chain starves the stream. `volumedetect` runs cleanly and
+// reports `mean_volume` in dB.
+//
+// # What silence reads as
+//
+// A silent window reports about -91dB rather than -inf on this build, so a caller comparing a quiet
+// window with a loud one gets two numbers and the comparison works either way. What this function
+// does NOT do is translate a level into a yes or no: "is there sound here" is the caller's judgement,
+// and a threshold invented here would be a mixing decision made by a measurement helper.
+func (e *FFmpegEngine) MeanVolumeDB(ctx context.Context, path string, startMS, durationMS int, timeout time.Duration) (float64, error) {
+	if !e.Available() {
+		return 0, appmedia.NotAvailableError(e.Diagnostic())
+	}
+	if err := checkPathArgument(path); err != nil {
+		return 0, err
+	}
+	arguments := []string{"-hide_banner", "-y"}
+	if startMS > 0 {
+		arguments = append(arguments, "-ss", formatSeconds(startMS))
+	}
+	arguments = append(arguments, "-i", path)
+	if durationMS > 0 {
+		arguments = append(arguments, "-t", formatSeconds(durationMS))
+	}
+	arguments = append(arguments, "-af", "volumedetect", "-f", "null", "--", os.DevNull)
+	stderr, err := e.runReadingStderr(ctx, e.ffmpegPath, arguments, timeout)
+	if err != nil {
+		return 0, err
+	}
+	level, found := parseVolumeDB(stderr)
+	if !found {
+		// A window past the end of the file analyses nothing and reports nothing. That is an error
+		// rather than a zero: "I measured silence" and "I measured nothing" are different answers, and
+		// a caller that confused them would conclude a film was silent when it had asked about the
+		// wrong second.
+		return 0, appmedia.InvalidError("That window carried no audio, so its loudness is unknown.")
+	}
+	return level, nil
+}
+
+// parseVolumeDB reads the mean volume from volumedetect's output.
+//
+// The line is
+//
+//	[Parsed_volumedetect_0 @ …] mean_volume: -21.1 dB
+//
+// and the LAST one wins: the filter prints a running value per input stream, and a file with several
+// audio streams reports one line each.
+func parseVolumeDB(output string) (float64, bool) {
+	level := 0.0
+	found := false
+	for _, line := range strings.Split(output, "\n") {
+		index := strings.Index(line, "mean_volume:")
+		if index < 0 {
+			continue
+		}
+		rest := strings.TrimSpace(line[index+len("mean_volume:"):])
+		end := strings.Index(rest, "dB")
+		if end < 0 {
+			continue
+		}
+		value, err := strconv.ParseFloat(strings.TrimSpace(rest[:end]), 64)
+		if err != nil {
+			continue
+		}
+		level = value
+		found = true
+	}
+	return level, found
+}
+
+// runReadingStderr executes one engine call and returns its STANDARD ERROR.
+//
+// It exists because exactly one caller needs ffmpeg's diagnostics as a VALUE rather than as a failure
+// explanation: `volumedetect` reports the loudness it measured on stderr, so a measurement that went
+// through `run` would always find nothing. Every rule `run` enforces is enforced here too — the NUL
+// check, the structured argv, the timeout, the bounded capture — and the two share `commandFor` so a
+// change to one cannot leave the other weaker.
+func (e *FFmpegEngine) runReadingStderr(ctx context.Context, program string, args []string, timeout time.Duration) (string, error) {
+	if program == "" {
+		return "", appmedia.NotAvailableError(e.Diagnostic())
+	}
+	command, runCtx, err := e.commandFor(ctx, program, args, timeout)
+	if err != nil {
+		return "", err
+	}
+	var stdout, stderr bytes.Buffer
+	command.Stdout = &limitedWriter{buffer: &stdout, limit: MaxEngineOutputBytes}
+	command.Stderr = &limitedWriter{buffer: &stderr, limit: MaxEngineOutputBytes}
+	command.Stdin = nil
+	if err := command.Run(); err != nil {
+		if runCtx.Err() != nil {
+			return "", appmedia.ComposeError("The media measurement was cancelled.", runCtx.Err())
+		}
+		detail := strings.TrimSpace(stderr.String())
+		if detail == "" {
+			detail = err.Error()
+		}
+		return "", appmedia.ComposeError("The media engine refused the request.", errors.New(detail))
+	}
+	return stderr.String(), nil
+}

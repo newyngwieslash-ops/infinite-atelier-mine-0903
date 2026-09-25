@@ -93,9 +93,16 @@ type ComposeRequest struct {
 	Height int
 	// FPS is the output frame rate.
 	FPS int
-	// AudioPaths are audio files mixed over the whole export, in order. Empty means a silent
-	// film, which is legal and is what an episode with no TTS yet produces.
-	AudioPaths []string
+	// AudioMix is the sound laid over the film: each clip with its start, its gain and its role.
+	// An empty mix means a silent film, which is legal and is what an episode with no TTS yet
+	// produces.
+	//
+	// IT REPLACED A `[]string` OF PATHS, and the replacement is the substance of FR-080's 简单混音.
+	// The list could not say WHEN a file played or HOW LOUD, so the adapter concatenated it: two
+	// lines of dialogue played one after the other wherever their shots were, and a music bed and a
+	// spoken line could not both be heard. The adapter's own comment recorded the limit and named V1
+	// as where offsets would go, which is this.
+	AudioMix AudioMix
 	// SubtitlePath is an SRT or VTT file to mux in, or empty for none.
 	SubtitlePath string
 	// SubtitleMode is "sidecar", "burn" or "none", which is the DOMAIN's vocabulary: the export

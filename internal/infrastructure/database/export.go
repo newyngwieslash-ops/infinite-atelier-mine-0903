@@ -247,4 +247,9 @@ func scanExport(row rowScanner) (appmedia.ExportRecord, error) {
 var (
 	_ appmedia.ExportRepository   = (*ExportRepository)(nil)
 	_ appmedia.TimelineRepository = (*ExportRepository)(nil)
+	// The AUDIO reader is satisfied by the ASSET repository rather than by this one, because the join
+	// it answers — a version to its primary file's hash — lives in the asset tables. The assertion is
+	// here because this is the file where the export service's ports are proved, so a reader looking
+	// for "which object satisfies `AudioFileReader`" finds it beside the other two.
+	_ appmedia.AudioFileReader = (*AssetRepository)(nil)
 )
