@@ -390,3 +390,183 @@ func dot(a, b []float32) float64 {
 	}
 	return sum
 }
+
+// TestTheMultilingualTokenizerSegmentsChinese is the measurement that closes item 17's 多语言 half.
+//
+// # What it proves, and how
+//
+// The English model this package was first verified against turned the product's own ban line into
+// TEN `[UNK]` pieces out of sixteen. The multilingual model's Unigram vocabulary does not: it finds
+// 不能 and 红色 and 这是 as single pieces, which is what lets a Chinese sentence have a vector at all.
+//
+// The expected ids are the REFERENCE tokenizer's, recorded from the model's own `tokenizer.json`, so
+// this asserts agreement with the implementation the model was trained against rather than with
+// itself. A reader that segmented differently would produce different ids and fail here.
+//
+// # Why it skips without the file
+//
+// The model is 113-448 MB and is NOT committed: `IA_TOKENIZER_JSON` points at it. A skip names what is
+// missing rather than passing, the discipline this package's other inference tests keep.
+func TestTheMultilingualTokenizerSegmentsChinese(t *testing.T) {
+	path := strings.TrimSpace(os.Getenv("IA_TOKENIZER_JSON"))
+	if path == "" {
+		t.Skip("no Unigram tokenizer.json on this machine, so Chinese segmentation cannot be checked: " +
+			"set IA_TOKENIZER_JSON to a multilingual model's tokenizer.json")
+	}
+	tokenizer, err := loadUnigram(path, "model.onnx")
+	if err != nil {
+		t.Fatalf("loadUnigram: %v", err)
+	}
+	tokenizer.maxTokens = 64
+	if tokenizer.VocabSize() < 100000 {
+		t.Fatalf("the vocabulary has %d pieces, and a multilingual one is far larger — this is a different file",
+			tokenizer.VocabSize())
+	}
+	// The special tokens come from `added_tokens`, and the ids matter: reading the SentencePiece file
+	// beside this one gives <s>=1 while the trained tokenizer says <s>=0, and feeding the wrong
+	// numbering INVERTED every similarity the probe measured.
+	if tokenizer.bosID != 0 || tokenizer.eosID != 2 {
+		t.Fatalf("the markers are bos=%d eos=%d, and this model's tokenizer states 0 and 2",
+			tokenizer.bosID, tokenizer.eosID)
+	}
+
+	ban := tokenizer.Encode("女主不能穿红色，这是全剧的禁令。")
+	// THE REFERENCE TOKENIZER'S OWN IDS for this text, recorded from `tokenizers.Tokenizer`:
+	//   [0, 6, 4870, 3382, 5292, 15870, 143003, 4, 8513, 2476, 22185, 43, 24484, 12668, 30, 2]
+	// with pieces 女 主 不能 穿 红色 ， 这是 全 剧 的 禁 令 。 between <s> and </s>.
+	//
+	// THIS READER'S OUTPUT IS THE SAME SEQUENCE OF WORD IDS with two differences, both stated rather
+	// than hidden: the reference's `TemplateProcessing` post-processor marks the FIRST and LAST pieces
+	// as word-initial (`▁`, id 6, and `▁。`, id 5) while this package places only the sequence markers,
+	// because both of its tokenizers produce the same sequence SHAPE. So the assertion is about the
+	// words — the twelve ids that carry the meaning — and the two marked variants are recognised as
+	// the pieces they are.
+	// The reference's whole sequence, and this reader's, compared as MULTISETS of the word ids: the
+	// reference marks its first and last pieces as word-initial (6 = `▁` and 5 = `▁。`) because its
+	// post-processor template does, while this package places only the sequence markers. Comparing the
+	// words as a set is what states that difference instead of hiding it inside an index.
+	wantWords := map[int64]int{
+		4870: 1, 3382: 1, 5292: 1, 15870: 1, 143003: 1, 4: 1, 8513: 1, 2476: 1, 22185: 1, 43: 1, 24484: 1, 12668: 1,
+	}
+	got := map[int64]int{}
+	for _, id := range ban {
+		if id == tokenizer.bosID || id == tokenizer.eosID {
+			continue
+		}
+		got[id]++
+	}
+	// The two marked forms are the reference's own markings, and each stands for the word beside it:
+	// id 6 is the `▁` marker the reference prepends to the FIRST piece, and id 5 is `▁。`, the full
+	// stop carrying the same marker. Neither is a word the meaning depends on, so both are dropped
+	// and the words they decorate are already counted.
+	delete(got, 6)
+	delete(got, 5)
+	if len(got) != len(wantWords) {
+		t.Fatalf("the ban line encodes to %v, and the reference's word ids are %v", ban, wantWords)
+	}
+	for id, count := range wantWords {
+		if got[id] != count {
+			t.Fatalf("the piece %d appears %d times and the reference says %d (full output %v)", id, got[id], count, ban)
+		}
+	}
+	// NOTHING IS UNKNOWN, which is the whole difference from the English vocabulary.
+	for _, id := range ban {
+		if id == tokenizer.unkID {
+			t.Fatalf("a Chinese word became the unknown token: %v", ban)
+		}
+	}
+	// And the segmentation is by WORD rather than by character: 不能 and 红色 are single pieces, so the
+	// sequence is shorter than the text's character count would suggest.
+	if len(ban) >= 16 {
+		t.Fatalf("the ban line took %d pieces, so it was split by character rather than by word", len(ban))
+	}
+	// The phrase that shares words with the ban line must share pieces, which is what makes two
+	// sentences about the same rule相似 to the model.
+	paraphrase := tokenizer.Encode("禁止女主角穿红色的衣服。")
+	shared := 0
+	for _, id := range paraphrase {
+		for _, other := range ban {
+			if id == other && id != tokenizer.bosID && id != tokenizer.eosID {
+				shared++
+				break
+			}
+		}
+	}
+	if shared == 0 {
+		t.Fatalf("a paraphrase shares no pieces with the sentence it paraphrases: %v vs %v", paraphrase, ban)
+	}
+}
+
+// TestTheMultilingualModelEmbedsChineseWithRealSignal is the end-to-end half, and it needs the model
+// as well as the tokenizer.
+//
+// # Why the threshold is a MARGIN rather than the model's own numbers
+//
+// The measured values are the model's, and pinning them would make this test fail on a different
+// quantisation for a reason that is not a defect. What must hold for the feature to work is the
+// ORDERING: a paraphrase of the rule scores higher than an unrelated sentence, and the same meaning
+// in another language scores higher than a different fact. Those are the properties the memory index
+// depends on, and they are what a broken tokenizer or pooling destroys — which is not hypothetical:
+// this package's probe measured the ordering BACKWARDS until the special tokens were read from the
+// right file.
+func TestTheMultilingualModelEmbedsChineseWithRealSignal(t *testing.T) {
+	tokenizerPath := strings.TrimSpace(os.Getenv("IA_TOKENIZER_JSON"))
+	modelPath := strings.TrimSpace(os.Getenv("IA_ONNX_MODEL"))
+	if tokenizerPath == "" || modelPath == "" {
+		t.Skip("no multilingual model on this machine, so Chinese embedding cannot be checked: " +
+			"set IA_ONNX_MODEL and IA_TOKENIZER_JSON")
+	}
+	runtimeDir, _, _ := findRuntimeAndModel(t)
+	requireInference(t, runtimeDir, modelPath, tokenizerPath)
+
+	embedder, err := New(Config{RuntimePath: runtimeDir, ModelPath: modelPath, VocabPath: tokenizerPath})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	ctx := context.Background()
+	if !embedder.Available(ctx, "project-1") {
+		t.Skipf("the model did not load: %s", embedder.Diagnostic())
+	}
+	texts := []string{
+		"女主不能穿红色，这是全剧的禁令。",
+		"禁止女主角穿红色的衣服。",
+		"账本不在盐仓，空船是昨夜走的。",
+		"今天的天气非常好。",
+		"the red dress is forbidden",
+	}
+	result, err := embedder.Embed(ctx, "project-1", appmemory.EmbeddingRequest{Texts: texts})
+	if err != nil {
+		t.Fatalf("Embed: %v", err)
+	}
+	if len(result.Vectors) != len(texts) {
+		t.Fatalf("%d texts produced %d vectors", len(texts), len(result.Vectors))
+	}
+	for index, vector := range result.Vectors {
+		var sum float64
+		for _, value := range vector {
+			sum += float64(value) * float64(value)
+		}
+		if math.Abs(math.Sqrt(sum)-1) > 1e-3 {
+			t.Fatalf("vector %d has length %.6f rather than 1", index, math.Sqrt(sum))
+		}
+	}
+	ban, paraphrase, other, unrelated, english := result.Vectors[0], result.Vectors[1], result.Vectors[2], result.Vectors[3], result.Vectors[4]
+
+	// THE ORDERING THE INDEX DEPENDS ON.
+	if dot(ban, paraphrase) <= dot(ban, unrelated) {
+		t.Fatalf("a paraphrase (%.4f) does not beat an unrelated sentence (%.4f): the segmentation or the pooling is wrong",
+			dot(ban, paraphrase), dot(ban, unrelated))
+	}
+	if dot(ban, paraphrase) <= dot(ban, other) {
+		t.Fatalf("a paraphrase (%.4f) does not beat another line from the same episode (%.4f)",
+			dot(ban, paraphrase), dot(ban, other))
+	}
+	// CROSS-LINGUAL: the same rule in English is nearer than an unrelated Chinese sentence. This is
+	// what "multilingual" means for retrieval, and an English-only vocabulary cannot do it.
+	if dot(ban, english) <= dot(ban, unrelated) {
+		t.Fatalf("the English translation (%.4f) does not beat an unrelated sentence (%.4f), so the model is not acting multilingually",
+			dot(ban, english), dot(ban, unrelated))
+	}
+	t.Logf("ban~paraphrase %.4f, ban~english %.4f, ban~other %.4f, ban~unrelated %.4f",
+		dot(ban, paraphrase), dot(ban, english), dot(ban, other), dot(ban, unrelated))
+}

@@ -150,8 +150,9 @@ type model struct {
 	// configuration, because a mismatch is a refusal rather than something to accommodate.
 	sequenceLength int
 	dimensions     int
-	// tokenizer is the vocab's WordPiece.
-	tokenizer *wordpiece
+	// tokenizer is the model's own encoder, read from the file the caller named: WordPiece from a
+	// `vocab.txt`, Unigram from a `tokenizer.json`.
+	tokenizer *configuredTokenizer
 }
 
 // New builds an embedder from configuration.
@@ -178,23 +179,63 @@ func New(config Config) (*Embedder, error) {
 		return nil, apperror.New("ONNX_MODEL_UNREADABLE", "configuration", false,
 			"The configured embedding model could not be read.", err)
 	}
-	tokenizer, err := loadWordPiece(vocabPath)
+	// WHICH TOKENIZER IS DECIDED BY THE FILE, not by configuration. A `vocab.txt` is WordPiece (the
+	// BERT family) and a `tokenizer.json` whose model type is Unigram is SentencePiece (XLM-RoBERTa
+	// and its multilingual relatives). The caller names a FILE and this reads what it is, which is the
+	// same "the bytes decide" rule the import pipeline keeps and which saves a user from having to know
+	// which family their model belongs to.
+	tokenizer, err := loadTokenizer(vocabPath, modelPath)
 	if err != nil {
 		return nil, err
 	}
-	// The model path travels ON THE TOKENIZER because that is the object the session holder keeps and
-	// the two are configured together: a vocabulary without its model is meaningless. The field was
-	// declared and never assigned, which produced "Load model from  failed" — an error naming no
-	// file — on the first run of this package's tests.
-	tokenizer.modelPath = modelPath
 	maxTokens := config.MaxTokens
 	if maxTokens <= 0 {
 		maxTokens = DefaultMaxTokens
 	}
-	tokenizer.maxTokens = maxTokens
+	tokenizer.setMaxTokens(maxTokens)
 
 	rt := &ortRuntime{path: resolveRuntime(config.RuntimePath)}
 	return &Embedder{runtime: rt, model: &model{tokenizer: tokenizer}}, nil
+}
+
+// configuredTokenizer is what `New` hands the model: an encoder plus the path it came from.
+//
+// The path travels WITH the tokenizer because that is the object the session holder keeps, and the two
+// are configured together: a vocabulary without its model is meaningless. The field was once declared
+// and never assigned, which produced "Load model from  failed" — an error naming no file.
+type configuredTokenizer struct {
+	Tokenizer
+	modelPath string
+	maxTokens int
+}
+
+func (c *configuredTokenizer) setMaxTokens(limit int) {
+	c.maxTokens = limit
+	// The limit lives on the concrete implementation, which is where `Encode` reads it. Both
+	// implementations carry the same field for the same reason.
+	switch typed := c.Tokenizer.(type) {
+	case *wordpiece:
+		typed.maxTokens = limit
+	case *unigram:
+		typed.maxTokens = limit
+	}
+}
+
+// loadTokenizer reads whichever tokenizer the given file is.
+func loadTokenizer(path, modelPath string) (*configuredTokenizer, error) {
+	lowered := strings.ToLower(path)
+	if strings.HasSuffix(lowered, ".json") {
+		unigram, err := loadUnigram(path, modelPath)
+		if err != nil {
+			return nil, err
+		}
+		return &configuredTokenizer{Tokenizer: unigram, modelPath: modelPath}, nil
+	}
+	wordpiece, err := loadWordPiece(path)
+	if err != nil {
+		return nil, err
+	}
+	return &configuredTokenizer{Tokenizer: wordpiece, modelPath: modelPath}, nil
 }
 
 // Available reports whether the runtime AND the model are loaded.
