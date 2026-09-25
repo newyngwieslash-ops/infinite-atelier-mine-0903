@@ -56,9 +56,27 @@ wails build
 
 ### 1.2 What the executable does NOT contain
 
-- **No installer.** No `.msi`, no `.exe` installer, no NSIS/Inno/WiX script exists anywhere in the
-  repository — searched by extension (`.nsi`, `.iss`, `.wxs`, `.wixproj`) and none found. The
-  artifact is a portable executable a user copies and runs.
+- **No installer ARTIFACT, and WP-15 established that the remaining gap is ONE MISSING TOOL rather
+  than missing configuration.** `wails build -nsis` is the supported route and it is now wired: the
+  build generates `build/windows/installer/project.nsi` and `wails_tools.nsh`, and `wails.json`
+  carries the product metadata an installer needs (`name`, `outputfilename`, `info.productName`,
+  `info.productVersion`, `info.copyright`). Running it produced:
+
+  ```text
+  Creating NSIS installer
+  Warning: Cannot create installer: makensis not found
+  ```
+
+  **`makensis` is not installed on this host and is not available from the package managers present**
+  (checked: `which makensis`, the NSIS install path under Program Files, the MSYS2 tree, and
+  `pacman -Ss nsis` — all empty). The build therefore compiles the application, generates the
+  template, and stops at the compiler it does not have.
+
+  **What a release requires is: install NSIS 3.x (which provides `makensis`), then run
+  `wails build -nsis`.** The artifact it produces is
+  `build/bin/InfiniteAtelier-amd64-installer.exe`. The generated script already declares the
+  uninstaller, the registry keys, the install scope and the shortcuts, because that template is
+  Wails'. The portable executable remains the artifact a user copies and runs today.
 - **No code-signing configuration.** `grep -rni "sign\|certificate\|signtool" wails.json package.json build/`
   returns **nothing** (exit status 2, i.e. no match in any of the three inputs). There is no
   `windows.certificate` block, no `signtool` invocation, no `SignTool` step in
