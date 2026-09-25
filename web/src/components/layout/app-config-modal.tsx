@@ -7,6 +7,7 @@ import { ModelPicker } from "@/components/model-picker";
 import { ChannelEditorDrawer } from "@/components/layout/channel-editor-drawer";
 import { ProjectBackupPanel } from "@/components/config/backup-panel";
 import { GarbageCollectionPanel } from "@/components/config/garbage-collection-panel";
+import { DiagnosticsPanel } from "@/components/config/diagnostics-panel";
 import { LegacySecretStatus } from "@/components/layout/legacy-secret-notice";
 import { exportAppConfig, importAppConfig } from "@/services/config-file";
 import { exportAppBackup, importAppBackup } from "@/services/backup-restore";
@@ -335,6 +336,9 @@ function ConfigBackupTab() {
             {/* FR-160's garbage collection, in the same tab because both are data-maintenance
                 acts a user takes from one place. */}
             <GarbageCollectionPanel />
+            {/* FR-180's diagnostics bundle: the manifest a user reads before choosing what
+                to include, which SECURITY 14.2 requires them to be shown. */}
+            <DiagnosticsPanel />
         </div>
     );
 }

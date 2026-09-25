@@ -920,7 +920,18 @@ export default {
             preferences: "偏好设置",
             backup: "数据备份",
         },
-            garbage: {
+                diagnostics: {
+                refresh: "刷新清单",
+                collect: "生成诊断包",
+                collected: "已生成 {{count}} 个文件。",
+                total: "共 {{bytes}}",
+                section: "分区",
+                size: "大小",
+                contents: "内容",
+                hint: "以下是将要打包的内容。取消勾选即可不包含某个分区——诊断包会被发送给他人，因此先看清再导出。",
+                unavailable: "此构建无法生成诊断包（需要数据库与日志目录）。",
+            },
+        garbage: {
                 refresh: "刷新列表",
                 collect: "回收",
                 cancel: "取消回收",

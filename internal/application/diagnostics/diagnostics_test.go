@@ -189,11 +189,16 @@ func TestAnOmittedSectionIsLeftOutAndRecorded(t *testing.T) {
 // or a hand-edited file would contain — which is the case the second layer exists for.
 func TestTheSecondRedactionLayerMasksACredentialInTheLog(t *testing.T) {
 	reader := healthyReader()
+	// THE FIXTURES ARE NOT KEY-SHAPED, and the repository's own secret scanner is why: it refuses
+	// `sk-` wherever it appears, tests included, and it is right to — a fixture that looks exactly like
+	// a live credential is one somebody will paste somewhere it matters. The redactor matches on SHAPE
+	// (a header's value, a long opaque token after a sensitive name, a query parameter's value), so
+	// these carry that shape without being a key any service would issue.
 	reader.logBytes = []byte(strings.Join([]string{
 		`{"msg":"calling provider"}`,
-		`Authorization: Bearer sk-live-abcdefghijklmnopqrstuvwxyz012345`,
-		`{"api_key":"sk-live-zyxwvutsrqponmlkjihgfedcba987654"}`,
-		`GET /v1/models?api_key=sk-live-0123456789abcdefghijklmnop HTTP/1.1`,
+		`Authorization: Bearer fixture-token-not-a-credential-0001`,
+		`{"api_key":"fixture-token-not-a-credential-0002"}`,
+		`GET /v1/models?api_key=fixture-token-not-a-credential-0003 HTTP/1.1`,
 		`{"error":"upstream refused"}`,
 	}, "\n"))
 	service := newService(reader)
@@ -203,9 +208,9 @@ func TestTheSecondRedactionLayerMasksACredentialInTheLog(t *testing.T) {
 	}
 	logs := string(bundle.Files[SectionLogs])
 	for _, secret := range []string{
-		"sk-live-abcdefghijklmnopqrstuvwxyz012345",
-		"sk-live-zyxwvutsrqponmlkjihgfedcba987654",
-		"sk-live-0123456789abcdefghijklmnop",
+		"fixture-token-not-a-credential-0001",
+		"fixture-token-not-a-credential-0002",
+		"fixture-token-not-a-credential-0003",
 	} {
 		if strings.Contains(logs, secret) {
 			t.Fatalf("a credential survived into the bundle: %q\n---\n%s", secret, logs)
@@ -329,8 +334,8 @@ func TestContainsCredentialShapeIsTheRefusalCheck(t *testing.T) {
 	}{
 		{"an ordinary line about a job finishing", false},
 		{"", false},
-		{"Authorization: Bearer something-long-enough", true},
-		{"api_key=sk-abcdefghijklmnopqrstuvwxyz", true},
+		{"Authorization: Bearer fixture-token-not-a-credential-0004", true},
+		{"api_key=fixture-token-not-a-credential-0005", true},
 		{"a line naming an api_key in prose", false},
 		{"token: a-value-here", true},
 	}
@@ -341,7 +346,7 @@ func TestContainsCredentialShapeIsTheRefusalCheck(t *testing.T) {
 	}
 	// Redacting first makes the check clean, which is the order a caller uses: mask for the bundle,
 	// and refuse when the masking found something that should not have been there at all.
-	redacted := RedactText("Authorization: Bearer something-long-enough")
+	redacted := RedactText("Authorization: Bearer fixture-token-not-a-credential-0006")
 	if ContainsCredentialShape(redacted) {
 		t.Fatalf("a redacted line still reports a credential shape: %q", redacted)
 	}

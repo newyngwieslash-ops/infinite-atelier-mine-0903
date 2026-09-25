@@ -921,7 +921,18 @@ export default {
             preferences: "Preferences",
             backup: "Backup",
         },
-            garbage: {
+                diagnostics: {
+                refresh: "Refresh the list",
+                collect: "Build the bundle",
+                collected: "Wrote {{count}} files.",
+                total: "{{bytes}} total",
+                section: "Section",
+                size: "Size",
+                contents: "Contents",
+                hint: "This is what the bundle would contain. Uncheck a section to leave it out — a bundle is sent to somebody else, so read the list before exporting.",
+                unavailable: "This build cannot produce a diagnostics bundle (it needs the database and the log directory).",
+            },
+        garbage: {
                 refresh: "Refresh the list",
                 collect: "Collect",
                 cancel: "Cancel the collection",

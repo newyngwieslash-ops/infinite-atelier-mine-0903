@@ -1819,6 +1819,93 @@ export namespace desktop {
 	        this.confirm = source["confirm"];
 	    }
 	}
+	export class DiagnosticsSectionDTO {
+	    section: string;
+	    bytes: number;
+	    note: string;
+	    included: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new DiagnosticsSectionDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.section = source["section"];
+	        this.bytes = source["bytes"];
+	        this.note = source["note"];
+	        this.included = source["included"];
+	    }
+	}
+	export class DiagnosticsBundleDTO {
+	    sections: DiagnosticsSectionDTO[];
+	    files: Record<string, string>;
+	    totalBytes: number;
+	    createdAt: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new DiagnosticsBundleDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.sections = this.convertValues(source["sections"], DiagnosticsSectionDTO);
+	        this.files = source["files"];
+	        this.totalBytes = source["totalBytes"];
+	        this.createdAt = source["createdAt"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class DiagnosticsPlanDTO {
+	    sections: DiagnosticsSectionDTO[];
+	    totalBytes: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new DiagnosticsPlanDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.sections = this.convertValues(source["sections"], DiagnosticsSectionDTO);
+	        this.totalBytes = source["totalBytes"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	
 	export class DialogueLineDTO {
 	    lineId: string;
 	    sceneId: string;
