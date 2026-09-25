@@ -58,6 +58,63 @@
 > now closed and **P1 to P4 are unchanged** — P1 opens with FR-100's explicit-stage-dependency
 > ruling, which is a product decision rather than a code task.
 
+# 0zi. P3 completion audit, and the two named gaps that are NOT P3 criteria (2026-09-25)
+
+P3 is the nine-item list at `docs/implementation/project-progress-and-remaining-tasks-2026-09-23.md`
+(items 17–25), which is PRD §16's v1.0 scope. This section states each item's status against the CODE,
+not against the backlog's prose, because two of the entries' own HEADLINES were stale until this audit:
+items 21 and 23 still opened with "**PARTIAL**" after WP-28/29/30 had delivered their remaining halves, so
+a reader who stopped at the first line would have concluded the opposite of what the bodies say.
+
+| # | Item | Status | The work package(s), and what the code shows |
+|---|---|---|---|
+| 17 | 本地多语言 ONNX Embedding | **DONE** | WP-23, WP-25. A real adapter with a real model: `internal/infrastructure/onnxemb/` (WordPiece and SentencePiece-Unigram tokenizers, Viterbi segmentation, attention-masked pooling, cgo and no-cgo builds) and `embedder_local.go` wiring it local-first. Measured: 0.8020 paraphrase, 0.4025 cross-lingual, −0.0302 unrelated, zero `[UNK]` on the canary. |
+| 18 | 事件图谱可视化 | **DONE** | WP-17, ADR-0021. Events are nodes; participation is a dashed edge; the counts line reports undrawn edges. |
+| 19 | MONOFORM 深度双向集成 | **DONE** | WP-21, ADR-0025, and **repaired by WP-29**: the snapshot store wrote no `file_objects` row, so its Link could never succeed in production. A regression now asserts the row for that caller. |
+| 20 | 完整资产一致性检查 | **DONE** | WP-16, ADR-0020. The asset ruleset's two missing clauses plus Safety and Cost emitters; the classification reaches `review_issues.category` and the UI. |
+| 21 | 视频首尾帧与批量镜头生成 | **DONE** | WP-26 (adapter), WP-28 (frame pipe + picker, batch), WP-30 (style references). ADR-0027/0029/0031. |
+| 22 | 层级摘要和记忆中心 | **DONE** | WP-18, ADR-0022. Three rungs, and the recall metrics exist as pure functions over the canary. |
+| 23 | 更完整的时间线、音效和混音 | **DONE** | WP-20 (mix), WP-27 (casting, suggestions), WP-29 (background music), WP-30 (effect generation). ADR-0024/0028/0030/0031. |
+| 24 | PDF 导入 | **DONE** | WP-19, ADR-0023. |
+| 25 | Windows 稳定安装与升级 | **DONE** | WP-24. The installer is built; what remains is a CERTIFICATE, which is a release decision rather than code. |
+
+## The two named gaps that are not P3 criteria, stated so they are not mistaken for either
+
+**1. The local ONNX model file is not committed, and its path is an environment variable.**
+
+This is TRUE and it is not a P3 criterion. PRD §16 asks for 本地多语言 ONNX Embedding, and the
+CAPABILITY is delivered and measured (item 17 above). What is absent is a 113–448 MB binary in the
+repository and a settings control for it. Two facts decide this:
+
+- **The repository cannot carry the model.** Committing a file of that size is a decision about the
+  project's distribution — git history, the installer's size, the SBOM — and AGENTS §6 requires a license
+  review before a third-party binary ships. That is a product decision, not an engineering gap, and
+  AC-EMB-001's clause is 「本地模式不得在未授权时上传项目文本」, which the CODE satisfies: the adapter is
+  local-first and never falls back to a provider when a project names the local embedder.
+- **The settings control is a real gap**, named rather than hidden: a user cannot point at a model file
+  without setting `IA_ONNX_MODEL`, `IA_ONNX_VOCAB` and (optionally) `IA_ONNX_RUNTIME`. It is the same
+  shape as the size field below — a capability whose input has no UI — and it deserves its own package
+  rather than a line in this one.
+
+**2. The video request's `size` field has no control, and NO PRD requirement asks for one.**
+
+This is TRUE and it is not a criterion either. `SubmitVideoJobRequest.Size` is a field the PROTOCOL
+carries (ADR-0027's shape includes it) and the section does not fill it; the provider then applies its own
+default. PRD FR-080's video clauses are 「Provider 适配器支持提交、轮询、Webhook（若供应商支持）、取消和结果
+下载」, 「任务状态必须持久化」, 「远程结果下载到本地资产存储后才能标记为完整成功」 and 「同一 Shot 可保留多个视频
+版本并批准其中一个」 — none of them names a resolution control, and §16's list does not either. It is
+recorded because it is a real gap in the INTERFACE, with the honest note that closing it would be adding
+a feature rather than finishing one.
+
+## What is NOT verifiable on this host, recorded rather than omitted
+
+- **The two provider protocols are assumptions.** ADR-0027 and ADR-0031 record the field names of the
+  video and speech adapters as readings that no authorised vendor call could confirm (AGENTS §4.3). What
+  IS verified is the protocol handling, the error taxonomy, the audit, the SSRF-guarded client and the
+  cancellation handshake, all against fake vendors.
+- **A certificate for the installer**, and a clean-VM run. Both are release-engineering steps whose
+  absence STATUS §0zb already names.
+
 # 0zh. WP-30: the speech adapter, and the chain that had a hole in the middle (2026-09-25)
 
 WP-30 delivers the last two things P3 named as open: FR-080's 音效建议与**生成适配**, and the video
