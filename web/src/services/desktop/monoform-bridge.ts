@@ -38,7 +38,29 @@
  * make FR-060's "从 Shot/StoryboardPanel 打开预演" and "保存后可在 Shot 中看到摄像机参数" real.
  */
 
-/** The envelope version both sides speak. A mismatch is refused, never negotiated. */
+/**
+ * The envelope version both sides speak. A mismatch is refused, never negotiated.
+ *
+ * # Why WP-21 did NOT move it to 2
+ *
+ * The package added three fields — `camera.movement`, `camera.notes` and
+ * `shot.sceneReferenceAssetVersionIds` — and the temptation was to call that a new version. It is
+ * not, and the difference matters because the check is EXACT EQUALITY: a bump would refuse every
+ * message from a studio build that had not changed, and the studio shipped in `web/public/monoform`
+ * is a separate artifact this repository does not rebuild on our schedule.
+ *
+ * A version moves when a change would make an OLD peer misread a message. Every field added here has
+ * the same property, stated in both directions:
+ *
+ *  - a host receiving them from a newer studio reads them where it understands them and ignores them
+ *    where it does not, because they are optional;
+ *  - a studio receiving an `open_shot` with no scene references sees exactly the message it saw
+ *    before, because it was optional there too.
+ *
+ * What WOULD move it: renaming a field, changing a type, making an optional field required, or
+ * redefining what one means. Those are the changes an old peer reads WRONGLY rather than partially,
+ * and the exact-equality check is what refuses them.
+ */
 export const MONOFORM_SCHEMA_VERSION = 1;
 
 /** What the studio's messages are marked with. */
@@ -74,6 +96,23 @@ export type MonoformCamera = {
     focalLength: number;
     /** The frame's shape, such as "16:9". */
     aspectRatio: string;
+    /**
+     * How the camera moves, in the studio's own words, when it says.
+     *
+     * ARCHITECTURE §17 lists Movement among what the bridge returns, and the studio's current build
+     * does not send it — so it is OPTIONAL and the host accepts its absence. Adding a required field
+     * would refuse every message the studio sends today, which is the opposite of what the protocol
+     * is for.
+     */
+    movement?: string;
+    /**
+     * The previs notes a director wrote, when the studio carries them.
+     *
+     * Optional for the same reason as `movement`, and NOT the same field as a shot's
+     * `performanceNote`: this is what the director said while framing the shot, and it belongs with
+     * the camera the framing produced.
+     */
+    notes?: string;
 };
 
 /** What the host tells the studio to open. */
@@ -91,6 +130,19 @@ export type MonoformOpenShot = {
     videoMotionDescription: string;
     /** The camera the shot already recorded, when it has one. */
     camera?: MonoformCamera;
+    /**
+     * The approved scene references this shot's scene is built from, by asset version id.
+     *
+     * FR-060's 「发送角色站位、相机、镜头参数和场景参考」 names the scene reference as something the
+     * studio RECEIVES, and before this field the message carried none: the shot's framing and its
+     * camera went over and nothing about where it happens. The ids are REFERENCES rather than bytes,
+     * which is ARCHITECTURE §17's 「只接收 Shot、资产引用和已批准参数」 — a studio that wanted to draw
+     * the location would ask for it by id rather than be handed a file.
+     *
+     * Ids rather than a whole asset: a shot's scene may cite several, and the studio decides which it
+     * can use.
+     */
+    sceneReferenceAssetVersionIds?: string[];
 };
 
 /** A message the studio sends back. */
@@ -201,7 +253,47 @@ function cameraFrom(value: unknown): MonoformCamera | null {
     if (!aspectRatio || aspectRatio.length > 20) {
         return null;
     }
-    return { position, rotation, focalLength, aspectRatio };
+    // THE TWO OPTIONAL FIELDS ARE CARRIED, NOT DROPPED.
+    //
+    // This function returns a FRESH object built from named fields, which is what makes it a
+    // validation rather than a cast — and it is also how a field gets silently lost. `movement` and
+    // `notes` were added in WP-21 for ARCHITECTURE §17's "返回 Camera Pose、Lens、Framing、Movement、
+    // Snapshot、Notes", and a validator that rebuilt the object without them would accept a message
+    // carrying them and hand the host one without — which is the same narrowing that dropped the
+    // thumbnail on the Go side and left FR-060's 预览图 clause unbuilt.
+    const movement = optionalShortString(source.movement, 200);
+    const notes = optionalShortString(source.notes, 2000);
+    if (movement === null || notes === null) {
+        // Present but wrong: a non-string, or longer than the bound. Refused rather than dropped,
+        // because a message carrying a 40-kilobyte "movement" is not one this host will reinterpret.
+        return null;
+    }
+    return { position, rotation, focalLength, aspectRatio, movement, notes };
+}
+
+/**
+ * optionalShortString reads a field that may be absent, empty, or a bounded string.
+ *
+ * It returns undefined for absent-or-empty, a trimmed string for a valid one, and NULL for a value
+ * that is present and wrong — the distinction the caller needs to refuse a malformed field rather
+ * than silently ignore it. `undefined` and `null` mean different things here and that is the whole
+ * point of the function.
+ */
+function optionalShortString(value: unknown, max: number): string | undefined | null {
+    if (value === undefined || value === null) {
+        return undefined;
+    }
+    if (typeof value !== "string") {
+        return null;
+    }
+    const trimmed = value.trim();
+    if (trimmed === "") {
+        return undefined;
+    }
+    if (trimmed.length > max) {
+        return null;
+    }
+    return trimmed;
 }
 
 /** A value is a blob when it has the shape one has and is within the payload bound. */

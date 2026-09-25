@@ -223,3 +223,67 @@ test("a nonce is unpredictable and differs between mounts", () => {
     assert.notEqual(first, second);
     assert.ok(first.length >= 16, `the nonce is only ${first.length} characters`);
 });
+
+// --- WP-21: the fields that make FR-060's remaining clauses reachable ------------------------------
+
+/** The camera the studio produces, shared by the WP-21 cases below. */
+const wp21Camera = {
+    position: [1, 2, 3] as [number, number, number],
+    rotation: [0, 45, 12] as [number, number, number],
+    focalLength: 42,
+    aspectRatio: "16:9",
+};
+
+test("a camera carries movement and notes when the studio sends them", () => {
+    // ARCHITECTURE §17 lists Movement and Notes among what the bridge returns, and the validator
+    // rebuilds the camera from named fields — so a field it does not name is silently DROPPED. That
+    // is the same narrowing that lost the thumbnail, and this is the assertion that keeps these two
+    // from joining it.
+    const withExtras = validate(
+        validMessage({
+            type: "shot_updated",
+            kind: undefined,
+            blob: undefined,
+            shotId: "shot-1",
+            camera: { ...wp21Camera, movement: "dolly in", notes: "hold on the knife" },
+        }),
+    );
+    if (!withExtras.ok || withExtras.message.kind !== "shot_updated") {
+        assert.fail("a camera with movement and notes was refused: " + JSON.stringify(withExtras));
+    }
+    assert.equal(withExtras.message.camera.movement, "dolly in");
+    assert.equal(withExtras.message.camera.notes, "hold on the knife");
+});
+
+test("a camera without movement or notes is still accepted", () => {
+    // The studio in web/public/monoform does not send them today, and the protocol is exact-equality
+    // on its VERSION — so refusing an older sender's message would break the studio the repository
+    // ships. Optional means optional in both directions.
+    const plain = validate(validMessage({ type: "shot_updated", kind: undefined, blob: undefined, shotId: "shot-1", camera: wp21Camera }));
+    if (!plain.ok || plain.message.kind !== "shot_updated") {
+        assert.fail("a camera without the optional fields was refused");
+    }
+    assert.equal(plain.message.camera.movement, undefined);
+    assert.equal(plain.message.camera.notes, undefined);
+});
+
+test("a malformed movement or notes is refused rather than dropped", () => {
+    // Present but wrong: a number where a string belongs, or a value long enough to be a payload.
+    // Dropping it would hand the host a camera the studio did not describe.
+    for (const bad of [
+        { ...wp21Camera, movement: 42 },
+        { ...wp21Camera, notes: { text: "nope" } },
+        { ...wp21Camera, movement: "x".repeat(201) },
+        { ...wp21Camera, notes: "y".repeat(2001) },
+    ]) {
+        const result = validate(validMessage({ type: "shot_updated", kind: undefined, blob: undefined, shotId: "shot-1", camera: bad }));
+        assert.equal(result.ok, false, "a malformed camera field was accepted: " + JSON.stringify(bad).slice(0, 80));
+    }
+    // An EMPTY string is absence rather than a fault: a studio that renders an empty text field sends
+    // "", and refusing that would make the field unusable.
+    const empty = validate(validMessage({
+        type: "shot_updated", kind: undefined, blob: undefined, shotId: "shot-1",
+        camera: { ...wp21Camera, movement: "", notes: "  " },
+    }));
+    assert.equal(empty.ok, true);
+});

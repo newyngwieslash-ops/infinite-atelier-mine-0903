@@ -1987,6 +1987,10 @@ export default {
             noPlanForCamera: "No director plan to record this camera on. Run the plan stage first.",
             studioHint: "Compose the shot in the 3D studio and save; the camera comes back to this row.",
             cameraSaved: "Camera recorded.",
+            // A snapshot that will not store leaves the camera saved, so this is a WARNING: a shot
+            // is built from its parameters, and losing them because a preview image failed would be
+            // the wrong trade. The message names which half failed.
+            snapshotFailed: "The camera is saved, but the previs snapshot was not: {{reason}}",
             exportFromCanvas: "The previs studio's export belongs to the free canvas; no node is invented here.",
             field: {
                 visualRhythm: "Visual rhythm",

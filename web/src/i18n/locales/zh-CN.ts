@@ -1974,6 +1974,9 @@ export default {
             noPlanForCamera: "没有可记录此摄像机的导演规划。请先运行规划阶段。",
             studioHint: "在 3D 工作室中构图并保存，摄像机参数会回写到本行。",
             cameraSaved: "摄像机已记录。",
+            // 快照存不下来时相机参数仍然保存，所以这条是 WARNING：镜头是按参数拍的，因为一张预览图
+            // 没存上就把参数丢掉是错的取舍。文案说明是哪一半失败了。
+            snapshotFailed: "摄像机已保存，但预演快照未能保存：{{reason}}",
             exportFromCanvas: "预演工作室的导出属于自由画布侧；此处不另建节点。",
             field: {
                 visualRhythm: "视觉节奏",

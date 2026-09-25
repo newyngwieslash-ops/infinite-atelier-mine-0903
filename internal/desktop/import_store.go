@@ -35,6 +35,41 @@ func NewDocumentStore(store *filestore.Store) *importDocumentStore {
 	return &importDocumentStore{store: store}
 }
 
+// StoredBytes is what a caller outside this package needs to know about a stored object: its content
+// address and the key a read uses. It is a TYPE rather than the application layer's object because the
+// composition root's adapter hands it to another package, and that package must not depend on the
+// import service's own shapes.
+type StoredBytes struct {
+	Hash       string
+	StorageKey string
+	Size       int64
+}
+
+// DocumentStoring is the narrow surface a caller outside this package uses to commit bytes.
+//
+// It is a TYPE ALIAS-free wrapper over the same `Import` the import service uses, because a second
+// store path would be a second place the size bound lives.
+type DocumentStoring struct {
+	store *importDocumentStore
+}
+
+// NewDocumentStoreForSnapshots exposes the same adapter under the shape a non-import caller needs.
+func NewDocumentStoreForSnapshots(store *filestore.Store) *DocumentStoring {
+	return &DocumentStoring{store: &importDocumentStore{store: store}}
+}
+
+// ImportBytes commits bytes and reports their address.
+func (d *DocumentStoring) ImportBytes(ctx context.Context, displayName string, body []byte) (StoredBytes, error) {
+	if d == nil || d.store == nil {
+		return StoredBytes{}, importdomain.StorageError("The document store is unavailable.", nil)
+	}
+	object, err := d.store.Import(ctx, displayName, body)
+	if err != nil {
+		return StoredBytes{}, err
+	}
+	return StoredBytes{Hash: object.Hash, StorageKey: object.StorageKey, Size: object.Size}, nil
+}
+
 // Import stores bytes under a display name and returns the stored object.
 //
 // An object is content-addressed, so importing the same bytes twice is one stored

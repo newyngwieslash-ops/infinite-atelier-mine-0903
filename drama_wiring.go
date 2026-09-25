@@ -14,6 +14,7 @@ import (
 	appstoryboard "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/storyboard"
 	appworkflow "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/workflow"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/desktop"
+	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/asset"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/staleness"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/infrastructure/database"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/infrastructure/filestore"
@@ -26,6 +27,33 @@ import (
 //
 // It is composed only over a writable database, so a database in safe mode
 // leaves every binding unattached and every method failing closed.
+// snapshotStoreAdapter joins the two things a previs snapshot needs: a content-addressed store for
+// the bytes, and the asset service for the link.
+//
+// It exists as an adapter rather than as methods on either, because the two halves belong to different
+// layers: the store is infrastructure and the service is application. Putting `Link` on the store
+// would make the infrastructure layer know about asset versions; putting `Store` on the service would
+// make the application layer own a filesystem. The composition root is where this repository joins
+// things that must not know about each other.
+type snapshotStoreAdapter struct {
+	store     *appassets.Service
+	documents *desktop.DocumentStoring
+}
+
+// The compile-time proof that this adapter satisfies the binding's port. The two halves are joined
+// here rather than in either package, so the assertion belongs here too: a signature drift fails the
+// build rather than leaving the binding unattached at runtime.
+var _ desktop.SnapshotStore = snapshotStoreAdapter{}
+
+func (a snapshotStoreAdapter) Store(ctx context.Context, displayName string, body []byte) (desktop.StoredBytes, error) {
+	return a.documents.ImportBytes(ctx, displayName, body)
+}
+
+func (a snapshotStoreAdapter) Link(ctx context.Context, versionID, fileHash, role string) error {
+	_, err := a.store.AttachFile(ctx, versionID, fileHash, asset.FileRole(role))
+	return err
+}
+
 type dramaWiring struct {
 	story      *appstory.Service
 	script     *appscript.Service
@@ -46,6 +74,16 @@ type dramaWiring struct {
 	// proportional to the document on the webview's main thread.
 	importBinding       *desktop.ImportBinding
 	importUploadBinding *desktop.ImportUploadBinding
+	// monoformBinding is the previs snapshot surface (WP-21).
+	monoformBinding *desktop.MonoformBinding
+	// snapshotStore is what that binding commits through, built here because this is where the file
+	// store and the asset service are both in scope. `attach` receives only a context, so carrying the
+	// built adapter is what lets the two halves meet without either learning about the other.
+	snapshotStore snapshotStoreAdapter
+	// ids mints the upload identifiers the snapshot transfer hands out. Its concrete type is the
+	// platform generator, named here rather than through an interface because the binding takes a
+	// function and a function is what this field supplies.
+	ids *id.Generator
 }
 
 // composeDrama builds the drama stack over a writable database. It returns nil
@@ -128,7 +166,26 @@ func composeDrama(handle *database.Handle, store *filestore.Store, canvas *apppr
 		Clock:  clock,
 	})
 
+	assetService := appassets.NewService(appassets.Options{
+		Repository: assetRepository,
+		Clock:      clock,
+		IDs:        ids,
+		Events:     eventService,
+		// The impact half of an approval switch. It is supplied HERE rather than
+		// declared inside the assets package because that package sits below the
+		// staleness service in the dependency order: the service resolves projects
+		// through the asset tables, so importing it there would be a cycle. Without
+		// this adapter section 15.1's trigger fires into nothing, which is the state
+		// WP-05 left it in — the graph and the graph's four storyboard types existed
+		// and nothing joined them.
+		Propagator: stalenessPropagatorFor(stalenessService),
+	})
+
 	return &dramaWiring{
+		snapshotStore: snapshotStoreAdapter{
+			store: assetService, documents: desktop.NewDocumentStoreForSnapshots(store),
+		},
+		ids:   ids,
 		story: storyService,
 		script: appscript.NewService(appscript.Options{
 			Repository: scriptRepository,
@@ -159,20 +216,11 @@ func composeDrama(handle *database.Handle, store *filestore.Store, canvas *apppr
 		staleness: stalenessService,
 		// WP-04 shipped this service with no composition root, recording that
 		// it "exists for WP-05". This is that root.
-		assets: appassets.NewService(appassets.Options{
-			Repository: assetRepository,
-			Clock:      clock,
-			IDs:        ids,
-			Events:     eventService,
-			// The impact half of an approval switch. It is supplied HERE rather than
-			// declared inside the assets package because that package sits below the
-			// staleness service in the dependency order: the service resolves projects
-			// through the asset tables, so importing it there would be a cycle. Without
-			// this adapter §15.1's trigger fires into nothing, which is the state WP-05
-			// left it in — the graph and the graph's four storyboard types existed and
-			// nothing joined them.
-			Propagator: stalenessPropagatorFor(stalenessService),
-		}),
+		//
+		// It is built into a VARIABLE rather than inline because the previs snapshot adapter needs the
+		// same service to link a stored image to a version, and two constructions would be two services
+		// where one is meant.
+		assets: assetService,
 		// The gap report's own service, over its own port on the same repository. It is
 		// built HERE because a report is what AC-BOARD-001's batch gate reads: without a
 		// composed service the gate would refuse for a missing dependency in every real
@@ -219,6 +267,12 @@ func (w *dramaWiring) attach(ctx context.Context) {
 		if w.importUploadBinding != nil {
 			desktop.AttachImportUpload(w.importUploadBinding, ctx, w.importBinding)
 		}
+	}
+	if w.monoformBinding != nil {
+		// The store is the SAME two halves the import uses: the content-addressed store for the bytes
+		// and the asset service for the link. The snapshot path adds no storage of its own, which is
+		// the ruling ADR-0025 records.
+		desktop.AttachMonoform(w.monoformBinding, ctx, w.snapshotStore, w.ids.New)
 	}
 }
 

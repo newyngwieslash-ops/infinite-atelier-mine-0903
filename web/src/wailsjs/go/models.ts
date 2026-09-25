@@ -368,6 +368,20 @@ export namespace desktop {
 	        this.chunk = source["chunk"];
 	    }
 	}
+	export class AppendSnapshotChunkRequest {
+	    uploadId: string;
+	    chunk: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new AppendSnapshotChunkRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.uploadId = source["uploadId"];
+	        this.chunk = source["chunk"];
+	    }
+	}
 	export class ApplyScriptGateRequest {
 	    stageRunId: string;
 	    decision: string;
@@ -871,6 +885,36 @@ export namespace desktop {
 	
 	    static createFrom(source: any = {}) {
 	        return new BeginImportUploadResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.uploadId = source["uploadId"];
+	        this.chunkBytes = source["chunkBytes"];
+	    }
+	}
+	export class BeginSnapshotUploadRequest {
+	    versionId: string;
+	    mimeType: string;
+	    totalBytes: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new BeginSnapshotUploadRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.versionId = source["versionId"];
+	        this.mimeType = source["mimeType"];
+	        this.totalBytes = source["totalBytes"];
+	    }
+	}
+	export class BeginSnapshotUploadResult {
+	    uploadId: string;
+	    chunkBytes: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new BeginSnapshotUploadResult(source);
 	    }
 	
 	    constructor(source: any = {}) {
@@ -2354,6 +2398,36 @@ export namespace desktop {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.uploadId = source["uploadId"];
+	    }
+	}
+	export class FinishSnapshotUploadRequest {
+	    uploadId: string;
+	    displayName?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new FinishSnapshotUploadRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.uploadId = source["uploadId"];
+	        this.displayName = source["displayName"];
+	    }
+	}
+	export class FinishSnapshotUploadResult {
+	    fileHash: string;
+	    storageKey: string;
+	    bytes: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new FinishSnapshotUploadResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.fileHash = source["fileHash"];
+	        this.storageKey = source["storageKey"];
+	        this.bytes = source["bytes"];
 	    }
 	}
 	export class GarbageCandidateDTO {

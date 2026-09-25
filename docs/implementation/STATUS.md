@@ -2,9 +2,11 @@
 
 > Last updated: 2026-09-25
 > Product: Infinite Atelier Core + Drama Production Pack
-> Current work package: **WP-20 — P3 item 23, the audio mix**
-> Status: **COMPLETE (section 0y). 10 mutations, 10/10 killed; the full gate passes.**
-> **Four P3 items remain**, and each is named in ROADMAP section 6 with what it needs.
+> Current work package: **WP-21 — P3 item 19, MONOFORM deep integration**
+> Status: **COMPLETE (section 0z). 10 mutations, 10/10 killed; the full gate passes.**
+> **Three P3 items remain**: 17 (local ONNX embeddings) can be done here; 21 (real video providers)
+> needs a paid-provider authorisation and 25 (stable Windows install) needs `makensis`. ROADMAP
+> section 6 names each with what it requires.
 > **WP-16 remains COMPLETE (section 0u)** — the complete asset ruleset, two categories that had no
 > emitter, and the classification reaching the UI. **WP-15 remains COMPLETE for its scope**: P1's ten
 > items are all closed (section 0s), so the acceptance contract has no outstanding clause it can
@@ -47,6 +49,86 @@
 > `docs/implementation/project-progress-and-remaining-tasks-2026-09-23.md`, where the P0 section is
 > now closed and **P1 to P4 are unchanged** — P1 opens with FR-100's explicit-stage-dependency
 > ruling, which is a product decision rather than a code task.
+
+# 0z. WP-21: the previs snapshot, and the thumbnail that was narrowed away (2026-09-25)
+
+WP-21 works **P3 item 19** (MONOFORM 深度双向集成). ADR-0025 carries the reasoning; this section
+records what changed and what building it found.
+
+## What the reconnaissance established
+
+FR-060's acceptance has three clauses, and the reconnaissance measured each rather than assuming:
+
+| clause | state before this package |
+|---|---|
+| 从一个 Shot 打开预演并带入上下文 | **works** — `open_shot` through `director-panel.tsx` |
+| 保存后可在 Shot 中看到摄像机参数**和预览图** | **HALF** — the camera works; the preview had NO PATH |
+| 跨 iframe 消息校验来源/类型/Schema, 最小权限 | **works** — WP-09's bridge: origin, per-mount nonce, exact schemaVersion, 8 MiB bound, twelve tests |
+
+**THE PREVIEW HALF WAS MISSING IN A WAY WORTH RECORDING.** `shot_updated` carries
+`thumbnail?: Blob`; the bridge validates it; the panel forwards it as
+`thumbnail: result.message.thumbnail`; and `director-view.tsx`'s `reportCamera` names `shotId` and
+`camera` in its parameter type and nothing else — so the thumbnail was **dropped at the last step, in
+a type signature**, and no studio component mentioned a thumbnail at all. Nothing was broken: every
+layer did what it said, and the field was narrowed away.
+
+The reason it could not have been built is the other half: `AttachFile` links an ALREADY-COMMITTED
+hash, and the only Blob-to-store path in the build commits a DOCUMENT rather than an asset file.
+
+## What was built
+
+- `internal/desktop/monoform_binding.go` (new): `BeginSnapshotUpload` / `AppendSnapshotChunk` /
+  `FinishSnapshotUpload` / `AbortSnapshotUpload`, reusing the import upload's chunk bound and size
+  ceiling rather than defining a second set.
+- A snapshot becomes a **`reference` file on the shot's asset version** — not a new table, because the
+  asset aggregate already answers "what files does this version have".
+- **The bytes are committed BEFORE the link**, which is 「失败时不影响主项目数据」 stated as an
+  ordering: a store failure leaves the version untouched.
+- `monoform-bridge.ts`: `camera.movement` and `camera.notes` (ARCHITECTURE §17's Movement and Notes,
+  optional in both directions) and `open_shot.sceneReferenceAssetVersionIds` — FR-060's 场景参考,
+  which the message carried none of.
+- `web/src/services/desktop/monoform.ts` (new): the chunked transfer, with `ChunkBytes` taken from the
+  core's reply so a client cannot send a whole image in one message.
+- `director-view.tsx`: `reportCamera` now takes the thumbnail, stores it, and records it in the shot's
+  overrides BESIDE the camera — a preview stored without the framing it was composed with is a picture
+  of nothing in particular.
+
+## The camera's two new fields, and why the SCHEMA VERSION did not move
+
+The version check is EXACT EQUALITY, so a bump to 2 would refuse every message from the studio build
+this repository ships — `web/public/monoform`, a separate artifact this repository does not rebuild on
+our schedule. A version moves when a change would make an OLD peer MISREAD a message; every field
+added here is optional in both directions. **The reasoning is written where the constant lives**, so
+the next person does not bump it reflexively.
+
+## Two response-shape corrections the work forced
+
+1. **`readSnapshotDataURL` does not encode anything.** The first version built a data URL from a
+   `{base64, mimeType}` shape I had invented; the generated `JobResultFileContent` is
+   `{mime, dataUrl, size}` — the core hands back a DATA URL already. A second encoder would have been a
+   second place the encoding lives.
+2. **`AppendSnapshotChunk` is not `AppendSnapshotUploadChunk`.** The client named a method the
+   generated surface does not have, and the binding generator is what showed it.
+
+## Verification
+
+| command | result |
+|---|---|
+| `go test ./... -count=1` | **PASS** - 57 packages ok, 0 failed |
+| `npm test` / `npm run typecheck` | **PASS** - 116 tests (3 new), 0 failures; typecheck clean |
+| `sh scripts/verify.sh` | **PASS**, exit 0 (25 Playwright, security scans over 671 files, all fixture checks, SBOM, Wails production build) |
+| mutations | **10, 10/10 killed**, each restored byte-identically |
+
+## STILL OPEN, named rather than implied
+
+- **The studio does not send `movement` or `notes` yet.** The host ACCEPTS them and the tests prove it
+  with constructed messages; the studio in `web/public/monoform` is a separate artifact this
+  repository does not rebuild here.
+- **Writing back to a ShotVersion is NOT built**: FR-060 says 「DirectorPlan **或** ShotVersion」, and
+  the plan is where a per-shot override document exists while `shots` has no camera column. Recorded
+  in ADR-0025 §8 rather than implied.
+- **P3's remaining two items that can be done here**: 17 (local ONNX embeddings). The other two need
+  something this host does not have — 21 (a paid-provider authorisation) and 25 (`makensis`).
 
 # 0y. WP-20: the audio mix, and the silent film it closed (2026-09-25)
 

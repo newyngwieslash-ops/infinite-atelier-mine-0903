@@ -58,6 +58,9 @@ type app struct {
 	// webview in bounded chunks, so a large novel does not cross as one message.
 	importBinding       *desktop.ImportBinding
 	importUploadBinding *desktop.ImportUploadBinding
+	// monoformBinding carries a previs snapshot from the embedded studio into the asset aggregate
+	// (WP-21, FR-060's 预览图 clause).
+	monoformBinding *desktop.MonoformBinding
 	// agentBinding is the WP-07 surface. It is declared before Wails starts so it
 	// exists on the binding surface, and its services are attached only when the
 	// agent stack composes.
@@ -240,6 +243,9 @@ func (a *app) startup(ctx context.Context) {
 				}
 				if a.importBinding != nil {
 					dramaStack.importBinding = a.importBinding
+				}
+				if a.monoformBinding != nil {
+					dramaStack.monoformBinding = a.monoformBinding
 				}
 				if a.importUploadBinding != nil {
 					dramaStack.importUploadBinding = a.importUploadBinding

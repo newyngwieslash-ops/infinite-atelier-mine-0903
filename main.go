@@ -74,6 +74,10 @@ func run() error {
 	application.memoryBinding = &desktop.MemoryBinding{}
 	application.mediaBinding = &desktop.MediaBinding{}
 	application.assetsBinding = &desktop.AssetsBinding{}
+	// The previs snapshot surface (WP-21). It is declared here so the binding exists on the Wails
+	// surface from startup; its store is attached only when the composition root builds one, so a
+	// safe-mode build refuses a snapshot rather than panicking.
+	application.monoformBinding = &desktop.MonoformBinding{}
 	application.emit = wailsruntime.EventsEmit
 	shutdown := newShutdownSequence(application.closeDatabase, logger, logCloser.Close, reportIndependent)
 	application.shutdown = shutdown
@@ -111,6 +115,7 @@ func run() error {
 			application.agentBinding,
 			application.memoryBinding,
 			application.mediaBinding,
+			application.monoformBinding,
 		},
 		SingleInstanceLock: &options.SingleInstanceLock{
 			UniqueId: singleInstanceID,

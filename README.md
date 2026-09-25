@@ -411,6 +411,34 @@ FR-080 把音频拆成 MVP 与 V1 两半，这一项是 V1 那一半。侦察查
   音效建议（role 与混音都有，没有任何东西**建议**某个镜头配什么音效）、BGM 导入的 UI 入口。
   推理与代价记在 `docs/adr/0024-the-audio-mix-and-the-silent-film.md`，结果记在 STATUS §0y。
 
+## WP-21 范围：MONOFORM 深度集成（P3 第 19 项）
+
+FR-060 的三句验收被**逐句实测**过，而不是假定：桥本身（WP-09 的 origin + per-mount nonce +
+schemaVersion 精确相等 + 8 MiB 上限）与「从 Shot 打开预演」都**已经通了**，而
+「保存后可在 Shot 中看到摄像机参数**和预览图**」**只做了一半**。
+
+**预览图缺失的方式值得记下来**：`shot_updated` 带 `thumbnail?: Blob`，桥**校验**它，面板**转发**它
+（`thumbnail: result.message.thumbnail`），而 `director-view.tsx` 的 `reportCamera` **参数类型里只写了
+shotId 和 camera**——缩略图**在最后一步被一个类型签名窄掉了**，全仓没有任何组件提到过 thumbnail。
+**没有任何东西是坏的**：每一层都做到了它说的，字段是在类型那里消失的。它之所以一直没被建出来还有另一半
+原因：`AttachFile` 链接的是**已经提交过的哈希**，而全仓唯一的 Blob→存储路径提交的是**文档**而不是资产文件。
+
+**做出来的**：快照作为 **`reference` 文件挂在镜头自己的资产版本上**（不新开表——资产聚合本来就是回答
+「这个版本有哪些文件」的地方）；**字节先提交、链接后写**，这正是「失败时不影响主项目数据」的写法；
+`camera.movement` / `camera.notes`（ARCHITECTURE §17 点名的 Movement 与 Notes）与
+`open_shot.sceneReferenceAssetVersionIds`（FR-060 的「场景参考」，此前一个字段都没有）过桥；
+`ChunkBytes` 由**核心**回给客户端，所以客户端无法一次发整张图；**相机参数在快照失败时仍然保存**，
+并以 WARNING 说明是哪一半失败——镜头是按参数拍的，为一张预览图丢掉参数是错的取舍。
+
+**协议版本没有跟着升到 2**，理由写在常量旁边：版本检查是**精确相等**，而 studio 是本仓发布但**不随本仓
+一起重建**的独立产物——升版会把今天能正常说话的 studio 全部拒掉，而这些新字段在两个方向上都是**可选**的。
+版本号在「旧对端会**读错**」时才动。
+
+**仍未完成并点名**：studio 目前**不发** movement/notes（宿主接受、测试用构造消息证明）；**写回 ShotVersion
+没有做**——FR-060 说的是「DirectorPlan **或** ShotVersion」，而 per-shot 覆盖文档存在于 plan，
+`shots` 没有相机列。变异 **10 个全杀**。推理与代价记在
+`docs/adr/0025-monoform-snapshot-and-the-dropped-thumbnail.md`，结果记在 STATUS §0z。
+
 ## 使用说明
 
 1. 打开右上角配置，添加渠道的 API 地址与模型。
