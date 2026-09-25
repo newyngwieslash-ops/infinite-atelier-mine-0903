@@ -5,13 +5,14 @@
 > Current work package: **WP-23 — P3 item 17, local ONNX embeddings**
 > Status: **COMPLETE (section 0za). Everything that can be built on this host has been; the full
 > gate passes under both cgo and no-cgo builds.**
-> **P3 is now as complete as this host allows.** Items 18, 19, 20, 22, 23, 24 and 17 are delivered
-> across STATUS sections 0u to 0za. Two items CANNOT be finished here and are named rather than
-> implied: **21** (real video providers) needs a paid-provider authorisation, and **25** (stable
-> Windows install and upgrade) needs `makensis`, which is not installed and not available from the
-> package managers present. Item 23 is PARTIAL: the mix is real, and 多角色声线映射 and the effect
-> suggestion are named as open. Item 17's MULTILINGUAL half needs a model file this host cannot
-> reach.
+> **P3 is now complete except for ONE item.** Items 17, 18, 19, 20, 22, 23, 24 and 25 are delivered
+> across STATUS sections 0u to 0zb. **The installer is BUILT as of WP-24** (`wails build -nsis` with
+> NSIS 3.12, which `winget` carried all along — WP-15's "not available from the package managers
+> present" was a negative result from four sources generalised too far).
+> **Only item 21 remains**, and it cannot be done without a paid-provider authorisation: real video
+> providers are the one deliverable this host cannot stand up. Two sub-items are named as open rather
+> than implied: item 23's 多角色声线映射 and effect suggestion, and item 17's MULTILINGUAL half,
+> which needs a model file this host cannot reach.
 > **WP-16 remains COMPLETE (section 0u)** — the complete asset ruleset, two categories that had no
 > emitter, and the classification reaching the UI. **WP-15 remains COMPLETE for its scope**: P1's ten
 > items are all closed (section 0s), so the acceptance contract has no outstanding clause it can
@@ -54,6 +55,71 @@
 > `docs/implementation/project-progress-and-remaining-tasks-2026-09-23.md`, where the P0 section is
 > now closed and **P1 to P4 are unchanged** — P1 opens with FR-100's explicit-stage-dependency
 > ruling, which is a product decision rather than a code task.
+
+# 0zb. WP-24: the installer is built, and the tool it needed was one package manager away (2026-09-25)
+
+WP-24 closes **P3 item 25** (Windows 稳定安装与升级) and the P2 item it is the productised form of.
+It is a short section because the work was one command — and the section exists because **the blocker
+was recorded wrongly for a whole package**.
+
+## What WP-15 concluded, and what was actually true
+
+WP-15's note said `makensis` "is not installed on this host and is not available from the package
+managers present" and listed what it had checked: `which makensis`, the NSIS install path under
+Program Files, the MSYS2 tree, and `pacman -Ss nsis`. Every one of those was empty, and the conclusion
+still missed: **`winget` and `choco` are both on this host and both carry NSIS.** The check enumerated
+four sources and generalised to "the package managers present".
+
+**THE LESSON IS ABOUT WHAT WAS SEARCHED, NOT ABOUT MAKENSIS.** A negative result from N sources is
+evidence about those N sources. This file already states that discipline elsewhere — the `-race`
+section records that "the earlier conclusion was wrong twice over" — and this is the same mistake in
+a smaller place.
+
+## What was done
+
+```bash
+winget install --id NSIS.NSIS --accept-source-agreements --accept-package-agreements --silent
+# NSIS 3.12, to C:/Program Files (x86)/NSIS/
+
+wails build -nsis
+#   Creating NSIS installer
+#     - Building 'amd64' installer: Done.
+```
+
+The artifacts: `build/bin/源铭振跃-amd64-installer.exe` (14.9 MB) and
+`build/bin/InfiniteAtelier.exe` (31.9 MB), plus the template's bundled `MicrosoftEdgeWebview2Setup.exe`.
+They are build OUTPUTS and stay untracked — `build/bin/` is in `.gitignore` — which is why
+`docs/INSTALL_AND_SIGNING.md` describes how to produce them rather than pointing at bytes.
+
+## Two things verified rather than assumed
+
+**1. THE USER'S PROJECTS SURVIVE AN UNINSTALL.** The generated uninstaller runs
+`RMDir /r "$AppData\${PRODUCT_EXECUTABLE}"`, which reads like it removes the application's data.
+`PRODUCT_EXECUTABLE` resolves to `${INFO_PROJECTNAME}.exe` — `源铭振跃.exe` from `wails.json`'s `name`
+— while the application stores everything under `os.UserConfigDir()/InfiniteAtelier`
+(`internal/infrastructure/appdirs`). **The two paths differ, so the database is untouched.** The names
+are recorded side by side in INSTALL_AND_SIGNING because a release that renamed the product to match
+`applicationDirectory` WOULD delete user data on uninstall.
+
+**2. UPGRADE IS INSTALL-OVER, AND MIGRATIONS ARE WHAT MAKE IT SAFE.** The template overwrites the
+executable in place and leaves the data directory alone, so an upgrade is quit, install, start — and
+the database is migrated forward by the embedded migrations, which are checksum-verified. **A
+downgrade is not supported and not attempted**: an older binary meeting a newer `user_version` would
+need migrations that do not exist, and refusing is the safe answer.
+
+## What is STILL not done, and it is not code
+
+**No code-signing certificate**, so the installer is unsigned and Windows will warn about it. That is
+`docs/INSTALL_AND_SIGNING.md`'s existing finding and it is a PURCHASE rather than a build step. The
+clean-VM verification (P2 item 14) is also still not possible on this host: the installer now exists,
+and running it on a clean machine is what a release still needs.
+
+## Verification
+
+| command | result |
+|---|---|
+| `wails build -nsis` | **PASS** - installer and executable produced |
+| `sh scripts/verify.sh` | **PASS**, exit 0 (unchanged; this package added no code) |
 
 # 0za. WP-23: local ONNX embeddings, with the model limit measured (2026-09-25)
 

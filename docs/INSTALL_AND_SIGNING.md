@@ -56,27 +56,51 @@ wails build
 
 ### 1.2 What the executable does NOT contain
 
-- **No installer ARTIFACT, and WP-15 established that the remaining gap is ONE MISSING TOOL rather
-  than missing configuration.** `wails build -nsis` is the supported route and it is now wired: the
-  build generates `build/windows/installer/project.nsi` and `wails_tools.nsh`, and `wails.json`
-  carries the product metadata an installer needs (`name`, `outputfilename`, `info.productName`,
-  `info.productVersion`, `info.copyright`). Running it produced:
+- **THE INSTALLER IS NOW BUILT, AND THE GAP WAS INDEED ONE MISSING TOOL.** WP-15 established that
+  `wails build -nsis` was wired and stopped at `Warning: Cannot create installer: makensis not found`,
+  and it recorded the fix as "install NSIS 3.x". **WP-24 did that and the artifact exists.** The
+  earlier note said `makensis` "is not available from the package managers present"; that check was
+  incomplete — `winget` and `choco` are both on this host and both carry NSIS, and
+
+  ```bash
+  winget install --id NSIS.NSIS --accept-source-agreements --accept-package-agreements --silent
+  ```
+
+  installed **NSIS 3.12** to `C:/Program Files (x86)/NSIS/`. With it on `PATH`,
+  `wails build -nsis` completed and produced:
 
   ```text
   Creating NSIS installer
-  Warning: Cannot create installer: makensis not found
+  ------------------------------
+    - Building 'amd64' installer: Done.
   ```
 
-  **`makensis` is not installed on this host and is not available from the package managers present**
-  (checked: `which makensis`, the NSIS install path under Program Files, the MSYS2 tree, and
-  `pacman -Ss nsis` — all empty). The build therefore compiles the application, generates the
-  template, and stops at the compiler it does not have.
+  The artifacts are `build/bin/源铭振跃-amd64-installer.exe` (14.9 MB) and
+  `build/bin/InfiniteAtelier.exe` (31.9 MB), plus a bundled `MicrosoftEdgeWebview2Setup.exe` that the
+  template fetches for the WebView2 runtime. **They are build outputs and stay untracked**
+  (`build/bin/` is in `.gitignore`), which is why this section describes how to produce them rather
+  than pointing at committed bytes.
 
-  **What a release requires is: install NSIS 3.x (which provides `makensis`), then run
-  `wails build -nsis`.** The artifact it produces is
-  `build/bin/InfiniteAtelier-amd64-installer.exe`. The generated script already declares the
-  uninstaller, the registry keys, the install scope and the shortcuts, because that template is
-  Wails'. The portable executable remains the artifact a user copies and runs today.
+  **What a release still requires is the CERTIFICATE, not the compiler**: the installer is unsigned
+  (see below), and `makensis` being present does not change that.
+
+- **THE USER'S PROJECTS SURVIVE AN UNINSTALL, AND THAT WAS VERIFIED RATHER THAN ASSUMED.** The
+  generated uninstaller runs `RMDir /r "$AppData\${PRODUCT_EXECUTABLE}"`, which reads like it removes
+  the application's data. It does not remove the DATABASE, and the reason is that the two paths differ:
+  `PRODUCT_EXECUTABLE` resolves to `${INFO_PROJECTNAME}.exe`, i.e. `源铭振跃.exe` from `wails.json`'s
+  `name`, while the application stores everything under `os.UserConfigDir()/InfiniteAtelier` (see
+  `internal/infrastructure/appdirs`). So the uninstaller clears a WebView2 data directory named after
+  the PRODUCT and leaves `%AppData%\InfiniteAtelier\{app.db,files,logs,snapshots}` untouched.
+  **A release that ever renamed the product to match `applicationDirectory` would delete user data on
+  uninstall**, which is why the two names are recorded here side by side.
+
+- **UPGRADE IS INSTALL-OVER, and the app's own migrations are what makes it safe.** The template
+  overwrites the executable in place and does not remove the data directory, so an upgrade is: quit the
+  application, run the newer installer, start it. The database is migrated forward on next start by
+  `internal/infrastructure/database`'s embedded migrations, which are checksum-verified (a changed
+  published migration is refused rather than applied) and forward-only. **A downgrade is NOT supported
+  and not attempted**: an older binary meeting a newer `user_version` would need migrations that do not
+  exist, and refusing is the safe answer.
 - **No code-signing configuration.** `grep -rni "sign\|certificate\|signtool" wails.json package.json build/`
   returns **nothing** (exit status 2, i.e. no match in any of the three inputs). There is no
   `windows.certificate` block, no `signtool` invocation, no `SignTool` step in
