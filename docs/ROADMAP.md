@@ -671,3 +671,35 @@ Codex 必须：
 | Desktop MVP/v0.5 | WP-11 |
 | Release Candidate | WP-12 |
 
+
+---
+
+# 6. WP-12 之后：验收缺口与 v1.0 范围（2026-09-23 起）
+
+WP-12 交付 Release Candidate 之后，工作不再按 WP 序号推进，而按
+`implementation/project-progress-and-remaining-tasks-2026-09-23.md` 的 P0–P4 优先级清单执行。
+**该清单是范围的事实来源**；本节只记录每个优先级当前落在哪里，以及每一项完工后记在 STATUS 的哪一节。
+
+| 优先级 | 内容 | 状态 |
+|---|---|---|
+| P0 | 产品断链：资产生产 UI（面板图链路）、每 Provider 并发上限 | **DONE** — WP-13（STATUS §0q，ADR-0017）、WP-14（STATUS §0r，ADR-0018） |
+| P1 | 验收合同内缺口，十项（FR-030/070/100/110/150/160/170/180、AC-E2E-002/006） | **DONE** — WP-15（STATUS §0s/§0t，ADR-0019） |
+| P2 | 发布工程：Windows 安装包与签名、干净 VM、`go test -race`、CI/远程执行 | 安装包**接线完成、缺 `makensis`**；`-race` **已在本机运行且零数据竞争**（STATUS §0t）；干净 VM 与 CI **本机无法完成，如实记为 OPEN** |
+| P3 | PRD §16 的 v1.0 范围，九项（本地 ONNX embedding、事件图谱可视化、MONOFORM 深度集成、完整资产一致性检查、真实视频 Provider、层级摘要与记忆中心、更完整时间线、PDF 导入、Windows 稳定安装升级） | **逐项成包进行中** — 第 20 项（完整资产一致性检查）由 WP-16 完成（STATUS §0u，ADR-0020）；其余八项各为一个独立包 |
+| P4 | 文档债：TRACEABILITY 过时判定、本清单回填 ROADMAP | **DONE** — WP-15（STATUS §0s）与本节 |
+
+## P3 的执行约定
+
+PRD §16 把 v1.0 的范围写成产品计划而不是欠账，所以这九项**不按 WP 顺序排期**，而是按
+「能独立验证」的次序逐项成包，每包的收尾动作与 WP-01～WP-12 一致：ADR、STATUS 记录、
+变异验证、全量门、独立复审。三项有明确的外部依赖，先记在这里以免后来者重复侦察：
+
+- **本地 ONNX Embedding（第 17 项）**：需要引入 ONNX 运行时依赖与模型资产，是本清单里唯一
+  需要新第三方二进制分发的项；`docs/SECURITY.md` §15 与 SBOM 流程要先覆盖它。
+- **真实视频 Provider（第 21 项）**：需要用户明确授权访问付费 Provider 才能做端到端验收
+  （AGENTS §4.3）；在授权到位之前，本构建的验收只覆盖 Mock 适配器与 AC-MEDIA-001/003。
+- **Windows 稳定安装与升级（第 25 项）**：与 P2 的安装包是同一件事的产品化表述，卡在
+  `makensis` 这一件工具上（STATUS §0s 记录）。
+
+其余六项（事件图谱可视化、MONOFORM 深度集成、层级摘要与记忆中心、更完整时间线、PDF 导入、
+完整一致性检查的剩余规则）没有外部依赖，可按任意次序独立成包。

@@ -913,6 +913,22 @@ export function QualitySection({ projectId, runs, marks, onChanged, onNavigate }
                                                 {t(`studio.quality.source.${finding.source}`, { defaultValue: finding.source })}
                                             </Tag>
                                             <code className="text-xs">{finding.rule}</code>
+                                            {/* FR-110's quality-rule classification. An EMPTY
+                                                category renders nothing rather than a tag: a
+                                                supervisor's finding states none, and every row
+                                                written before the column existed is empty, so
+                                                showing "technical" here would be the UI inventing
+                                                a classification nobody made. */}
+                                            {finding.category ? (
+                                                <Tag
+                                                    data-finding-category={finding.category}
+                                                    color="gold"
+                                                >
+                                                    {t(`studio.quality.category.${finding.category}`, {
+                                                        defaultValue: finding.category,
+                                                    })}
+                                                </Tag>
+                                            ) : null}
                                             {finding.autoFixable ? (
                                                 <Tag color="cyan">{t("studio.quality.autoFixable")}</Tag>
                                             ) : null}

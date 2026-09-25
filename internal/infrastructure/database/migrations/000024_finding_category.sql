@@ -1,0 +1,27 @@
+-- WP-16 (P3-20): FR-110's quality-rule classification reaches the row it belongs to.
+--
+-- The ten categories were prose for six packages and a closed `consistency.Category`
+-- vocabulary for one, and the vocabulary had NO production consumer: `Finding.Category`
+-- was set by the script ruleset and dropped on the way to storage, because this table
+-- had no column for it. `CategoryOf` answered correctly for every rule and nothing ever
+-- asked it. The category is a property of the RULE, so the ruleset that emitted a finding
+-- is the thing that knows it, and this column is what carries the answer to a reader.
+--
+-- ALTER rather than a rebuild: review_issues carries findings a user may already have
+-- read and acted on, and a rebuild for one defaulted column would rewrite every finding
+-- for no gain. The default is EMPTY rather than 'technical', because "" is the honest
+-- answer for a row written before this column existed: those findings were produced by a
+-- supervisor, which states no category, and the ruleset that wrote its own row did not
+-- record one. Reading an old row as 'technical' would be this migration inventing a
+-- classification nobody made — the same distinction 000019's source column drew when it
+-- defaulted to 'llm'.
+--
+-- No CHECK on the values, deliberately, and this is a departure from this schema's usual
+-- habit worth stating: the vocabulary lives in `internal/domain/consistency` and is closed
+-- there, where `IsValidCategory` is what a writer calls. A CHECK here would be a SECOND
+-- copy of the list, and the two would drift the moment a category is added — with the
+-- failure landing on a user's write rather than on the vocabulary test that would have
+-- caught it. The alternative, a CHECK that the ruleset writer maintains, was rejected
+-- because a migration cannot be edited after release and adding an eleventh category
+-- would then need a table rebuild for a string list.
+ALTER TABLE review_issues ADD COLUMN category TEXT NOT NULL DEFAULT '';

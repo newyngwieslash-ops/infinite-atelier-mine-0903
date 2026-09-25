@@ -31,6 +31,13 @@ import (
 // type and its own `Options`; this struct holds both.
 type StoryboardConsistencyChecker struct {
 	checker *appconsistency.Checker
+	// The four reads the asset and continuity rules share, kept so `WithJobFailures` can rebuild the
+	// checker with one more port: `NewChecker` returned a value whose fields are unexported, so a
+	// method that wants to add a port has to hold what it was built from.
+	storyboard appconsistency.StoryboardReader
+	assets     appconsistency.AssetReader
+	script     appconsistency.ScriptReaderSource
+	story      appconsistency.StoryStateReader
 	// final is the Final Ruleset of AGENT_CONTRACTS section 11.4, nil in a build composed without a
 	// final reader — in which case `final_episode` returns no findings rather than failing, which is
 	// the same answer every stage this build has no rules for gives.
@@ -60,7 +67,11 @@ func NewStoryboardConsistencyChecker(
 			Script:     script,
 			Story:      story,
 		}),
-		final: nil,
+		storyboard: storyboard,
+		assets:     assets,
+		script:     script,
+		story:      story,
+		final:      nil,
 	}
 }
 
@@ -75,6 +86,30 @@ func (c *StoryboardConsistencyChecker) WithFinalRuleset(reader appconsistency.Fi
 		return c
 	}
 	c.final = appconsistency.NewFinalRuleset(appconsistency.FinalOptions{Reader: reader})
+	return c
+}
+
+// WithJobFailures returns the same checker with the safety rule's job read attached.
+//
+// A separate method for the reason the other two are: this read is over the JOB table, which has
+// nothing to do with a board's rows or a script's structure, and a constructor parameter would
+// invite a caller to think the rulesets came as a set. Without it the asset rules still run — the
+// safety rule is the one that goes quiet, which is the documented answer for a rule whose read is
+// absent.
+func (c *StoryboardConsistencyChecker) WithJobFailures(reader appconsistency.JobFailureReader) *StoryboardConsistencyChecker {
+	// The reader is handed to the CHECKER rather than held here, because the rule it serves belongs
+	// to the asset ruleset: this type wires ports, and which ruleset consumes one is the application
+	// layer's business.
+	if c == nil || c.checker == nil || reader == nil {
+		return c
+	}
+	c.checker = appconsistency.NewChecker(appconsistency.Options{
+		Storyboard: c.storyboard,
+		Assets:     c.assets,
+		Script:     c.script,
+		Story:      c.story,
+		Jobs:       reader,
+	})
 	return c
 }
 

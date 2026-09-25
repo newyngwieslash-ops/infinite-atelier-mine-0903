@@ -29,6 +29,13 @@ const (
 // malformed request cannot make a single call write an unbounded number of rows.
 const MaxBatchReviewIssues = 2000
 
+// maxReviewCategoryLength bounds a finding's category string.
+//
+// Sixty characters: FR-110's categories are single words, and the bound exists so a caller cannot
+// store a paragraph in a column a UI shows as a tag. It is not a vocabulary check — that lives with
+// the vocabulary, in `internal/domain/consistency`, and the application layer does not import it.
+const maxReviewCategoryLength = 60
+
 // NewService builds the workflow service.
 func NewService(options Options) *Service {
 	return &Service{
@@ -417,6 +424,15 @@ type ReviewIssueInput struct {
 	// supervisor's, which is what every finding written before WP-10 was — the column's own default,
 	// set so an old row keeps exactly the meaning it had.
 	Source IssueSource
+	// Category is FR-110's quality-rule classification, stated by a DETERMINISTIC ruleset and left
+	// empty by a supervisor, which does not classify its own findings.
+	//
+	// It travels as a plain string because the vocabulary lives in `internal/domain/consistency`,
+	// which this package must not import: the domain's rules are a peer of this one, not a dependency
+	// of it. The value is checked against that vocabulary by the adapter that owns the mapping, and
+	// what this layer enforces is the shape — a category long enough to be a paragraph is refused
+	// here, and a category that is not in the vocabulary is refused there.
+	Category string
 }
 
 // RecordReviewRequest stores one review report and its findings.
@@ -490,6 +506,16 @@ func (s *Service) RecordReview(ctx context.Context, request RecordReviewRequest)
 		if !IsValidIssueSource(source) {
 			return workflow.ReviewReport{}, nil, workflow.InvalidError("The finding's source is not recognised.")
 		}
+		// The category is TRIMMED and length-bounded but not validated as vocabulary here, and the
+		// division is deliberate: this layer must not import the domain package that owns the list,
+		// and a second copy of ten constants is a second list to keep in step. What a reader gets
+		// instead is the vocabulary test in `internal/application/consistency`, which asserts every
+		// rule this build ships has a stated category — the answer a wrong string here would have to
+		// get past to reach a row.
+		category := strings.TrimSpace(input.Category)
+		if len(category) > maxReviewCategoryLength {
+			return workflow.ReviewReport{}, nil, workflow.InvalidError("The finding's category is too long.")
+		}
 		issue := workflow.ReviewIssue{
 			ID:             issueID,
 			ReviewReportID: report.ID,
@@ -504,6 +530,7 @@ func (s *Service) RecordReview(ctx context.Context, request RecordReviewRequest)
 			EvidenceJSON:   input.EvidenceJSON,
 			AutoFixable:    input.AutoFixable,
 			Source:         string(source),
+			Category:       category,
 			Status:         workflow.IssueOpen,
 			CreatedAt:      now,
 		}

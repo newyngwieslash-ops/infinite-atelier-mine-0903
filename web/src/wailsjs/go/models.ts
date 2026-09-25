@@ -4028,6 +4028,7 @@ export namespace desktop {
 	    resolvedBy?: string;
 	    resolvedAt?: string;
 	    createdAt: string;
+	    category?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new ReviewIssueDTO(source);
@@ -4052,6 +4053,7 @@ export namespace desktop {
 	        this.resolvedBy = source["resolvedBy"];
 	        this.resolvedAt = source["resolvedAt"];
 	        this.createdAt = source["createdAt"];
+	        this.category = source["category"];
 	    }
 	}
 	

@@ -121,7 +121,7 @@
 17. 本地多语言 ONNX Embedding / 可选 sqlite-vec（连带解决"最新 500 条候选窗"召回限界）
 18. 事件图谱**可视化**（现在是列表视图）
 19. MONOFORM 深度双向集成
-20. 完整资产一致性检查（全部规则集的确定性半边 + Safety/Cost）
+20. ~~完整资产一致性检查（全部规则集的确定性半边 + Safety/Cost）~~ **DONE — WP-16, 2026-09-25 (STATUS §0u, ADR-0020).** The ASSET ruleset's two missing clauses (派生关系, 文件存在和类型) are rules over the versions a board cites; Safety and Cost each have an emitter; the classification reaches `review_issues.category` and the quality centre. **The file rule's first version was WRONG and two existing tests proved it** — it reported every cited version with no file, which is the asset-bible state rather than a fault; it now anchors on `generation_job_id`. The original text follows. 完整资产一致性检查（全部规则集的确定性半边 + Safety/Cost）
 21. 视频首尾帧与批量镜头生成（对接真实视频 Provider）
 22. 层级摘要与记忆中心 UI、召回评测集
 23. 更完整时间线、音效建议、BGM 导入、简单混音、多角色声线映射
@@ -132,7 +132,7 @@
 
 26. TRACEABILITY 六行过时判定：FR-001/FR-020/FR-030/FR-170、AC-SCRIPT"Not started"、
     AC-PROD"Not started"。
-27. （可选）把本清单回填进 ROADMAP 的"后续版本"节或新增 WP-13 概念页。
+27. **DONE — WP-16 (see STATUS §0u).** 把本清单回填进 ROADMAP 的"后续版本"节：ROADMAP 的 v1.0 节现在指向本文件的 P3 清单，并逐项写明 P1/P2/P4 已完成项与本清单的关系。
 
 ---
 

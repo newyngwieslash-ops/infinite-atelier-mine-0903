@@ -1,11 +1,12 @@
 # Implementation Status
 
-> Last updated: 2026-09-24
+> Last updated: 2026-09-25
 > Product: Infinite Atelier Core + Drama Production Pack
-> Current work package: **WP-15 — the P1–P4 backlog**
-> Status: **IN PROGRESS - TEN items are CLOSED (sections 0s and 0t). 40 mutations,
-> 40/40 killed; the full gate passes and so does the race detector. What remains is named in section
-> 0s rather than implied.**
+> Current work package: **WP-16 — P3 item 20, the complete asset ruleset**
+> Status: **COMPLETE (section 0u). 12 mutations, 12/12 killed; the full gate passes.**
+> **WP-15 remains COMPLETE for its scope**: P1's ten items are all closed (section 0s), so the
+> acceptance contract has no outstanding clause it can close. The remaining P3 items are named in
+> ROADMAP section 6, which is now their single home.
 >
 > **WP-14 remains COMPLETE (section 0r).** `PRD.md:1168`'s 「同供应商并发不超过配置上限」 is enforced:
 > migration 000022 adds `provider_configs.max_concurrency` (0 = unlimited, so every upgrade behaves
@@ -44,6 +45,86 @@
 > `docs/implementation/project-progress-and-remaining-tasks-2026-09-23.md`, where the P0 section is
 > now closed and **P1 to P4 are unchanged** — P1 opens with FR-100's explicit-stage-dependency
 > ruling, which is a product decision rather than a code task.
+
+# 0u. WP-16: the complete asset ruleset, and two categories that had no emitter (2026-09-25)
+
+WP-16 works **P3 item 20** (完整资产一致性检查) of the backlog, and it is the first of PRD section 16's
+v1.0 items to land after the MVP. ADR-0020 carries the reasoning; this section records what changed and
+what building it found.
+
+## What the reconnaissance established, and what each finding became
+
+A read-only pass was run before any code, and its four findings ARE the package:
+
+- **`PROP_CONTINUITY` and `LOCATION_CONTINUITY` were implemented and had never been shown to FIRE.**
+  Every fixture in the repository cited a `costume` or `reference` usage, so neither rule's positive
+  path had ever executed. Both now have a positive AND a negative case, so a rule that fired on
+  everything fails too. A rule with no positive case cannot be told apart from a stub.
+- **`REVISION_BUDGET_SPENT` and `CONTENT_RATING` were category-map KEYS with nothing behind them** —
+  one hit each in the whole repository. Safety and Cost now have an emitter each.
+- **`Finding.Category` was set by one ruleset and dropped by storage.** `review_issues` had no column,
+  so `CategoryOf` — the function whose entire purpose is this question — had no production caller
+  outside one test file. Migration 000024 adds the column; the merge fills it; the quality centre
+  shows it as a tag.
+- **`TestCheckedStagesMatchTheSwitch` did not exist**, though `consistency_checker.go`'s own comment
+  promised it by name. It exists now.
+
+## CLOSED, with the defect the work found
+
+**The ASSET ruleset's mechanical half — two new rules, and one wrong first version.** AGENT_CONTRACTS
+section 11.2 lists eight clauses and three were answered by no code. `ASSET_LINEAGE` reports a version
+whose `based_on_version_id` or `parent_asset_version_id` names a version that does not exist — both
+columns are TEXT with no foreign key, so a dangling parent is storable. `ASSET_FILE_PRESENT` reports a
+version whose file is of a type its asset cannot be.
+
+**THE FIRST VERSION OF THE FILE RULE WAS WRONG, AND TWO EXISTING TESTS SAID SO.** It reported every
+cited version with no file as `critical`. `TestConsistencyACleanBoardReportsNothing` and AC-E2E-004's
+repair walk both failed immediately, and both were right: an asset bible DEFINES an asset before any
+art exists, so a version with no file is the ordinary state of a project partway through — the rule as
+written would have blocked every board in that state. The anchor that makes it sharp is
+`generation_job_id`, the column that says "these bytes were produced". **The tests were kept as they
+were and the rule was rewritten**, which is the only direction that was available.
+
+**Safety and Cost, each with the shape its storage allows.** `CONTENT_POLICY_REFUSED` reads
+`generation_jobs.error_code`, which the worker sets from the provider's own category — the VENDOR half
+of 「内容与供应商规则」, and the half with a column behind it. It reports the consumer the job was
+submitted for rather than the job, because a finding must address something a user can open.
+`REVISION_BUDGET_SPENT` is a function taking the count and the budget the engine already holds
+(`Engine.RevisionBudget`, newly exported); it is `minor` and not a blocker, because a spent budget is a
+fact a person needs rather than a defect in the artifact. **It reports the BUDGET and not a cost
+estimate, because this build prices nothing** — no rate column, no cost join — and a rule that
+multiplied tokens by a guess would put a number in front of a user that nobody stands behind.
+`CONTENT_RATING` **stays** category-only and its entry says why: `project_settings.content_rating` is
+free text, and a rule over free text would be checking the user's spelling.
+
+## Verification
+
+| command | result |
+|---|---|
+| `go test ./... -count=1` | **PASS** - 57 packages ok, 0 failed |
+| `npm test` / `npm run typecheck` | **PASS** - 102 tests, 0 failures; typecheck clean |
+| `sh scripts/verify.sh` | **PASS**, exit 0 (25 Playwright, security scans over 654 files, all fixture checks, SBOM) |
+| `wails build` | **PASS** - run explicitly; the verify script SKIPped it because this shell's PATH lacked the CLI, which is a PATH artifact and not a missing capability |
+| mutations | **12, 12/12 killed**, each restored byte-identically and the restore verified by diff |
+
+**Three of the twelve mutations SURVIVED the first run and each was a real gap**, recorded here because
+the pattern is the point: the merge dropped the category with every test green (nothing asserted the
+field the merge is the only writer of); the workflow service's row construction was untested because my
+fixture built `ReviewIssue` rows itself and stepped over the exact line under test; and the budget rule
+had no unit test at all, so replacing its comparison with a weaker one changed nothing. The first two
+were fixtures that had quietly bypassed the code they were meant to observe — the same failure mode as a
+test that asserts only "an error occurred". All three were fixed by exercising the production path, and
+all three mutations are now killed.
+
+## STILL OPEN, named
+
+**P3's remaining eight items**, unchanged by this package: 17 (local ONNX embeddings), 18 (event-graph
+visualisation), 19 (MONOFORM deep integration), 21 (real video providers — needs paid-provider
+authorisation), 22 (hierarchical summaries and the memory centre), 23 (fuller timeline with effects and
+mixing), 24 (PDF import), 25 (stable Windows install/upgrade — needs `makensis`).
+
+The ROADMAP's new section 6 now maps every P-item to where it stands, so this list has one home rather
+than two.
 
 # 0t. WP-15: `-race` runs on this host, and found no races (2026-09-24)
 
@@ -246,67 +327,13 @@ a package of its own.
 
 **P4 - item 27**, backfilling this backlog into the ROADMAP's later-version section.
 
-# 0t. WP-15: `-race` runs on this host, and found no races (2026-09-24)
+## A duplicate of this section was removed (WP-16, 2026-09-25)
 
-**The item every package since WP-01 recorded as an ENVIRONMENT FAILURE is now RUNNING, and its
-verdict is that this codebase has no data races.** The finding is the environment fact, not a bug —
-and it is worth recording exactly, because six packages of reports said the same thing and all six
-were right about the symptom and wrong about the cause.
-
-## What was actually wrong
-
-`go test -race` failed with `cc1.exe: 64-bit mode not compiled in`. That is the 32-bit MinGW GCC on
-`PATH` refusing to compile the race runtime's C, and every report since WP-01 read it as "this host
-has no 64-bit C toolchain". **It does**: `/c/msys64/mingw64/bin/gcc.exe` is GCC 12.2.0 (Rev3, MSYS2),
-and it compiles a cgo probe and the race runtime without complaint.
-
-The earlier attempt with that compiler also failed, which is what made the 32-bit conclusion look
-confirmed. It was a **stale `runtime/cgo` build artifact in the cache**: the first `-race` attempt
-populated `GOCACHE` with a cgo object built by the wrong compiler, and every later attempt reused it
-and failed identically. The probe below is what settled it — a five-line cgo program built by hand,
-outside the package graph:
-
-```bash
-export CC=/c/msys64/mingw64/bin/gcc.exe PATH="/c/msys64/mingw64/bin:$PATH" CGO_ENABLED=1
-go run .   # a cgo call returning 42: prints 42
-```
-
-## The run, and its verdict
-
-```bash
-GOTOOLCHAIN=go1.25.0 GOSUMDB=sum.golang.org CC=/c/msys64/mingw64/bin/gcc.exe   CGO_ENABLED=1 go test -race ./... -count=1
-```
-
-**55 packages pass under the race detector. Zero `WARNING: DATA RACE` reports.** The packages that
-carry this project's concurrency — the job scheduler and its worker pool, the workflow transitions,
-the stage pipeline — are among them, so the concurrency claims that were previously "from reading"
-now have a detector's evidence behind them.
-
-## What still fails, and why it is not a defect
-
-Two things fail and neither is a race:
-
-- `TestWP12CanvasMoveNodesCeiling` measures a 5,000-position `MoveNodes` at **7750 ms against its
-  6000 ms bound**. The bound is a PERFORMANCE assertion with no race runtime in it, and the race
-  runtime slows every operation by roughly an order of magnitude — so a bound calibrated without it
-  is not a bound the detector can meet.
-- `TestWP12RecordReadsDoNotQueryPerRow` then exceeds the package's 10-minute test timeout, for the
-  same reason: it is a scale test over 10,000 rows and the detector multiplies its cost.
-
-**So `-race` is usable on this host for correctness, and its timing-sensitive tests need `-race`
-bounds of their own.** The evidence for that reading is in the numbers rather than in an argument:
-the same packages pass without `-race` at their stated bounds, and the two failures are both
-measurements rather than assertions.
-
-## What this changes
-
-- `ADR-0002`'s Accepted status was held up by "supported-platform race evidence". The evidence now
-  exists for Windows/amd64 with the MSYS2 toolchain, and the ADR is updated to name the command.
-- **Every "concurrency claims are from reading" caveat in this file is superseded by this section.**
-  The caveats were honest when written; they are now out of date, and the supersession is recorded
-  here rather than by editing six historical sections.
-- The command is recorded in `docs/INSTALL_AND_SIGNING.md`'s toolchain section so the next reader does
-  not repeat the 32-bit conclusion.
+This section existed TWICE in this file — an earlier, shorter draft and this one — and a WP-16 pass
+found it while inserting a new section above. The two were compared paragraph by paragraph: every
+paragraph of the shorter draft appears in this one, so it carried no fact this section lacks. It was
+the WP-15 draft that a later edit superseded without deleting. The stale heading is left out rather
+than quoted twice so a grep for it lands here, on the surviving text.
 
 # 0s. WP-15: the P1 backlog is open — five items CLOSED, six remaining (2026-09-24)
 

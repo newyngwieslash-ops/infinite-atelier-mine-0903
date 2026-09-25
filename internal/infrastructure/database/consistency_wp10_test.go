@@ -179,6 +179,10 @@ func (r assetRepoConsistencyReader) GetAsset(ctx context.Context, id string) (as
 	return r.repo.GetAsset(ctx, id)
 }
 
+func (r assetRepoConsistencyReader) ListFilesWithTypes(ctx context.Context, versionID string) ([]appconsistency.AssetFile, error) {
+	return r.repo.ListFilesWithTypes(ctx, versionID)
+}
+
 var _ appconsistency.AssetReader = assetRepoConsistencyReader{}
 
 // storyRepoConsistencyReader adapts the story repository to the checker's story port.

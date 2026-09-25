@@ -696,6 +696,15 @@ type ReviewIssue struct {
 	ResolvedBy string
 	ResolvedAt time.Time
 	CreatedAt  time.Time
+	// Category is FR-110's quality-rule classification, as a plain string because this domain
+	// does not own the vocabulary — `internal/domain/consistency` does, and a second copy here
+	// would be a second list to keep in step.
+	//
+	// It is empty for a supervisor's finding, which states no category, and for every row
+	// written before migration 000024 added the column. Empty is not "technical": a reader
+	// showing categories must be able to tell "nobody classified this" from "classified as
+	// technical", and defaulting would erase exactly that difference.
+	Category string
 }
 
 // Validate checks a review issue before it is stored.

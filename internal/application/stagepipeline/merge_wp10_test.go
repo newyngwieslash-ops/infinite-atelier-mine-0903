@@ -139,6 +139,30 @@ func TestMergeIssuesKeepsBothSourcesAndMarksThem(t *testing.T) {
 	if own.EvidenceJSON != "" {
 		t.Fatalf("a finding with no evidence encodes to %q", own.EvidenceJSON)
 	}
+	// THE CATEGORY SURVIVES THE MERGE, which is FR-110's classification reaching the row it belongs to.
+	// A mutation review found this unprotected: dropping `Category` from the merge left every test
+	// green, because nothing asserted the field the merge is the only writer of.
+	if pair.Category == "" {
+		t.Fatalf("the deterministic finding lost its category in the merge: %+v", pair)
+	}
+	// The category is the RULE's, taken from the vocabulary rather than copied off the finding: the two
+	// are the same value here, and the assertion names both so a change to either is caught.
+	if pair.Category != string(consistency.CategoryOf(pair.Rule)) {
+		t.Fatalf("the merged category is %q and the rule's own classification is %q",
+			pair.Category, consistency.CategoryOf(pair.Rule))
+	}
+	// The finding above states NO category, so this assertion is about the FALLBACK: the six
+	// storyboard rules never set the field, and without `CategoryOf` they would reach the database
+	// with an empty one while the classification map went unread. A mutation dropping the merge's
+	// category left every test green before this line existed.
+	if consistency.RuleCostumeContinuity != pair.Rule {
+		t.Fatalf("the fixture changed: %q", pair.Rule)
+	}
+	// A supervisor's finding states no category, and the merge must NOT invent one: empty is what a
+	// reader needs to tell "nobody classified this" from "classified as technical".
+	if own.Category != "" {
+		t.Fatalf("the supervisor's finding was given the category %q", own.Category)
+	}
 }
 
 // TestMergeIssuesDedupesOnTheRuleAndThePlace is the key's own boundary.

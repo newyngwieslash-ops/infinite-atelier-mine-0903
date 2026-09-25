@@ -672,6 +672,30 @@ func reviseOrWait(revisions, budget int) workflow.StageStatus {
 	return workflow.StageWaitingUser
 }
 
+// RevisionBudget reports how many automatic revisions an attempt has had and what its stage allows.
+//
+// It is EXPORTED because the review report needs both numbers: FR-110's cost category is 「不必要的
+// 高成本重试」, and the pipeline's answer to it is a finding that states the attempt has spent its
+// budget. Until this existed the engine knew the pair and nothing outside could ask for it, so the
+// only place the fact appeared was a refusal the user met by trying something.
+//
+// The error is NOT flattened into a zero count, for the reason `revisionCount` states: a caller that
+// cannot count must be able to tell that from an attempt with no revisions.
+func (e *Engine) RevisionBudget(ctx context.Context, stageRunID string) (revisions int, budget int, err error) {
+	if !e.Available() {
+		return 0, 0, agent.UnavailableError()
+	}
+	stage, _, err := e.stageFor(ctx, stageRunID)
+	if err != nil {
+		return 0, 0, err
+	}
+	count, err := e.revisionCount(ctx, stageRunID)
+	if err != nil {
+		return 0, 0, err
+	}
+	return count, StagePolicyFor(stage.Stage).MaxAutoFix, nil
+}
+
 // revisionCount reports how many automatic revisions an attempt has had.
 //
 // A missing counter is a refusal rather than a zero: an engine that cannot count

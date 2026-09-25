@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	agentruntime "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/agentruntime"
+	appconsistency "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/consistency"
 	appworkflow "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/workflow"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/agent"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/consistency"
@@ -21,9 +22,9 @@ import (
 // skipping the review its policy requires, which is not something a caller can see in the
 // result.
 type Service struct {
-	engine   *agentruntime.Engine
+	engine *agentruntime.Engine
 	// state reads a run's stages for the dependency gate. Production passes the engine.
-	state StageStateReader
+	state    StageStateReader
 	runtime  *agentruntime.Runtime
 	workflow *appworkflow.Service
 	assembly SkillSource
@@ -399,6 +400,29 @@ func (s *Service) RunSupervision(ctx context.Context, request SupervisionRequest
 	// dedupes on (rule, entity, field) and keeps the more severe, which is what makes the report's
 	// `source` marks a partition rather than an overlap.
 	merged := MergeIssues(deterministic, issues)
+	// THE COST CATEGORY, which has no ruleset of its own: FR-110's 「不必要的高成本重试」 is a fact
+	// about the ATTEMPT rather than about its artifact, so it is asked of the engine that enforces the
+	// budget rather than of a reader over the board. An engine that cannot count refuses, and a
+	// refusal leaves the finding out rather than reporting a budget nobody established.
+	if revisions, budget, budgetErr := s.engine.RevisionBudget(ctx, attempt.ID); budgetErr == nil {
+		if finding, spent := appconsistency.RevisionBudgetFinding(attempt.ID, revisions, budget); spent {
+			merged = append(merged, appworkflow.ReviewIssueInput{
+				Rule:        finding.Rule,
+				Severity:    finding.Severity,
+				EntityType:  finding.EntityType,
+				EntityID:    finding.EntityID,
+				Field:       finding.Field,
+				Problem:     finding.Problem,
+				Suggestion:  finding.Suggestion,
+				AutoFixable: finding.AutoFixable,
+				Category:    string(finding.Category),
+				Source:      appworkflow.IssueSourceDeterministic,
+			})
+			// The verdict follows the rule that already decides it: a finding this severity does not
+			// block, so `passed` is unchanged — the report says the budget is spent rather than
+			// failing a review the findings already passed.
+		}
+	}
 	// The verdict and the severity come from FUNCTIONS rather than from expressions written here, so
 	// the test that grades them calls the same code the pipeline does. A rule stated twice — once in
 	// the pipeline and once in a test that copies it — is a rule that can drift without either side
@@ -413,11 +437,11 @@ func (s *Service) RunSupervision(ctx context.Context, request SupervisionRequest
 		report.Summary = summary
 	}
 	stored, storedIssues, err := s.workflow.RecordReview(ctx, appworkflow.RecordReviewRequest{
-		StageRunID:        attempt.ID,
-		SupervisorKey:     agents.Supervision,
-		RulesetVersion:    report.RulesetVersion,
-		Passed:            passed,
-		Severity:          severity,
+		StageRunID:     attempt.ID,
+		SupervisorKey:  agents.Supervision,
+		RulesetVersion: report.RulesetVersion,
+		Passed:         passed,
+		Severity:       severity,
 		// Score and Grade travel with the rest of the verdict. They were absent from this call for the
 		// same reason they were absent from the reader: the field existed at every layer and nothing
 		// carried it, so `review_reports.score` was always NULL and `grade` always empty — while the
@@ -894,6 +918,14 @@ func MergeIssues(deterministic []consistency.Finding, issues []appworkflow.Revie
 			Suggestion:   finding.Suggestion,
 			EvidenceJSON: encodeFindingEvidence(finding.Evidence),
 			AutoFixable:  finding.AutoFixable,
+			// The category comes from the RULE when the finding did not state one, which is
+			// FR-110's own reading of it: "every CHARACTER_CONTINUITY finding is a character
+			// problem" is a property of what the rule CHECKS, so the mapping belongs to the
+			// vocabulary and `CategoryOf` is what answers it. A ruleset that states a category
+			// wins, because it knows something the map cannot — but the six storyboard rules state
+			// none, and before this line their findings reached `review_issues` with an empty
+			// category while `CategoryOf` had no production caller anywhere in the build.
+			Category: findingCategory(finding),
 			// The mark section 11.4 asks for. It is what lets the UI group the two kinds and what
 			// lets a reader tell a claim from a computation.
 			Source: appworkflow.IssueSourceDeterministic,
@@ -915,6 +947,24 @@ func MergeIssues(deterministic []consistency.Finding, issues []appworkflow.Revie
 		merged = append(merged, issue)
 	}
 	return merged
+}
+
+// findingCategory is the classification a finding is reported under.
+//
+// It PREFERS what the ruleset stated and falls back to the rule's own classification, which is the
+// vocabulary in `internal/domain/consistency`. The fallback is not a convenience: the storyboard
+// ruleset's six rules do not state one, so without it every finding it produces would be stored with
+// an empty category while the classification map — the thing that exists to answer this question —
+// went unread outside its own unit test.
+//
+// An unknown rule falls back to TECHNICAL rather than to empty, which is `CategoryOf`'s own documented
+// default: "the artifact is malformed in a way this ruleset can see" is the honest answer for a rule
+// nobody registered, and it is a better one than silence.
+func findingCategory(finding consistency.Finding) string {
+	if stated := strings.TrimSpace(string(finding.Category)); stated != "" {
+		return stated
+	}
+	return string(consistency.CategoryOf(finding.Rule))
 }
 
 // issueKey is the identity a merge dedupes on.

@@ -1525,6 +1525,21 @@ export default {
                 deterministic: "deterministic",
                 llm: "supervisor",
             },
+            // FR-110's ten quality-rule categories. An empty category shows no tag: a supervisor
+            // states none and every row written before the column existed is empty, so rendering
+            // "technical" would be the UI inventing a classification nobody made.
+            category: {
+                narrative: "Narrative",
+                fidelity: "Fidelity",
+                character: "Character",
+                asset: "Asset",
+                spatial: "Spatial",
+                temporal: "Temporal",
+                visual: "Visual",
+                technical: "Technical",
+                safety: "Content & vendor",
+                cost: "Cost",
+            },
         },
         // WP-11's three sections: video, audio and timeline. Every family's wording follows what the
         // core can actually answer — the timeline's audio state stops at the shot, and a subtitle

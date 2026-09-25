@@ -60,6 +60,37 @@ const (
 	// RuleAssetApproved is section 11.2's "Approved Version": a cited asset version must be the one
 	// currently in force.
 	RuleAssetApproved = "ASSET_APPROVED_VERSION"
+	// RuleAssetLineage is section 11.2's "派生关系": a version that names the version it was revised
+	// from or derived from must name one that exists.
+	//
+	// The two columns are TEXT with no foreign key — `based_on_version_id` and
+	// `parent_asset_version_id` — so a dangling parent is storable, and a lineage a reader cannot
+	// follow is a version whose history is lost.
+	RuleAssetLineage = "ASSET_LINEAGE"
+	// RuleAssetFilePresent is section 11.2's "文件存在和类型": a cited version must have bytes, and
+	// the bytes must be of the kind the asset claims to be.
+	//
+	// A version with an approved status and no file is the shape a legacy import and an interrupted
+	// attach both produce, and nothing else in this build reports it: the approved-version rule
+	// compares identifiers, and the file exists check in the FINAL ruleset runs at export time, which
+	// is far too late to be the first place a user hears about it.
+	RuleAssetFilePresent = "ASSET_FILE_PRESENT"
+	// RuleRevisionBudgetSpent is FR-110's Cost category: a stage whose automatic revision budget is
+	// spent, so the next failure is a person's to decide.
+	//
+	// It reports the BUDGET rather than a cost estimate, because this build prices nothing: there is
+	// no currency column, no per-model rate and no usage-billing join, and a rule that multiplied
+	// token counts by a guess would be inventing the number a user acts on. What a join can establish
+	// is that more automatic work on this attempt would be work the pipeline already decided against
+	// — which is the substance of 「不必要的高成本重试」.
+	RuleRevisionBudgetSpent = "REVISION_BUDGET_SPENT"
+	// RuleContentPolicyRefused is FR-110's Safety category, first half: a generation job on this
+	// artifact failed because a provider's content policy refused it.
+	//
+	// The category's own name in the PRD is 「内容与供应商规则」 — content AND VENDOR rules — and this
+	// is the vendor half, which is the half that has storage behind it: the job's error category is a
+	// column (`generation_jobs.error_code`), set by the worker from the provider's refusal.
+	RuleContentPolicyRefused = "CONTENT_POLICY_REFUSED"
 )
 
 // CategoryOf returns the category a rule's findings belong to.
@@ -98,6 +129,12 @@ var ruleCategories = map[string]Category{
 	RuleShotCoverage:       CategoryNarrative,
 	RuleDuration:           CategoryTemporal,
 	RuleAssetApproved:      CategoryAsset,
+	// The ASSET ruleset's two additions (AGENT_CONTRACTS 11.2's mechanical half). They are declared
+	// as constants beside the rest because both are emitted by the storyboard checker over the asset
+	// repository, which is where section 11.2's clauses are answerable at all: the asset stage has no
+	// artifact of its own, so its rules run against the board that cites the assets.
+	RuleAssetLineage:     CategoryAsset,
+	RuleAssetFilePresent: CategoryAsset,
 	// The SCRIPT ruleset's three (AGENT_CONTRACTS 11.1's mechanical half). Their identifiers are
 	// declared in the application package's ruleset, where the rules live, and registered HERE
 	// because the classification is this package's vocabulary: a rule that named its category at its
@@ -105,11 +142,16 @@ var ruleCategories = map[string]Category{
 	"SCRIPT_DURATION":          CategoryTemporal,
 	"LOCKED_FIELD_PRESENT":     CategoryFidelity,
 	"REMOVED_EVENT_STILL_SHOT": CategoryFidelity,
-	// FR-110's 「不必要的高成本重试」. The budget rule's finding is the report a later version of
-	// this file adds; the category exists now because the classification is the vocabulary and the
-	// rule is a consumer of it.
-	"REVISION_BUDGET_SPENT": CategoryCost,
-	// Content and vendor rules, which no deterministic rule can decide but a report can classify.
+	// FR-110's 「不必要的高成本重试」 and the vendor half of 「内容与供应商规则」. These two were
+	// category-only keys until WP-16: the classification existed and no rule emitted it, which is
+	// what the entries now have behind them.
+	RuleRevisionBudgetSpent:  CategoryCost,
+	RuleContentPolicyRefused: CategorySafety,
+	// Content rules, which no deterministic rule can decide but a report can classify. This one
+	// remains category-only, and saying so is the point: a project STATES a content rating and
+	// nothing compares an artifact against it, because the rating vocabulary is free text
+	// (`project_settings.content_rating` is TEXT) and a rule over free text would be checking the
+	// user's spelling.
 	"CONTENT_RATING": CategorySafety,
 }
 

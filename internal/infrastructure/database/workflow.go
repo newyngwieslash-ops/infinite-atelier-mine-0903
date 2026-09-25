@@ -351,8 +351,8 @@ const reviewSelectColumns = `SELECT id, stage_run_id, supervisor_key, ruleset_ve
 	passed, severity, recommended_action, summary, created_at FROM review_reports`
 
 const reviewIssueSelectColumns = `SELECT id, review_report_id, rule, severity, entity_type, entity_id,
-	location, field, problem, suggestion, evidence_json, auto_fixable, source, status, resolved_by, resolved_at,
-	created_at FROM review_issues`
+	location, field, problem, suggestion, evidence_json, auto_fixable, source, category, status, resolved_by,
+	resolved_at, created_at FROM review_issues`
 
 // CreateReport writes a report and its issues in one transaction, so a report
 // is never stored without the findings it is about.
@@ -378,13 +378,14 @@ func (r *WorkflowRepository) CreateReport(ctx context.Context, report workflow.R
 		for _, issue := range issues {
 			if _, err := repo.conn().ExecContext(ctx, `INSERT INTO review_issues
 				(id, review_report_id, rule, severity, entity_type, entity_id, location, field,
-				 problem, suggestion, evidence_json, auto_fixable, source, status, resolved_by, resolved_at,
-				 created_at)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				 problem, suggestion, evidence_json, auto_fixable, source, category, status, resolved_by,
+				 resolved_at, created_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 				issue.ID, issue.ReviewReportID, issue.Rule, string(issue.Severity), issue.EntityType,
 				issue.EntityID, issue.Location, issue.Field, issue.Problem, issue.Suggestion,
-				issue.EvidenceJSON, boolInt(issue.AutoFixable), sourceOf(issue.Source), string(issue.Status),
-				issue.ResolvedBy, formatTime(issue.ResolvedAt), formatTime(issue.CreatedAt)); err != nil {
+				issue.EvidenceJSON, boolInt(issue.AutoFixable), sourceOf(issue.Source), issue.Category,
+				string(issue.Status), issue.ResolvedBy, formatTime(issue.ResolvedAt),
+				formatTime(issue.CreatedAt)); err != nil {
 				if isUniqueViolation(err) {
 					return workflow.ConflictError("A review issue with that id already exists.")
 				}
@@ -682,8 +683,8 @@ func scanIssue(row rowScanner) (workflow.ReviewIssue, error) {
 	var autoFixable int
 	if err := row.Scan(&issue.ID, &issue.ReviewReportID, &issue.Rule, &severity, &issue.EntityType,
 		&issue.EntityID, &issue.Location, &issue.Field, &issue.Problem, &issue.Suggestion,
-		&issue.EvidenceJSON, &autoFixable, &issue.Source, &status, &issue.ResolvedBy, &resolvedAt,
-		&createdAt); err != nil {
+		&issue.EvidenceJSON, &autoFixable, &issue.Source, &issue.Category, &status, &issue.ResolvedBy,
+		&resolvedAt, &createdAt); err != nil {
 		return workflow.ReviewIssue{}, err
 	}
 	issue.Severity = workflow.Severity(severity)

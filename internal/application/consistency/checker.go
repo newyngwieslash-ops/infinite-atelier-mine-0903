@@ -27,6 +27,8 @@ type Checker struct {
 	assets       AssetReader
 	scriptSource ScriptReaderSource
 	story        StoryStateReader
+	// jobs is FR-110's SAFETY category's read, optional like `assets` and `story`.
+	jobs JobFailureReader
 }
 
 // StoryboardReader reads one board's rows and the version they belong to.
@@ -45,6 +47,30 @@ type AssetReader interface {
 	// GetAsset returns one asset, whose CurrentApprovedVersionID is what "in force" means
 	// (DOMAIN_MODEL section 8.4).
 	GetAsset(ctx context.Context, id string) (asset.Asset, error)
+	// ListFiles returns the files linked to one asset version, with what section 11.2's
+	// "文件存在和类型" compares: whether there are any, what kind they are, and how big.
+	//
+	// It is a method here rather than a port of its own because the question is only ever asked about
+	// a version another rule in this file already has in hand, and a second port would make the
+	// composition root wire the same repository twice for one clause.
+	ListFilesWithTypes(ctx context.Context, versionID string) ([]AssetFile, error)
+}
+
+// AssetFile is one file link with the facts the asset rules compare.
+//
+// It is a VIEW rather than `asset.File`, which carries the link's identity and nothing about the
+// bytes: the type and the size live on `file_objects`, one join away, and a rule that had to make a
+// second call per file would either do that once per row or carry a map of hashes to mime types that
+// nothing invalidates. The adapter reads the join; this type is what it hands back.
+type AssetFile struct {
+	Hash string
+	Role asset.FileRole
+	// MIMEType and SizeBytes come from the file object the link names, empty and zero when the
+	// object is missing — which is itself a state the file-present rule reports rather than treats
+	// as "no file", because a link to bytes that are gone is a different fault from a version that
+	// never had any.
+	MIMEType  string
+	SizeBytes int64
 }
 
 // ScriptReader answers the four questions the rules ask about ONE script version.
@@ -84,6 +110,35 @@ type StoryStateReader interface {
 	StoryEventParticipantsFor(ctx context.Context, storyEventID string) ([]string, error)
 }
 
+// JobFailureReader answers what generation jobs over an artifact's entities failed, and why.
+//
+// It exists for FR-110's SAFETY category, whose vendor half — 「供应商规则」 — is a question about
+// jobs: a provider that refused a prompt for content-policy reasons did so on a JOB, and the job's
+// error category is what recorded it. Without this the category had no emitter at all.
+//
+// It is OPTIONAL like the other ports: a build with no job repository simply does not run the rule,
+// which is the same answer every rule this build cannot answer gives.
+type JobFailureReader interface {
+	// FailedJobsForConsumers returns the failed jobs of one consumer type whose ids are in the list.
+	//
+	// The consumer ids travel as a slice rather than one call per id because a board has tens of rows
+	// and the rule asks about all of them at once: a call per row would be the N+1 shape this
+	// repository's reads avoid, and the answer is a set to be filtered rather than a per-row fact.
+	FailedJobsForConsumers(ctx context.Context, consumerType string, consumerIDs []string) ([]JobFailure, error)
+}
+
+// JobFailure is one failed job, with the two fields the safety rule reads.
+type JobFailure struct {
+	JobID string
+	// EntityType and EntityID are the consumer the job was submitted for, which is what a finding
+	// addresses: the row a user can open.
+	EntityType string
+	EntityID   string
+	// ErrorCode is the job domain's stable category (`job.ErrorCategory`), stored on
+	// `generation_jobs.error_code` by the worker from the provider's own refusal.
+	ErrorCode string
+}
+
 // Options configures a Checker.
 type Options struct {
 	Storyboard StoryboardReader
@@ -93,6 +148,8 @@ type Options struct {
 	// checker already has.
 	Script ScriptReaderSource
 	Story  StoryStateReader
+	// Jobs is the SAFETY category's read, nil in a build with no job repository.
+	Jobs JobFailureReader
 }
 
 // NewChecker builds the checker.
@@ -108,6 +165,7 @@ func NewChecker(options Options) *Checker {
 		assets:       options.Assets,
 		scriptSource: options.Script,
 		story:        options.Story,
+		jobs:         options.Jobs,
 	}
 }
 
@@ -137,6 +195,9 @@ func (c *Checker) CheckStoryboard(ctx context.Context, storyboardVersionID strin
 	findings = append(findings, c.checkCoverage(ctx, version, items)...)
 	findings = append(findings, c.checkDuration(ctx, version, items)...)
 	findings = append(findings, c.checkAssetApproval(ctx, items)...)
+	findings = append(findings, c.checkAssetFiles(ctx, items)...)
+	findings = append(findings, c.checkAssetLineage(ctx, items)...)
+	findings = append(findings, c.checkContentPolicyRefusals(ctx, items)...)
 	findings = append(findings, c.checkCostumeContinuity(ctx, version, items)...)
 	findings = append(findings, c.checkPropContinuity(ctx, version, items)...)
 	findings = append(findings, c.checkLocationContinuity(ctx, version, items)...)

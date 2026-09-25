@@ -2526,6 +2526,11 @@ type ReviewIssueDTO struct {
 	ResolvedBy string `json:"resolvedBy,omitempty"`
 	ResolvedAt string `json:"resolvedAt,omitempty"`
 	CreatedAt  string `json:"createdAt"`
+	// Category is FR-110's quality-rule classification. It is EMPTY for a supervisor's finding and
+	// for every row written before the column existed, and the UI shows nothing for an empty one
+	// rather than defaulting it to "technical": a reader has to be able to tell "nobody classified
+	// this" from "classified as technical", which is the same distinction `source` draws.
+	Category string `json:"category,omitempty"`
 }
 
 // ReviewReportDTO is the transport view of one review of a stage attempt,
@@ -3347,6 +3352,10 @@ func toReviewIssueDTOs(records []workflow.ReviewIssue) []ReviewIssueDTO {
 			Status: string(record.Status), ResolvedBy: record.ResolvedBy,
 			ResolvedAt: rfc3339OrEmpty(record.ResolvedAt),
 			CreatedAt:  record.CreatedAt.UTC().Format(rfc3339),
+			// Passed through UNTOUCHED, including empty: unlike the source mark there is no sensible
+			// default, because the vocabulary is the consistency package's and a supervisor states
+			// none. A default here would be this binding inventing a classification.
+			Category: record.Category,
 		})
 	}
 	return issues

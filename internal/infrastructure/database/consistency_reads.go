@@ -3,6 +3,9 @@ package database
 import (
 	"context"
 	"database/sql"
+	"strings"
+
+	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/job"
 
 	appconsistency "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/consistency"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/asset"
@@ -119,6 +122,112 @@ func (r *StoryRepository) StoryEventParticipantsFor(ctx context.Context, storyEv
 		return nil, storageError("STORY_READ_FAILED", "The event participants could not be read.", err)
 	}
 	return participants, nil
+}
+
+// ListFilesWithTypes returns one version's files with the facts section 11.2's "文件存在和类型"
+// compares — whether bytes exist, what kind they are, how big.
+//
+// # Why it joins rather than calling ListFiles
+//
+// `asset_files` carries the hash and the role, and the TYPE and the SIZE live on `file_objects`, one
+// join away. The rule needs all four, and a caller assembling them from two reads would do it once
+// per file — or hold a map of hashes to objects that nothing invalidates. A LEFT JOIN is what states
+// the fault this rule exists for: a link whose object is GONE comes back with both joined columns
+// null, which is a state the rule reports as "the link survives the bytes" rather than as "no files".
+//
+// The scan handles those nulls with `sql.NullString` and `sql.NullInt64` rather than `COALESCE`,
+// because the difference is the finding.
+func (r *AssetRepository) ListFilesWithTypes(ctx context.Context, versionID string) ([]appconsistency.AssetFile, error) {
+	conn := r.conn()
+	if conn == nil {
+		return nil, storageError("ASSET_STORE_UNAVAILABLE", "The asset store is unavailable.", nil)
+	}
+	rows, err := conn.QueryContext(ctx, `SELECT f.file_hash, f.role, o.mime_type, o.size_bytes
+		FROM asset_files f
+		LEFT JOIN file_objects o ON o.hash = f.file_hash
+		WHERE f.asset_version_id = ?
+		ORDER BY f.ordinal ASC, f.file_hash ASC`, versionID)
+	if err != nil {
+		return nil, storageError("ASSET_READ_FAILED", "The asset version's files could not be read.", err)
+	}
+	defer rows.Close()
+	files := []appconsistency.AssetFile{}
+	for rows.Next() {
+		var file appconsistency.AssetFile
+		var role string
+		var mime sql.NullString
+		var size sql.NullInt64
+		if err := rows.Scan(&file.Hash, &role, &mime, &size); err != nil {
+			return nil, storageError("ASSET_READ_FAILED", "The asset version's files could not be read.", err)
+		}
+		file.Role = asset.FileRole(role)
+		// An absent object leaves MIMEType empty and SizeBytes zero, which is exactly how the rule
+		// distinguishes "the bytes are gone" from "the type is wrong".
+		file.MIMEType = mime.String
+		file.SizeBytes = size.Int64
+		files = append(files, file)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, storageError("ASSET_READ_FAILED", "The asset version's files could not be read.", err)
+	}
+	return files, nil
+}
+
+// FailedJobsForConsumers returns the failed jobs of one consumer type among a set of ids.
+//
+// # Why the filter is a set and not one call per row
+//
+// A board has tens of rows and the safety rule asks about all of them at once, so the ids travel as
+// one `IN` list: a call per row would be the N+1 shape this package's read models avoid, and the
+// answer is a set the rule filters rather than a per-row fact it joins.
+//
+// # Why it selects only the three columns the rule reads
+//
+// `jobSelectColumns` carries the whole row — result JSON, cancellation flags, lease state — and a
+// rule that wants to know WHY a generation failed would be dragging a megabyte of result payload
+// across the wire per board. What the safety rule compares is the error CATEGORY, so that is what
+// this reads.
+//
+// # Why failed only
+//
+// A refused job is one that FAILED: the provider returned an error and the worker classified it. A
+// job that is retrying has not been refused yet, and one that succeeded was not refused at all. The
+// status filter is therefore `failed` rather than "not succeeded", which would include every job
+// still in flight.
+func (r *JobRepository) FailedJobsForConsumers(ctx context.Context, consumerType string, consumerIDs []string) ([]appconsistency.JobFailure, error) {
+	if r == nil || r.db == nil {
+		return nil, job.FailedJobError(job.CategoryStorage, "The job store is unavailable.")
+	}
+	if len(consumerIDs) == 0 {
+		return nil, nil
+	}
+	placeholders := make([]string, 0, len(consumerIDs))
+	args := make([]any, 0, len(consumerIDs)+2)
+	args = append(args, consumerType, string(job.StatusFailed))
+	for _, id := range consumerIDs {
+		placeholders = append(placeholders, "?")
+		args = append(args, id)
+	}
+	rows, err := r.db.QueryContext(ctx, `SELECT id, entity_type, entity_id, error_code
+		FROM generation_jobs
+		WHERE entity_type = ? AND status = ? AND entity_id IN (`+strings.Join(placeholders, ", ")+`)`,
+		args...)
+	if err != nil {
+		return nil, job.FailedJobError(job.CategoryStorage, "The failed jobs could not be read.")
+	}
+	defer rows.Close()
+	failures := []appconsistency.JobFailure{}
+	for rows.Next() {
+		var failure appconsistency.JobFailure
+		if err := rows.Scan(&failure.JobID, &failure.EntityType, &failure.EntityID, &failure.ErrorCode); err != nil {
+			return nil, job.FailedJobError(job.CategoryStorage, "The failed jobs could not be read.")
+		}
+		failures = append(failures, failure)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, job.FailedJobError(job.CategoryStorage, "The failed jobs could not be read.")
+	}
+	return failures, nil
 }
 
 // The compile-time proofs that these reads satisfy the checker's ports.

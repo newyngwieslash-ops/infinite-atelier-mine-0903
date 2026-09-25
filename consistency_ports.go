@@ -302,17 +302,19 @@ var _ appconsistency.StoryboardReader = storyboardConsistencyReader{}
 
 // assetConsistencyReader is the checker's asset port over the asset repository.
 //
-// It uses the REPOSITORY rather than the service for two of its three reads, and that is a
-// deliberate exception to this file's pattern: `UsagesForConsumer` and the two lookup reads are
+// It uses the REPOSITORY rather than the service for its reads, and that is a deliberate
+// exception to this file's pattern: `UsagesForConsumer`, the two lookup reads and the file join are
 // storage questions with no domain rule attached, and routing them through the service would mean
-// adding three pass-through methods to it for one caller.
+// adding four pass-through methods to it for one caller.
 type assetConsistencyReader struct {
 	usages   UsageReader
 	versions VersionReader
 	assets   AssetLookup
+	files    AssetFileSource
 }
 
-// UsageReader, VersionReader and AssetLookup are the three storage reads the asset rules make.
+// UsageReader, VersionReader, AssetLookup and AssetFileSource are the four storage reads the
+// asset rules make.
 type UsageReader interface {
 	UsagesForConsumer(ctx context.Context, consumerType asset.ConsumerType, consumerID string) ([]asset.Usage, error)
 }
@@ -325,6 +327,11 @@ type AssetLookup interface {
 	GetAsset(ctx context.Context, id string) (asset.Asset, error)
 }
 
+// AssetFileSource is section 11.2's "文件存在和类型" read: one version's files with their types.
+type AssetFileSource interface {
+	ListFilesWithTypes(ctx context.Context, versionID string) ([]appconsistency.AssetFile, error)
+}
+
 func (r assetConsistencyReader) UsagesForConsumer(ctx context.Context, consumerType asset.ConsumerType, consumerID string) ([]asset.Usage, error) {
 	return r.usages.UsagesForConsumer(ctx, consumerType, consumerID)
 }
@@ -335,6 +342,10 @@ func (r assetConsistencyReader) GetVersion(ctx context.Context, id string) (asse
 
 func (r assetConsistencyReader) GetAsset(ctx context.Context, id string) (asset.Asset, error) {
 	return r.assets.GetAsset(ctx, id)
+}
+
+func (r assetConsistencyReader) ListFilesWithTypes(ctx context.Context, versionID string) ([]appconsistency.AssetFile, error) {
+	return r.files.ListFilesWithTypes(ctx, versionID)
 }
 
 var _ appconsistency.AssetReader = assetConsistencyReader{}
