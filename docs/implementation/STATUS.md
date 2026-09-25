@@ -9,10 +9,12 @@
 > across STATUS sections 0u to 0zb. **The installer is BUILT as of WP-24** (`wails build -nsis` with
 > NSIS 3.12, which `winget` carried all along — WP-15's "not available from the package managers
 > present" was a negative result from four sources generalised too far).
-> **Only item 21 remains**, and it cannot be done without a paid-provider authorisation: real video
-> providers are the one deliverable this host cannot stand up. Two sub-items are named as open rather
-> than implied: item 23's 多角色声线映射 and effect suggestion, and item 17's MULTILINGUAL half,
-> which needs a model file this host cannot reach.
+> **Item 17's MULTILINGUAL half is now DELIVERED (section 0zc)**: the mirror serves a
+> Chinese-capable model and the adapter reads its Unigram tokenizer, measured at 0.8020 for a paraphrase
+> and 0.4025 cross-lingually against −0.0302 for an unrelated sentence, with zero unknown tokens.
+> **Only item 21 remains**, and it cannot be done without a paid-provider authorisation — though a real
+> ADAPTER can be built and tested against `httptest` without one, which is the next package's scope.
+> One sub-item is named as open rather than implied: item 23's 多角色声线映射 and effect suggestion.
 > **WP-16 remains COMPLETE (section 0u)** — the complete asset ruleset, two categories that had no
 > emitter, and the classification reaching the UI. **WP-15 remains COMPLETE for its scope**: P1's ten
 > items are all closed (section 0s), so the acceptance contract has no outstanding clause it can
@@ -55,6 +57,77 @@
 > `docs/implementation/project-progress-and-remaining-tasks-2026-09-23.md`, where the P0 section is
 > now closed and **P1 to P4 are unchanged** — P1 opens with FR-100's explicit-stage-dependency
 > ruling, which is a product decision rather than a code task.
+
+# 0zc. WP-25: the multilingual half, via the mirror and a Unigram tokenizer (2026-09-25)
+
+WP-25 finishes **P3 item 17**'s 多语言 half, which WP-23 recorded as blocked. **Both halves of that
+conclusion were incomplete, and one of them was a defect of mine.**
+
+## huggingface.co is TCP-blocked; the mirror is not
+
+WP-23 checked ONE host and reported a capability gap. `hf-mirror.com` answers (200 in 1.2 s) and serves
+`sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`, whose model card lists Chinese. The
+113 MB quantized build and its tokenizer were fetched from it. **The gap was a network-path problem,
+not a missing capability** — and the lesson matches WP-24's, where `makensis` was "unavailable" because
+four sources had been enumerated and the conclusion generalised past them.
+
+## A defect of mine, found by measuring instead of assuming
+
+The first probe read the model's `sentencepiece.bpe.model`, whose special-token numbering DIFFERS from
+the `tokenizer.json` the model was trained against:
+
+| | `<s>` | `</s>` | `<pad>` |
+|---|---|---|---|
+| `sentencepiece.bpe.model` | 1 | 2 | 0 |
+| `tokenizer.json` (what training used) | **0** | 2 | **1** |
+
+With the wrong numbering the product's own ban line scored **0.30 against its own paraphrase and 0.70
+against an unrelated line** — the relationships INVERTED. The same sentences through the reference
+tokenizer scored 0.83 and 0.20. **The model was fine; the reader was wrong**, and the numbers were
+suspicious enough to be worth a control rather than a conclusion.
+
+## What was built
+
+- `internal/infrastructure/onnxemb/unigram.go` (new): SentencePiece **Unigram** over a
+  `tokenizer.json` — Viterbi segmentation maximising total log-probability, which finds 不能 and 红色 as
+  whole pieces rather than splitting to single characters.
+- `New` now selects the tokenizer **by file**: `vocab.txt` means WordPiece (BERT family),
+  `tokenizer.json` means Unigram (XLM-RoBERTa and its multilingual relatives). A user names a file and
+  the code reads what it is.
+- **A second defect the test caught**: the vocabulary spells ASCII `,` as id 4 while Chinese uses `，`,
+  and the reference normalizer folds one to the other. Without that mapping this reader emitted the
+  UNKNOWN token for **every Chinese comma** — harmless-looking, since the vector still comes back and
+  is still unit length, while inserting noise at exactly the places a sentence is punctuated.
+
+## The result, measured through the Go adapter
+
+| pair | score | meaning |
+|---|---|---|
+| 禁红 ~ 禁止女主角穿红色的衣服 | **0.8020** | same rule, different words |
+| 禁红 ~ *the red dress is forbidden* | **0.4025** | **cross-lingual, same meaning** |
+| 禁红 ~ 账本不在盐仓 | 0.2400 | different fact, same episode |
+| 禁红 ~ 今天的天气非常好 | −0.0302 | unrelated |
+
+And the tokenizer's ids match the reference's exactly: `[4870 3382 5292 15870 143003 4 8513 2476 …]` =
+女 主 不能 穿 红色 ， 这是 全 …, with **ZERO unknown pieces** where the English model produced ten out
+of sixteen.
+
+## Verification
+
+| command | result |
+|---|---|
+| `go test ./... -count=1` | **PASS** - 57 packages, with the ONNX tests skipping when no model is configured |
+| `go test ./internal/infrastructure/onnxemb/` with the model | **PASS** - 12 tests, including the tokenizer-agreement and cross-lingual-signal tests |
+| `sh scripts/verify.sh` | **PASS**, exit 0 (678 files scanned) |
+
+## What is still open
+
+- **The model is NOT committed** (113-448 MB) and no model ships with this repository. The tests skip,
+  naming what is missing, when `IA_ONNX_MODEL` and `IA_TOKENIZER_JSON` are unset. **A release needs a
+  model beside the application**, and which one is a product decision about size and licence.
+- **The settings UI for the path** is still environment variables; `LocalEmbedderStatus()` carries the
+  reason for a panel to show.
+- **sqlite-vec** stays open: the 500-candidate window is still the recall bound.
 
 # 0zb. WP-24: the installer is built, and the tool it needed was one package manager away (2026-09-25)
 

@@ -33,10 +33,20 @@ line 「女主不能穿红色，这是全剧的禁令。」 tokenises to **ten `
 
 ## Decision
 
-**1. The adapter is real, and the multilingual claim is NOT made.** PRD §16's item says
-「本地多语言 ONNX Embedding」; this package delivers **本地 ONNX Embedding**. What separates them is a
-model file — HuggingFace is unreachable from this host (measured) — not a mechanism, and **claiming the
-adjective while shipping an English vocabulary would be the one dishonest thing this package could do**.
+**1. The adapter is real, and the multilingual claim was DEFERRED rather than made — and then
+DELIVERED.** PRD §16's item says 「本地多语言 ONNX Embedding」, and WP-23 delivered **本地 ONNX
+Embedding** with the adjective deferred: the model it could reach was English-only, and **claiming
+multilingual while shipping an English vocabulary would have been the one dishonest thing the package
+could do**.
+
+**WP-25 then found the deferral was based on an incomplete check.** `huggingface.co` is TCP-blocked from
+this host, but **`hf-mirror.com` answers and serves `paraphrase-multilingual-MiniLM-L12-v2`**, whose
+Chinese support is now measured: zero unknown tokens where the English model produced ten out of
+sixteen, a paraphrase at 0.8020, and the same meaning in English at 0.4025, against −0.0302 for an
+unrelated sentence. The multilingual half is delivered, and this ADR keeps the deferral's reasoning
+because the LESSON is the same one WP-24 records about `makensis`: **a negative result from the sources
+one thought to check is evidence about those sources, and this repository has now generalised past them
+twice.**
 
 **2. The runtime is NOT vendored; it is a runtime dependency.** It is 13 MB, platform-specific, and the
 two builds are not interchangeable (above). The embedder resolves it from a configured path, the
@@ -104,7 +114,16 @@ does not export.
 multilingual embedding, and a STATUS line saying "本地多语言 done" would be false.
 
 **A general-purpose tokenizer implementation.** Rejected: it would be a second implementation of
-somebody else's algorithm with no way to check it against the original.
+somebody else's algorithm with no way to check it against the original. **WP-25 added a SECOND
+tokenizer (Unigram) rather than generalising the first**, and the distinction is the point: each is
+checked against the reference tokenizer's own ids, and `New` selects by FILE — `vocab.txt` is WordPiece,
+`tokenizer.json` is Unigram — so a user names a file rather than declaring a family.
+
+**Reading the `sentencepiece.bpe.model` instead of the `tokenizer.json`.** This was not a rejection but
+a DEFECT, found by measuring: the two files number the special tokens differently (`<s>` is 1 in one and
+0 in the other), and using the wrong numbering INVERTED every similarity the probe computed — the ban
+line scored 0.30 against its own paraphrase and 0.70 against an unrelated line. **The model was fine and
+the reader was wrong**, which is why the numbers were worth a control rather than a conclusion.
 
 **Failing construction when the model is unusable.** Rejected: it would take the whole agent stack down
 over a path a user can fix, and the provider fallback behind it is exactly what FR-120's
