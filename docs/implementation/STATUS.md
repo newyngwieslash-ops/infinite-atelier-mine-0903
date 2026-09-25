@@ -2,8 +2,16 @@
 
 > Last updated: 2026-09-24
 > Product: Infinite Atelier Core + Drama Production Pack
-> Current work package: **WP-14 — FR-150 的每 Provider 并发上限（handoff P0-2）**
-> Status: **COMPLETE (section 0r).** `PRD.md:1168`'s 「同供应商并发不超过配置上限」 is enforced:
+> Current work package: **WP-15 — the P1–P4 backlog**
+> Status: **IN PROGRESS — five P1/P4 items are CLOSED (section 0s): FR-100's declared stage
+> dependencies, FR-110's score/categories/script ruleset, FR-160's garbage collection, FR-170's
+> backup-format migration, AC-E2E-006's DevTools clause, and four stale TRACEABILITY rows. Every one
+> of them found a real defect while being built, including two in the first version of the new code
+> itself. 28 mutations, 28/28 killed; the full gate passes.** Four P1 items (FR-030's entity merge,
+> FR-070's table-canvas sync, FR-150's job types, FR-180's diagnostics) and the P2/P3 ranges remain
+> open and are named in section 0s rather than implied.
+>
+> **WP-14 remains COMPLETE (section 0r).** `PRD.md:1168`'s 「同供应商并发不超过配置上限」 is enforced:
 > migration 000022 adds `provider_configs.max_concurrency` (0 = unlimited, so every upgrade behaves
 > exactly as before), the scheduler admits per provider in `dispatch` rather than refusing in
 > `Claim` — so a full provider cannot starve the others — and the count is read from the database
@@ -40,6 +48,87 @@
 > `docs/implementation/project-progress-and-remaining-tasks-2026-09-23.md`, where the P0 section is
 > now closed and **P1 to P4 are unchanged** — P1 opens with FR-100's explicit-stage-dependency
 > ruling, which is a product decision rather than a code task.
+
+# 0s. WP-15: the P1 backlog is open — five items CLOSED, six remaining (2026-09-24)
+
+WP-15 works the P1–P4 backlog of `project-progress-and-remaining-tasks-2026-09-23.md`. This section
+records what is CLOSED with its evidence; section 0t will carry the rest as they land. **Nothing here
+is claimed as done without a test, a mutation run and a green full gate.**
+
+## CLOSED: five items, each with a defect found by building it
+
+**Item 3 — FR-100's 「显式阶段依赖」.** The engine's own header claimed "a stage's dependencies must be
+satisfied" over code that did not exist: `Layer.Stages()` had no non-test caller, `StartStage` checked
+only the stage's OWN attempts, and `RunStage` checked only that the layer serves the stage. There is
+now a DECLARED graph (`Layer.DependsOn`) checked before an attempt is created (ADR-0019).
+
+**Building it found three real stage-skips.** The first graph I wrote was the linear chain, and it
+refused three legitimate walks immediately: AC-E2E-002 drove `asset_gap_analysis` without a plan, and
+two WP-10 acceptance tests boarded from a plan that had never left `waiting_user`. The chain was wrong
+and the fixtures were right — `asset_gap_analysis` reads the SCRIPT, `storyboard_table` reads the
+PLAN — so the graph is derived from what each stage actually READS, and the two fixtures that
+genuinely skipped an approval now supervise and gate the plan first. Four gate tests (one per way it
+can be wrong, plus the superseded reading), six mutations, 6/6 killed.
+
+**Item 6 — FR-110's three gaps.** `score` and `grade` existed at every layer except the one that read
+the model's output, so a supervisor could report `{"score": 76, "grade": "C"}` and the row said
+nothing; the ten categories were prose with no column or constant; and the script stages had no
+mechanical half. All three closed: the reader and the store carry the score (as a POINTER, because
+the schema says null is distinct from zero), a closed `Category` vocabulary with a rule-to-category
+map and a test asserting every shipped rule has an entry, and a script ruleset whose three rules are
+the joins the supervisor was being asked to perform by hand (duration, pins, and an event the strategy
+removed that a scene still dramatizes). Six mutations, 6/6 killed.
+
+**Item 8 — FR-160's garbage collection.** The feature was absent end to end: no `Delete`, no `List`,
+no way to ask what anything referenced. Added the preview (a read that removes nothing), the confirmed
+collection, and cancellation, plus `Remove`/`Exists` on the store.
+
+**The predicate is SIX columns, and that is the point**: `file_references` is written by the job
+pipeline alone while `asset_files` is written by another, so a collector trusting one table would
+delete an approved image's bytes. **Building it found a defect in my own first version** — the
+predicate queried `storyboard_items.raw_output_file_id`, which DOES NOT EXIST, so every collection
+failed at run time while the compiler was happy. A six-way test makes one object referenced by exactly
+one column and asserts it is spared; a predicate missing one passes five and fails the sixth.
+
+**Item 10 — FR-170's 「旧版本有迁移测试」.** The version field existed; the migration did not either
+(the reader compared for equality, so there was no hook to write one into). There is now a chain keyed
+by source version, with version 0 upgraded to 1 and refusals moved to the two cases that genuinely
+cannot be read (newer, and a gap). **The end-to-end test found a real gap**: `validateManifest`
+migrated the document and then DISCARDED it, so `RestoreResult.Manifest` reported the archive's
+original version while every check ran against the migrated one. Seven unit cases plus a real archive
+restore.
+
+**Item 12 — AC-E2E-006's DevTools clause.** It had NO automated assertion, and zustand's persist was
+writing the whole config — key included — into localStorage. Two halves: the persisted shape now
+strips keys (with the rule in the dependency-free `config-secrets.ts`, because the store imports
+`i18n` which reads localStorage at module load, so a rule only checkable in a browser stops being
+checked), and the legacy plaintext key a warning reported now has the CLEAR the documented migration
+path names — the second half that never existed, so the state the notice reported was permanent.
+
+**Item 26 — four stale TRACEABILITY rows.** FR-001 still said "No regression tests" after WP-04 built
+the canvas suite; FR-020 listed the import pipeline as "WP-06" after WP-06 built it; FR-170 carried
+"restore atomicity is still absent" after WP-12 closed it; FR-030 said the extraction and graph UI
+belonged to WP-06. Each now states what exists with the file or test that proves it.
+
+## Commands and actual results
+
+| command | result |
+|---|---|
+| `go test ./... -count=1` | **PASS** — 56 packages ok, 0 failed |
+| `npm test` | **PASS** — 102 tests, 0 failures (was 99 at WP-14) |
+| `npm run typecheck` / `npm run build` | **PASS** |
+| `sh scripts/verify.sh` | **PASS**, exit 0 (25 Playwright, security scans over 635 files, all fixture checks, SBOM, Wails production build) |
+| mutations | **28 across five items, 28/28 killed**, each restored from a byte-exact copy and the restoration verified by grep |
+
+`go test -race` remains an ENVIRONMENT FAILURE on this host, unchanged and still not a pass.
+
+## STILL OPEN in WP-15
+
+The P1 items not yet built are **4 (FR-030's entity merge), 5 (FR-070's table-canvas sync), 7
+(FR-150's four job types), 9 (FR-180's diagnostics bundle and cache controls)**; the P2 items are
+**13 (installer/signing — `wails build -nsis` is supported here) and 15 (`-race`, blocked on the
+toolchain)**; P3 is the v1.0 roadmap range; P4-27 is the backlog's own backfill into ROADMAP. Section
+0t will record them as they land, and none is claimed here.
 
 # 0r. WP-14 result: FR-150's per-provider concurrency limit (2026-09-24)
 
