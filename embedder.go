@@ -68,11 +68,25 @@ import (
 type projectEmbedder struct {
 	registry *infraproviders.Registry
 	db       *sql.DB
+	// local is the ONNX embedder, nil in a build with no local model configured. It is tried FIRST,
+	// which is what makes PRD FR-120's 「本地模式不得在未授权时上传项目文本」 true rather than
+	// aspirational: a project whose text can be embedded on this machine never reaches the network.
+	local appmemory.Embedder
 }
 
 // newProjectEmbedder builds the embedder bridge.
-func newProjectEmbedder(registry *infraproviders.Registry, db *sql.DB) *projectEmbedder {
-	return &projectEmbedder{registry: registry, db: db}
+//
+// `local` may be nil, and a nil local embedder is the state this build shipped in until WP-23: the
+// comment above `projectEmbedder` recorded the deferral in as many words — "nothing registered it,
+// and no project could name it". Now something registers it, and the resolution order below is where
+// FR-120's local-first rule lives.
+func newProjectEmbedder(registry *infraproviders.Registry, db *sql.DB, local appmemory.Embedder) *projectEmbedder {
+	return &projectEmbedder{registry: registry, db: db, local: local}
+}
+
+// localFirst reports whether the local embedder can answer for this project.
+func (e *projectEmbedder) localFirst(ctx context.Context, projectID string) bool {
+	return e != nil && e.local != nil && e.local.Available(ctx, projectID)
 }
 
 // Available reports whether the project has an embedding provider it named.
@@ -81,7 +95,17 @@ func newProjectEmbedder(registry *infraproviders.Registry, db *sql.DB) *projectE
 // named a provider which cannot embed must not report itself available, or the memory service
 // would offer a semantic channel that fails on first use.
 func (e *projectEmbedder) Available(ctx context.Context, projectID string) bool {
-	if e == nil || e.registry == nil || e.db == nil {
+	if e == nil {
+		return false
+	}
+	// THE LOCAL EMBEDDER FIRST, and this ordering IS the privacy rule. A build with a local model
+	// answers every embedding on this machine, so no project text leaves it; only a build without one
+	// falls through to a provider the user configured. An implementation that tried the provider
+	// first would upload the text before discovering a local model was available.
+	if e.localFirst(ctx, projectID) {
+		return true
+	}
+	if e.registry == nil || e.db == nil {
 		return false
 	}
 	providerID, ok := e.namedProvider(ctx, projectID)
@@ -97,7 +121,23 @@ func (e *projectEmbedder) Available(ctx context.Context, projectID string) bool 
 
 // Embed embeds the request's texts with the project's embedding provider.
 func (e *projectEmbedder) Embed(ctx context.Context, projectID string, request appmemory.EmbeddingRequest) (appmemory.EmbeddingResult, error) {
-	if e == nil || e.registry == nil || e.db == nil {
+	if e == nil {
+		return appmemory.EmbeddingResult{}, embeddingUnavailable("No embedding provider is configured.")
+	}
+	// The same local-first order as `Available`, and it has to be repeated here rather than assumed:
+	// a caller reaches Embed directly as often as through Available, and a provider-first Embed would
+	// upload text from a build that had a local model all along.
+	//
+	// A LOCAL FAILURE FALLS THROUGH RATHER THAN STOPPING. A model file that was deleted while the
+	// application ran, or a runtime that failed to load, disables the local path without disabling
+	// embedding — the same fail-soft shape the media engine uses for ffmpeg, and the same reason: a
+	// fact about the MACHINE must not become a failed command when a configured alternative exists.
+	if e.localFirst(ctx, projectID) {
+		if result, err := e.local.Embed(ctx, projectID, request); err == nil {
+			return result, nil
+		}
+	}
+	if e.registry == nil || e.db == nil {
 		return appmemory.EmbeddingResult{}, embeddingUnavailable("No embedding provider is configured.")
 	}
 	// An explicit provider wins over the project's policy, which is what FR-140's "支持项目默认、

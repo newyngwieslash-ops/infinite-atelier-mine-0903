@@ -20,11 +20,11 @@
     "properties": [
       {
         "name": "infinite-atelier:go-components",
-        "value": "131"
+        "value": "132"
       },
       {
         "name": "infinite-atelier:go-linked",
-        "value": "19"
+        "value": "20"
       },
       {
         "name": "infinite-atelier:go-test",
@@ -4106,6 +4106,47 @@
         {
           "name": "infinite-atelier:go.sum-source-hash",
           "value": ""
+        },
+        {
+          "name": "infinite-atelier:go.sum-go.mod-hash",
+          "value": ""
+        },
+        {
+          "name": "infinite-atelier:license-source",
+          "value": "LICENSE in the module cache"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:golang/github.com/yalue/onnxruntime_go@v1.17.0",
+      "name": "github.com/yalue/onnxruntime_go",
+      "version": "v1.17.0",
+      "purl": "pkg:golang/github.com/yalue/onnxruntime_go@v1.17.0",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "infinite-atelier:ecosystem",
+          "value": "go"
+        },
+        {
+          "name": "infinite-atelier:tier",
+          "value": "linked"
+        },
+        {
+          "name": "infinite-atelier:direct",
+          "value": "true"
+        },
+        {
+          "name": "infinite-atelier:go.sum-source-hash",
+          "value": "h1:nC8AFbmaq9E2gxtxutGPzK/LGCrtnnu7LTGl82YuQzw="
         },
         {
           "name": "infinite-atelier:go.sum-go.mod-hash",

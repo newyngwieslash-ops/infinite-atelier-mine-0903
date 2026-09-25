@@ -128,10 +128,17 @@ func composeAgents(deps agentDeps) *agentWiring {
 	// makes the assertion load-bearing.
 	memoryRepository := database.NewMemoryRepository(connection)
 	memoryService := appmemory.NewService(appmemory.Options{
-		Store:    database.NewAgentRepository(connection),
-		Items:    memoryRepository,
-		Vectors:  database.NewMemoryVectorIndex(memoryRepository),
-		Embedder: newProjectEmbedder(deps.Providers, connection),
+		Store:   database.NewAgentRepository(connection),
+		Items:   memoryRepository,
+		Vectors: database.NewMemoryVectorIndex(memoryRepository),
+		// THE LOCAL EMBEDDER FIRST, then the provider bridge. FR-120's 「本地模式不得在未授权时上传
+		// 项目文本」 is what this ordering means, and it is enforced in the bridge rather than here:
+		// this line only supplies a local embedder, and the bridge decides that local wins.
+		//
+		// `newLocalEmbedder` returns nil when no model is configured, which is the ordinary state of
+		// a build that has not been pointed at one — and a nil local embedder is exactly the state
+		// this build shipped in until WP-23, so nothing regresses when it is absent.
+		Embedder: newProjectEmbedder(deps.Providers, connection, newLocalEmbedder()),
 		Clock:    clock,
 		IDs:      ids,
 		// THE EVENT RECORDER, which is what makes MemoryCreated reachable. ADR-0009 section 5 assigned

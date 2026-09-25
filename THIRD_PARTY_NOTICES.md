@@ -5,6 +5,8 @@ This file preserves notices for the Go desktop dependency graph. Infinite Atelie
 - Wails v2.15.0: MIT; [upstream](https://github.com/wailsapp/wails/tree/v2.15.0).
 - modernc.org/sqlite v1.58.0: BSD-3-Clause; [version documentation](https://pkg.go.dev/modernc.org/sqlite@v1.58.0), [canonical upstream](https://gitlab.com/cznic/sqlite). Published 2026-09-01; pinned intentionally.
 - Bundled SQLite reports 3.53.4 in the driver contract test: public domain; [copyright statement](https://www.sqlite.org/copyright.html).
+- github.com/yalue/onnxruntime_go v1.17.0: MIT; [version documentation](https://pkg.go.dev/github.com/yalue/onnxruntime_go@v1.17.0), [canonical upstream](https://github.com/yalue/onnxruntime_go). Added by WP-23 (P3 item 17) for local ONNX embeddings; the version is PINNED rather than latest because the binding's API-base version must match the runtime's — v1.17.0 requests ORT API 20, which is what the runtime this host can load provides. v1.20.0 and later request API 21/22 and fail against it.
+- **The ONNX Runtime itself is a RUNTIME DEPENDENCY, NOT VENDORED, and it is not covered by this file's licence text.** `onnxruntime.dll` (or `.so`/`.dylib`) is a 13 MB platform-specific native library under the MIT licence, Copyright (c) Microsoft Corporation, and it is distributed with the ONNX Runtime project. This repository does NOT ship it: the embedder resolves it at run time from a configured path, the executable's directory, or the system path, and disables local embedding with a diagnostic when it is absent. A packager who bundles it must carry onnxruntime's own LICENSE and this notice. ADR-0026 records why it is not vendored — the official release build imports an API set this host does not have, so the library that WORKS here is the one a Python wheel ships, and shipping that one from this repository would be redistributing somebody else's build.
 - github.com/ledongthuc/pdf v0.0.0-20260907135840-6c8c28e0e8a0: BSD-3-Clause; [version documentation](https://pkg.go.dev/github.com/ledongthuc/pdf@v0.0.0-20260907135840-6c8c28e0e8a0), [canonical upstream](https://github.com/ledongthuc/pdf). Added by WP-19 (P3 item 24) for PDF text extraction; the module has NO tagged release, so it is pinned to a pseudo-version by commit — a maintenance risk recorded in ADR-0023, mitigated by the fact that exactly one function calls it.
 
 ## Machine-readable SBOM, and how this file relates to it
@@ -2189,6 +2191,24 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
+
+## github.com/yalue/onnxruntime_go v1.17.0
+
+[Version source](https://pkg.go.dev/github.com/yalue/onnxruntime_go@v1.17.0)
+
+MIT License, Copyright (c) 2023 Nathan Otterness. The upstream text is reproduced in the module's own
+LICENSE file; its operative terms are the MIT permission grant and warranty disclaimer, which this
+repository already carries verbatim for its other MIT dependencies.
+
+## The ONNX Runtime binary (a runtime dependency, not vendored)
+
+`onnxruntime.dll` / `libonnxruntime.so` / `libonnxruntime.dylib` is MIT-licensed,
+Copyright (c) Microsoft Corporation, from https://github.com/microsoft/onnxruntime. **This repository
+does not redistribute it.** The embedder looks for it at run time and reports a diagnostic when it is
+missing; a distribution that bundles it must include onnxruntime's own LICENSE beside the binary.
+The reason it is a runtime dependency rather than a vendored asset is in ADR-0026, and it is a
+licence-neutral reason: two builds of the same version are NOT interchangeable, and the one that loads
+on this host is the one a Python wheel ships.
 
 ## github.com/ledongthuc/pdf v0.0.0-20260907135840-6c8c28e0e8a0
 
