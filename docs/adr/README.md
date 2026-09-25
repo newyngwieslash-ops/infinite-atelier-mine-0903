@@ -58,3 +58,11 @@
 | 0017 | Asset-production UI: the panel-image chain, its approve control, and the AC-E2E-002 walk | Accepted |
 | 0018 | Per-provider concurrency limits, and the rate limit this record does not build | Accepted |
 | 0019 | Explicit stage dependencies: a declared graph, checked before the attempt exists | Accepted |
+| 0020 | The complete asset ruleset, and the two categories that had no emitter | Accepted |
+| 0021 | The event graph drawing: what is a node, what is an edge, and what is not drawn | Accepted |
+| 0022 | The summary ladder's third rung, the defect it exposed, and the recall metrics | Accepted |
+| 0023 | PDF import: the library that cannot read Chinese, and the one that panics | Accepted |
+| 0024 | The audio mix, the silent film it closed, and why the measurement moved | Accepted |
+| 0025 | MONOFORM deep integration: the snapshot that was being dropped | Accepted |
+| 0026 | Local ONNX embeddings, and the model that cannot read the corpus | Accepted |
+| 0027 | The asynchronous video adapter, the protocol shape it assumes, and two defects a boundary test found | Accepted |

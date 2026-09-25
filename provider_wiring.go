@@ -41,11 +41,22 @@ func composeProviders(db *sql.DB, publisher appproviders.EventPublisher) *provid
 	configService := appproviders.NewService(repository, registry, healthChecker)
 	requests := appproviders.NewRequestService(registry, publisher)
 	// Media adapters: WP-03 registers the mock video/audio implementations so
-	// the job pipeline is exercisable end to end. A real adapter replaces them
-	// in the media work package; until then a real video provider is not
-	// silently simulated, because submission only happens for jobs whose
-	// provider kind resolves to a registered adapter.
+	// the job pipeline is exercisable end to end, and the mock stays registered
+	// for `mock_media` — a build keeps it and configures a real provider beside
+	// it rather than choosing one.
 	registry.WithMediaAdapters(infraproviders.NewMockVideoAdapter(), infraproviders.NewMockAudioAdapter())
+	// THE REAL VIDEO ADAPTER (WP-26), resolved for `openai_compatible`. This
+	// line is what turns the async video protocol from an interface into a path
+	// a user command reaches: before it, `VideoPortFor` returned `unsupported`
+	// for every kind but the mock, which is the "interface with no real path"
+	// shape this repository's reviews keep finding.
+	//
+	// It is registered unconditionally rather than behind a feature flag,
+	// because a build that has the adapter and a user who has not configured a
+	// video provider are two different states: the adapter refuses only when
+	// somebody submits to a provider that does not answer, which is the
+	// provider's answer rather than this build's opinion.
+	registry.WithOpenAIVideoAdapter(infraproviders.NewOpenAIVideoAdapter(registry))
 	// The IMAGE mock is deliberately NOT registered here, and the reason is worth stating
 	// because the absence looks like an omission.
 	//

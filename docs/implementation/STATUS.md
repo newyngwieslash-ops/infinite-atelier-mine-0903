@@ -58,6 +58,84 @@
 > now closed and **P1 to P4 are unchanged** — P1 opens with FR-100's explicit-stage-dependency
 > ruling, which is a product decision rather than a code task.
 
+# 0zd. WP-26: the real async video adapter, and two defects a boundary test found (2026-09-25)
+
+WP-26 delivers **P3 item 21**'s provider half: `VideoPortFor` resolved the mock for `mock_media` and
+returned `unsupported` for EVERY other kind, with a comment saying "A real async video adapter does not
+exist yet". `internal/infrastructure/providers/openai_video.go` is that adapter, and
+`provider_wiring.go` registers it — which is what turns the async half of the job pipeline from an
+interface into a path a user command reaches.
+
+## What the adapter is, and the assumption it states
+
+Four methods over one protocol shape: `POST {base}/videos` → an identifier, `GET {base}/videos/{id}` →
+a status, `GET {base}/videos/{id}/content` → bytes or a URL, `DELETE {base}/videos/{id}` → cancel. The
+kind `openai_compatible` is reused rather than joined by a fourth kind, because the protocol is that
+family's and a new kind would have cost a migration to buy a NAME.
+
+**The field names are an assumption and are recorded as one** (ADR-0027). There is no authorised vendor
+call to compare against (AGENTS §4.3), so what the tests verify is the protocol HANDLING — the async
+lifecycle, the status vocabulary, the error taxonomy, the audit, the SSRF-guarded client, the cancel
+handshake — against an `httptest` vendor. **STATUS does not claim 已对接真实视频 Provider and must not be
+edited to**: a real vendor means editing one file, not configuring anything.
+
+Decisions worth naming: an unknown status is REFUSED rather than read as running (a renamed state would
+otherwise look like a generation that never finishes, with nothing in the report to say why);
+`cancelled` maps to a failed terminal status; the inline result bound is **8 MiB, the transport's
+ceiling**, because the first version's 64 MiB was UNREACHABLE — `guardedClient` truncates at 10 MiB, so
+the adapter's own check could never fire, and the test that fed it 64 MiB is what found that.
+
+## The boundary test, and the two defects it found
+
+The adapter's own suite proves it speaks the protocol. That is a different claim from "the pipeline
+accepts what it produces", so `internal/infrastructure/jobs/video_provider_e2e_test.go` drives the REAL
+adapter through the REAL runner and the REAL result store, with **no `clientFactory` seam** — the
+production `guardedClient` is in the path — against a fake vendor. Two defects fell out:
+
+**D1. A failed generation was audited as a SUCCESS.** The poll answers `{"status":"failed"}` with HTTP
+200, because the CALL succeeded, and the adapter recorded `StatusSucceeded` with an empty `error_code`.
+`DiagnosticsReader.ErrorCodes` groups `provider_requests` by exactly that column, so the one place this
+repository PERSISTS a stable code for an operation would have been silent about video failures. Fixed:
+the audit follows the GENERATION, and the row now carries `CategoryRemotePermanent`. The mutation that
+reverts it is killed.
+
+**D2. `document.Error.Code` was parsed and never read** — a dead parse in the new code, removed with the
+reason written where it was: the audit's `ErrorCode` is this adapter's own classification (the taxonomy
+the job manager retries on), not a vendor's vocabulary.
+
+**D3, a fixture defect recorded because it will recur:** the first version of the boundary test failed
+with "the provider could not be reached" — mapped to a *network* error — for a call that never left the
+process. The cause was the test's own resolver returning the same backing array each call: `authorize`
+zeroes the slice it is handed, so the second call built an Authorization header from NUL bytes and the
+transport refused it. `SecretResolver` now documents the contract, and the boundary test asserts the
+Bearer header on EVERY request, because the second call is where a shared-buffer resolver stops working
+and the failure never mentions the credential.
+
+## Verification
+
+| Command | Result |
+|---|---|
+| `go test ./internal/infrastructure/providers/ ./internal/infrastructure/jobs/ -count=1` | **PASS** |
+| `go vet ./...` | **PASS** |
+| mutation set, 14 mutations over both files | **14/14 killed**, both files restored byte-exact |
+| `sh scripts/verify.sh` | **PASS**, exit 0 (681 files scanned; 25 Playwright; all fixture, SBOM and security checks; Wails production build skipped — the pinned CLI is not installed on this host, as in prior packages) |
+| `node scripts/security-scan.mjs` | **PASS**, 681 files; no new allowlist entry was needed — the adapter uses the guarded client and runs no subprocess |
+
+## What item 21 does NOT close, stated rather than implied
+
+The item's title is 视频首尾帧与批量镜头生成（对接真实视频 Provider）, and only the provider is delivered:
+
+- **首尾帧: the PIPE is complete** — `SubmitVideoJob` carries `references`/`firstFrame`/`lastFrame` with
+  their MIME pairs, the runner assembles them in FR-080's order, and the adapter encodes them as data
+  URLs. **What is missing is a UI picker**: `video-view.tsx` has no control that could produce base64
+  frame bytes, and it says so in place rather than sending an empty array that would be
+  indistinguishable from "no references".
+- **批量镜头生成 is NOT built.** The section submits ONE shot at a time; there is no multi-shot
+  submission, and `SubmitImageBatch`'s `maxImageBatch = 8` is the precedent a batch would follow with a
+  cost limit of its own.
+
+Both are named as open work rather than counted as delivered.
+
 # 0zc. WP-25: the multilingual half, via the mirror and a Unigram tokenizer (2026-09-25)
 
 WP-25 finishes **P3 item 17**'s 多语言 half, which WP-23 recorded as blocked. **Both halves of that

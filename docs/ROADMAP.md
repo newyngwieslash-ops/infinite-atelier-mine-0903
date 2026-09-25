@@ -685,7 +685,7 @@ WP-12 交付 Release Candidate 之后，工作不再按 WP 序号推进，而按
 | P0 | 产品断链：资产生产 UI（面板图链路）、每 Provider 并发上限 | **DONE** — WP-13（STATUS §0q，ADR-0017）、WP-14（STATUS §0r，ADR-0018） |
 | P1 | 验收合同内缺口，十项（FR-030/070/100/110/150/160/170/180、AC-E2E-002/006） | **DONE** — WP-15（STATUS §0s/§0t，ADR-0019） |
 | P2 | 发布工程：Windows 安装包与签名、干净 VM、`go test -race`、CI/远程执行 | 安装包**接线完成、缺 `makensis`**；`-race` **已在本机运行且零数据竞争**（STATUS §0t）；干净 VM 与 CI **本机无法完成，如实记为 OPEN** |
-| P3 | PRD §16 的 v1.0 范围，九项（本地 ONNX embedding、事件图谱可视化、MONOFORM 深度集成、完整资产一致性检查、真实视频 Provider、层级摘要与记忆中心、更完整时间线、PDF 导入、Windows 稳定安装升级） | **逐项成包进行中** — 第 20 项（完整资产一致性检查）由 WP-16 完成（STATUS §0u，ADR-0020），第 18 项（事件图谱可视化）由 WP-17 完成（STATUS §0v，ADR-0021），第 22 项（层级摘要与记忆中心）由 WP-18 完成（STATUS §0w，ADR-0022），第 24 项（PDF 导入）由 WP-19 完成（STATUS §0x，ADR-0023），第 23 项（更完整时间线与混音）由 WP-20 完成（STATUS §0y，ADR-0024），第 19 项（MONOFORM 深度集成）由 WP-21 完成（STATUS §0z，ADR-0025），第 17 项（本地 ONNX Embedding）由 WP-23 完成（STATUS §0za，ADR-0026）；第 25 项（Windows 稳定安装与升级）由 WP-24 完成（STATUS §0zb，NSIS 由 `winget` 装得，installer 已产出）；**只剩第 21 项**，它需要付费 Provider 授权 |
+| P3 | PRD §16 的 v1.0 范围，九项（本地 ONNX embedding、事件图谱可视化、MONOFORM 深度集成、完整资产一致性检查、真实视频 Provider、层级摘要与记忆中心、更完整时间线、PDF 导入、Windows 稳定安装升级） | **逐项成包进行中** — 第 20 项（完整资产一致性检查）由 WP-16 完成（STATUS §0u，ADR-0020），第 18 项（事件图谱可视化）由 WP-17 完成（STATUS §0v，ADR-0021），第 22 项（层级摘要与记忆中心）由 WP-18 完成（STATUS §0w，ADR-0022），第 24 项（PDF 导入）由 WP-19 完成（STATUS §0x，ADR-0023），第 23 项（更完整时间线与混音）由 WP-20 完成（STATUS §0y，ADR-0024），第 19 项（MONOFORM 深度集成）由 WP-21 完成（STATUS §0z，ADR-0025），第 17 项（本地 ONNX Embedding）由 WP-23 完成（STATUS §0za，ADR-0026）；第 25 项（Windows 稳定安装与升级）由 WP-24 完成（STATUS §0zb，NSIS 由 `winget` 装得，installer 已产出）；第 21 项由 **WP-26** 交付其 Provider 半边（STATUS §0zd，ADR-0027）：真实异步适配器在 `openai_compatible` 上可解析，提交→轮询→取回→取消全程可跑；但**协议字段名是假设**（ADR-0027 记录），且首尾帧的 UI 选择器与批量提交仍未建，所以该项记为 **PARTIAL**，对真供应商的端到端验收仍等付费授权 |
 | P4 | 文档债：TRACEABILITY 过时判定、本清单回填 ROADMAP | **DONE** — WP-15（STATUS §0s）与本节 |
 
 ## P3 的执行约定
@@ -696,8 +696,11 @@ PRD §16 把 v1.0 的范围写成产品计划而不是欠账，所以这九项**
 
 - **本地 ONNX Embedding（第 17 项）**：需要引入 ONNX 运行时依赖与模型资产，是本清单里唯一
   需要新第三方二进制分发的项；`docs/SECURITY.md` §15 与 SBOM 流程要先覆盖它。
-- **真实视频 Provider（第 21 项）**：需要用户明确授权访问付费 Provider 才能做端到端验收
-  （AGENTS §4.3）；在授权到位之前，本构建的验收只覆盖 Mock 适配器与 AC-MEDIA-001/003。
+- **真实视频 Provider（第 21 项）**：**WP-26 已交付可测的适配器与真实路径**，并据此把
+  「需要授权」这句话收窄到它真正成立的地方：没有授权就没有**对真供应商**的端到端验收，
+  但协议处理、状态词汇、错误分类、审计、SSRF 防线与取消握手**都能离线验证**，而且已经验证
+  （STATUS §0zd，ADR-0027）。仍等授权的只有两件：真实 vendor 是否接受该提交体，以及首尾帧的
+  UI 选择器与批量镜头提交（两者都未建，已在 §0zd 点名）。
 - **Windows 稳定安装与升级（第 25 项）**：与 P2 的安装包是同一件事的产品化表述，卡在
   `makensis` 这一件工具上（STATUS §0s 记录）。
 

@@ -15,6 +15,24 @@ import (
 
 // SecretResolver resolves a provider's secret for outbound authorization. It
 // is implemented by the secrets service and only used inside adapter code.
+//
+// # The returned slice is CONSUMED, and an implementation must hand over a copy it can lose
+//
+// Every adapter in this package zeroes the slice as soon as the Authorization
+// header is built, which is the discipline that keeps the secret out of
+// everything below that line. An implementation that returned a buffer it
+// intended to reuse — a cached field, a slice into a longer array — would find
+// it zeroed after the first call and would authorise NOTHING thereafter.
+//
+// That failure is worth the paragraph because of how it presents: `http.Header.Set`
+// with a NUL-bearing value makes the transport refuse the request with
+// `net/http: invalid header field value for "Authorization"` wrapped in a
+// url.Error, which `mapTransportError` classifies as a *network* fault. A
+// resolver that shares its buffer therefore looks like an unreachable provider
+// from the second request onwards, and the secret never appears in the error to
+// hint otherwise. `ResolveInternal`'s production implementation reads from the
+// credential store on each call, so it satisfies this; the test doubles in this
+// package copy for exactly this reason.
 type SecretResolver interface {
 	ResolveInternal(ctx context.Context, providerID string) ([]byte, error)
 }
@@ -40,6 +58,11 @@ type Registry struct {
 	// registered here when the media work package lands.
 	video appjobs.VideoPort
 	audio appjobs.AudioPort
+	// openaiVideo is the real asynchronous video adapter, resolved for `openai_compatible`. It is a
+	// field of its own rather than replacing `video`, because the mock serves `mock_media` and both
+	// must be selectable: a build keeps the mock for its own tests and a user configures a real
+	// provider beside it.
+	openaiVideo appjobs.VideoPort
 
 	// mockText is the deterministic text adapter. It is optional and reachable
 	// only for KindMockText, which no persisted configuration can carry; see
@@ -74,6 +97,19 @@ func (r *Registry) WithMediaAdapters(video appjobs.VideoPort, audio appjobs.Audi
 	}
 	r.video = video
 	r.audio = audio
+	return r
+}
+
+// WithOpenAIVideoAdapter registers the real asynchronous video adapter.
+//
+// It is separate from `WithMediaAdapters`, which takes the MOCK, because the two are selected by
+// different provider kinds and a single field would make one unreachable. The composition root calls
+// both, which is where a reader can see that a build has both a mock and a real adapter.
+func (r *Registry) WithOpenAIVideoAdapter(adapter appjobs.VideoPort) *Registry {
+	if r == nil {
+		return r
+	}
+	r.openaiVideo = adapter
 	return r
 }
 
@@ -218,9 +254,21 @@ func (r *Registry) VideoPortFor(ctx context.Context, providerID string) (appjobs
 			return nil, provider.NewUnsupportedError()
 		}
 		return r.video, nil
+	case provider.KindOpenAICompatible:
+		// A REAL adapter now resolves here (WP-26). The kind is reused rather than added, because the
+		// protocol this adapter speaks — JSON in, an identifier out, poll, download — is the
+		// OpenAI-compatible family's, and a new kind would have cost a migration plus a validation
+		// change to buy a NAME.
+		//
+		// WHAT KEEPS A TEXT PROVIDER FROM BEING ASKED FOR VIDEO is not this switch: it is the provider's
+		// own answer. An endpoint with no video capability refuses the submission with an HTTP error,
+		// the adapter classifies it, and the job fails with a message — which is how a real provider
+		// behaves and what a user needs to see, rather than a local guess about what a URL can do.
+		if r.openaiVideo == nil {
+			return nil, provider.NewUnsupportedError()
+		}
+		return r.openaiVideo, nil
 	default:
-		// A real async video adapter does not exist yet: reporting "unsupported"
-		// is honest, whereas returning the mock would fabricate a result.
 		return nil, provider.NewUnsupportedError()
 	}
 }
