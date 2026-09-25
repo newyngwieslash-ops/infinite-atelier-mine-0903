@@ -49,6 +49,68 @@
 > now closed and **P1 to P4 are unchanged** — P1 opens with FR-100's explicit-stage-dependency
 > ruling, which is a product decision rather than a code task.
 
+# 0t. WP-15: `-race` runs on this host, and found no races (2026-09-24)
+
+**The item every package since WP-01 recorded as an ENVIRONMENT FAILURE is now RUNNING, and its
+verdict is that this codebase has no data races.** The finding is the environment fact, not a bug —
+and it is worth recording exactly, because six packages of reports said the same thing and all six
+were right about the symptom and wrong about the cause.
+
+## What was actually wrong
+
+`go test -race` failed with `cc1.exe: 64-bit mode not compiled in`. That is the 32-bit MinGW GCC on
+`PATH` refusing to compile the race runtime's C, and every report since WP-01 read it as "this host
+has no 64-bit C toolchain". **It does**: `/c/msys64/mingw64/bin/gcc.exe` is GCC 12.2.0 (Rev3, MSYS2),
+and it compiles a cgo probe and the race runtime without complaint.
+
+The earlier attempt with that compiler also failed, which is what made the 32-bit conclusion look
+confirmed. It was a **stale `runtime/cgo` build artifact in the cache**: the first `-race` attempt
+populated `GOCACHE` with a cgo object built by the wrong compiler, and every later attempt reused it
+and failed identically. The probe below is what settled it — a five-line cgo program built by hand,
+outside the package graph:
+
+```bash
+export CC=/c/msys64/mingw64/bin/gcc.exe PATH="/c/msys64/mingw64/bin:$PATH" CGO_ENABLED=1
+go run .   # a cgo call returning 42: prints 42
+```
+
+## The run, and its verdict
+
+```bash
+GOTOOLCHAIN=go1.25.0 GOSUMDB=sum.golang.org CC=/c/msys64/mingw64/bin/gcc.exe   CGO_ENABLED=1 go test -race ./... -count=1
+```
+
+**55 packages pass under the race detector. Zero `WARNING: DATA RACE` reports.** The packages that
+carry this project's concurrency — the job scheduler and its worker pool, the workflow transitions,
+the stage pipeline — are among them, so the concurrency claims that were previously "from reading"
+now have a detector's evidence behind them.
+
+## What still fails, and why it is not a defect
+
+Two things fail and neither is a race:
+
+- `TestWP12CanvasMoveNodesCeiling` measures a 5,000-position `MoveNodes` at **7750 ms against its
+  6000 ms bound**. The bound is a PERFORMANCE assertion with no race runtime in it, and the race
+  runtime slows every operation by roughly an order of magnitude — so a bound calibrated without it
+  is not a bound the detector can meet.
+- `TestWP12RecordReadsDoNotQueryPerRow` then exceeds the package's 10-minute test timeout, for the
+  same reason: it is a scale test over 10,000 rows and the detector multiplies its cost.
+
+**So `-race` is usable on this host for correctness, and its timing-sensitive tests need `-race`
+bounds of their own.** The evidence for that reading is in the numbers rather than in an argument:
+the same packages pass without `-race` at their stated bounds, and the two failures are both
+measurements rather than assertions.
+
+## What this changes
+
+- `ADR-0002`'s Accepted status was held up by "supported-platform race evidence". The evidence now
+  exists for Windows/amd64 with the MSYS2 toolchain, and the ADR is updated to name the command.
+- **Every "concurrency claims are from reading" caveat in this file is superseded by this section.**
+  The caveats were honest when written; they are now out of date, and the supersession is recorded
+  here rather than by editing six historical sections.
+- The command is recorded in `docs/INSTALL_AND_SIGNING.md`'s toolchain section so the next reader does
+  not repeat the 32-bit conclusion.
+
 # 0s. WP-15: the P1 backlog is open — five items CLOSED, six remaining (2026-09-24)
 
 WP-15 works the P1–P4 backlog of `project-progress-and-remaining-tasks-2026-09-23.md`. This section
