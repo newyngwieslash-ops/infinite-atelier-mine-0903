@@ -38,8 +38,24 @@ import {
 } from "../desktop/media";
 import { isMediaJobSubmissionAvailable, isVideoBatchAvailable, submitAudioJob, submitVideoJob } from "../desktop/jobs";
 import { isFrameLoadingAvailable, loadShotFrame } from "../desktop/frames";
+import { collectAudioJobResults } from "../desktop/drama";
 import { importBackgroundMusic, isMusicImportAvailable } from "../desktop/music";
 import { withDesktopCore, type FakeBindings } from "./desktop-core";
+
+test("the audio collector throws rather than reporting a collection that stored nothing", async () => {
+    // This command is the step that turns a job's result into the version a mix reads. A caller that got
+    // an empty array back from an absent core would report success and store nothing — the defect the
+    // command exists to close, one layer up.
+    await assert.rejects(() =>
+        collectAudioJobResults({
+            assetByJob: { "job-1": "asset-1" },
+            jobIds: ["job-1"],
+            usageRole: "audio_dialogue",
+            consumerType: "shot",
+            consumerId: "shot-1",
+        } as never),
+    );
+});
 
 test("a window with no desktop core offers no music import", () => {
     // A build whose binding predates the import still reads a timeline and runs an export, so the

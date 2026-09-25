@@ -57,6 +57,11 @@ func composeProviders(db *sql.DB, publisher appproviders.EventPublisher) *provid
 	// somebody submits to a provider that does not answer, which is the
 	// provider's answer rather than this build's opinion.
 	registry.WithOpenAIVideoAdapter(infraproviders.NewOpenAIVideoAdapter(registry))
+	// THE REAL SPEECH ADAPTER (WP-30), resolved for `openai_compatible` too. `AudioPortFor` resolved
+	// the mock for `mock_media` and returned `unsupported` for EVERY other kind — the same sentence the
+	// video side carried before WP-26, with the same consequence: a user could submit a line's speech
+	// and only a deterministic mock could answer it.
+	registry.WithOpenAIAudioAdapter(infraproviders.NewOpenAIAudioAdapter(registry))
 	// The IMAGE mock is deliberately NOT registered here, and the reason is worth stating
 	// because the absence looks like an omission.
 	//

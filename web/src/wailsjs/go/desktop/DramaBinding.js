@@ -58,6 +58,10 @@ export function ClearStaleMark(arg1) {
   return window['go']['desktop']['DramaBinding']['ClearStaleMark'](arg1);
 }
 
+export function CollectAudioJobResults(arg1) {
+  return window['go']['desktop']['DramaBinding']['CollectAudioJobResults'](arg1);
+}
+
 export function CollectBatchResults(arg1) {
   return window['go']['desktop']['DramaBinding']['CollectBatchResults'](arg1);
 }

@@ -31,6 +31,9 @@ import {
 import { ensureStoryboard, getScriptStructure, isDramaBindingsAvailable, listScriptVersions, listStoryboardVersions } from "@/services/desktop/drama";
 import { importBackgroundMusic, isMusicImportAvailable } from "@/services/desktop/music";
 import { isVoiceSurfaceAvailable, suggestShotEffects } from "@/services/desktop/voices";
+import { submitAudioJob } from "@/services/desktop/jobs";
+import { channelIdForModel, decodeModelSelection } from "@/services/desktop/model-selection";
+import { useEffectiveConfig } from "@/stores/use-config-store";
 import type { desktop } from "@/wailsjs/go/models";
 
 /**
@@ -186,6 +189,9 @@ type CueDraft = {
 export function TimelineSection({ episodes, activeEpisodeId, onSelectEpisode, onChanged }: TimelineSectionProps) {
     const { t } = useTranslation();
     const { message } = App.useApp();
+    // The effect's generation reads the same audio configuration the audio section submits with, so a
+    // provider and voice chosen once serve both surfaces.
+    const config = useEffectiveConfig();
 
     const [timeline, setTimeline] = useState<desktop.TimelineDTO | null>(null);
     const [capability, setCapability] = useState<desktop.MediaCapabilityDTO | null>(null);
@@ -236,6 +242,8 @@ export function TimelineSection({ episodes, activeEpisodeId, onSelectEpisode, on
      */
     const [importingMusic, setImportingMusic] = useState(false);
     const [importedMusic, setImportedMusic] = useState<{ name: string; bytes: number } | null>(null);
+    /** generatingEffect names the shot whose effect job is being submitted, so one row spins and not all. */
+    const [generatingEffect, setGeneratingEffect] = useState("");
     const [busy, setBusy] = useState("");
     const [error, setError] = useState("");
     const [notice, setNotice] = useState("");
@@ -969,6 +977,54 @@ export function TimelineSection({ episodes, activeEpisodeId, onSelectEpisode, on
     }
 
     /**
+     * acceptEffect suggests and GENERATES: it submits a speech job for the shot's suggested effect.
+     *
+     * # What FR-080's 生成适配 half means here
+     *
+     * The suggestion itself is a projection and is stored nowhere — that is WP-27's ruling, and it is
+     * what keeps a suggestion from going stale when the intent is edited. ACCEPTING one is the act that
+     * creates a fact, and the fact is an audio job: its bytes are spoken from the effect's own words and
+     * its result is attached to the shot as an `audio_effect` version, which the mix layers as
+     * punctuation rather than as a line of speech.
+     *
+     * The prompt is built from the MATCHED term rather than from the effect's name: a provider asked for
+     * "footsteps" produces generic steps, while one asked for 「脚步」 in the language the script is
+     * written in produces what the scene describes.
+     */
+    const acceptEffect = async (shot: desktop.TimelineShotDTO, effect: string, matched: string) => {
+        const selection = config.audioModel || config.model;
+        const decoded = decodeModelSelection(selection);
+        const channelId = channelIdForModel(config, selection);
+        if (!decoded.model || !channelId) {
+            message.error(t("studio.video.modelRequired"));
+            return;
+        }
+        setGeneratingEffect(shot.shotId);
+        try {
+            const job = await submitAudioJob({
+                projectId,
+                episodeId: activeEpisodeId,
+                // The job's entity is the SHOT's row here rather than a dialogue line, because a sound
+                // effect does not belong to a line. The binding's field is named for the line because
+                // that is what speech usually renders; an effect job is the same command with a different
+                // subject, and the entity is what records which.
+                dialogueLineId: shot.shotId,
+                providerId: channelId,
+                model: decoded.model,
+                text: matched,
+                voice: config.audioVoice || undefined,
+                format: config.audioFormat || undefined,
+            } as never);
+            message.success(t("studio.timeline.effectSubmitted", { effect, job: job.id.slice(0, 8) }));
+            onChanged();
+        } catch (failure) {
+            message.error(failure instanceof Error ? failure.message : t("studio.timeline.effectFailed"));
+        } finally {
+            setGeneratingEffect("");
+        }
+    };
+
+    /**
      * importMusic carries the chosen file into the library as a bed.
      *
      * # The shot it is attached to
@@ -1121,6 +1177,12 @@ export function TimelineSection({ episodes, activeEpisodeId, onSelectEpisode, on
                                             <Space size="small" data-testid={`studio-timeline-effect-${row.shotId}`}>
                                                 <Tag color="blue">{t(`studio.effect.${suggestion.effect}`, { defaultValue: suggestion.effect })}</Tag>
                                                 <Typography.Text type="secondary">← {suggestion.matched}</Typography.Text>
+                                                {/* ACCEPTING IS WHAT CREATES THE FACT. A suggestion is a
+                                                    projection and is stored nowhere; this button submits the
+                                                    job whose result becomes the shot's effect version. */}
+                                                <Button size="small" loading={generatingEffect === row.shotId} data-testid={`studio-timeline-effect-generate-${row.shotId}`} onClick={() => void acceptEffect(row, suggestion.effect, suggestion.matched)}>
+                                                    {t("studio.timeline.effectGenerate")}
+                                                </Button>
                                             </Space>
                                         );
                                     },

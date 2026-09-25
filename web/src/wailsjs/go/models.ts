@@ -1295,6 +1295,26 @@ export namespace desktop {
 	        this.characterEntityId = source["characterEntityId"];
 	    }
 	}
+	export class CollectAudioJobResultsRequest {
+	    assetByJob: Record<string, string>;
+	    jobIds: string[];
+	    usageRole?: string;
+	    consumerType: string;
+	    consumerId: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new CollectAudioJobResultsRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.assetByJob = source["assetByJob"];
+	        this.jobIds = source["jobIds"];
+	        this.usageRole = source["usageRole"];
+	        this.consumerType = source["consumerType"];
+	        this.consumerId = source["consumerId"];
+	    }
+	}
 	export class CollectBatchResultsRequest {
 	    assetByItem: Record<string, string>;
 	    jobIds: string[];

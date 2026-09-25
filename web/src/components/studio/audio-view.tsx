@@ -5,7 +5,7 @@ import { Mic, RefreshCw } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { listJobs, submitAudioJob } from "@/services/desktop/jobs";
-import { getScriptStructure, isDramaBindingsAvailable, listScriptVersions, listStoryEntities } from "@/services/desktop/drama";
+import { collectAudioJobResults, createAsset, getScriptStructure, listAssets, isDramaBindingsAvailable, listScriptVersions, listStoryEntities } from "@/services/desktop/drama";
 import { isMediaBindingsAvailable, readTimeline } from "@/services/desktop/media";
 import {
     assignCharacterVoice,
@@ -107,6 +107,29 @@ function flattenSpokenLines(structure: desktop.ScriptStructureDTO): SpokenLine[]
     return out;
 }
 
+/**
+ * audioAssetFor finds or creates the asset a role's versions belong to.
+ *
+ * # Why one asset per role rather than one per line
+ *
+ * Every take of a line is a VERSION of the same idea, which is what makes re-recording it a new version
+ * instead of a second object — and it is what `AttachJobResult` expects, since it takes an asset id and
+ * returns a version. One asset for all speech and another for all effects is the coarsest arrangement
+ * that still tells the two apart, and it matches what the asset list can be searched by: `ListAssets`
+ * filters on TYPE, and every one of these is an `audio` asset.
+ *
+ * The name carries the role so a user browsing the library sees which is which rather than two rows
+ * called "audio".
+ */
+async function audioAssetFor(projectId: string, role: string): Promise<string> {
+    const label = role === "audio_effect" ? "Sound effects" : "Line speech";
+    const existing = await listAssets({ projectId, types: ["audio"] } as never);
+    const match = existing.find((record) => record.name === label);
+    if (match) return match.id;
+    const created = await createAsset({ projectId, type: "audio", name: label } as never);
+    return created.id;
+}
+
 export function AudioSection({ projectId, episodes, activeEpisodeId, onSelectEpisode, onChanged }: AudioSectionProps) {
     const { t } = useTranslation();
     const { message } = App.useApp();
@@ -143,6 +166,14 @@ export function AudioSection({ projectId, episodes, activeEpisodeId, onSelectEpi
     const [castCharacterId, setCastCharacterId] = useState("");
     const [castVoice, setCastVoice] = useState("");
     const [casting, setCasting] = useState(false);
+    /**
+     * The job whose result is being attached, and the role it is attached as.
+     *
+     * The role is the USER's choice rather than a guess from the job's text: a line of speech and a
+     * sound effect are both audio jobs, and which one this is decides how the clip is layered — a bed at
+     * 0.35, an effect at unity, a line placed at its shot.
+     */
+    const [attaching, setAttaching] = useState("");
     /**
      * The resolved voice for the picked line, and its PROVENANCE.
      *
@@ -383,6 +414,52 @@ export function AudioSection({ projectId, episodes, activeEpisodeId, onSelectEpi
         // `voices` is a dependency because casting a character changes the answer for that character's
         // line, and the caption must follow the cast rather than the configuration it replaced.
     }, [projectId, lineId, chosenLine, config.audioVoice, config.audioModel, voices]);
+
+    /**
+     * attachJobResult turns a succeeded audio job's result into the version the mix reads.
+     *
+     * # Why the user must press this
+     *
+     * Three facts are the caller's to state and cannot all be inferred: WHICH asset the version belongs
+     * to, WHICH shot consumes it, and WHETHER the audio is a line's speech or a sound effect. The job
+     * names a dialogue LINE, and a line is not a shot — so the shot comes from the section's own
+     * selection, and a section with no shot selected says so rather than guessing.
+     *
+     * # The asset
+     *
+     * One asset per role, reused across lines: a line's speech and a sound effect are different things to
+     * a reader, and every line's take is a VERSION of the same idea rather than an asset of its own — which
+     * is what makes re-recording a line a new version instead of a second object. The asset is created on
+     * first use.
+     */
+    const attachJob = async (jobID: string, role: string) => {
+        if (!selectedShotId) {
+            message.error(t("studio.audio.attachNoShot"));
+            return;
+        }
+        setAttaching(jobID);
+        try {
+            const assetID = await audioAssetFor(projectId, role);
+            const collected = await collectAudioJobResults({
+                assetByJob: { [jobID]: assetID },
+                jobIds: [jobID],
+                usageRole: role,
+                consumerType: "shot",
+                consumerId: selectedShotId,
+            } as never);
+            if (collected.length === 0) {
+                message.error(t("studio.audio.attachNothing"));
+                return;
+            }
+            message.success(t(collected[0].duplicate ? "studio.audio.attachAlready" : "studio.audio.attached"));
+            await reload();
+            onChanged();
+        } catch (failure) {
+            message.error(failure instanceof Error ? failure.message : t("studio.audio.attachFailed"));
+        } finally {
+            setAttaching("");
+        }
+    };
 
     /** castVoice assigns the drafted voice to the picked character. */
     const castCharacter = async () => {
@@ -782,6 +859,27 @@ export function AudioSection({ projectId, episodes, activeEpisodeId, onSelectEpi
                                 render: (value: string) => <Tag color={audioStatusColour(value)}>{t(`jobs.status.${value}`, { defaultValue: value })}</Tag>,
                             },
                             { title: t("studio.audio.jobError"), dataIndex: "errorCode", key: "errorCode", width: 160, render: (value?: string) => value || "—" },
+                            {
+                                // THE STEP THAT MAKES GENERATED SPEECH AUDIBLE. A job's bytes were
+                                // committed and the job succeeded — and nothing turned the result into the
+                                // version a mix reads, so the speech a user generated never reached the
+                                // film. The role is the user's choice because a line and an effect are
+                                // both audio jobs and only the caller knows which this is.
+                                title: "",
+                                key: "attach",
+                                width: 200,
+                                render: (_value, row) =>
+                                    row.status === "succeeded" && row.resultFiles && row.resultFiles.length > 0 ? (
+                                        <Space size="small">
+                                            <Button size="small" loading={attaching === row.id} disabled={!selectedShotId} data-testid={`studio-audio-attach-line-${row.id}`} onClick={() => void attachJob(row.id, "audio_dialogue")}>
+                                                {t("studio.audio.attachLine")}
+                                            </Button>
+                                            <Button size="small" loading={attaching === row.id} disabled={!selectedShotId} data-testid={`studio-audio-attach-effect-${row.id}`} onClick={() => void attachJob(row.id, "audio_effect")}>
+                                                {t("studio.audio.attachEffect")}
+                                            </Button>
+                                        </Space>
+                                    ) : null,
+                            },
                             {
                                 title: t("studio.audio.jobFiles"),
                                 key: "files",

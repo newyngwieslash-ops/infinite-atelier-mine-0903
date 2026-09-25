@@ -1064,6 +1064,29 @@ export async function collectBatchResults(
     return CollectBatchResults(request);
 }
 
+/**
+ * collectAudioJobResults turns a succeeded audio job's result into the version a mix reads.
+ *
+ * # Why this is the command that makes generated speech audible
+ *
+ * A TTS job's bytes were committed and the job was marked succeeded, and that was the end of it: nothing
+ * turned the result into an asset version, so the speech a user generated never reached the mix. The
+ * read joins `asset_usages` on a shot and requires the version to be the asset's current approved one,
+ * and neither existed. This command performs the three steps that close the chain — attach the result,
+ * approve it, record the usage — and `usageRole` is what makes a collected effect an effect rather than
+ * a second dialogue track.
+ *
+ * `consumerType` and `consumerId` name the SHOT, which is not a default: the mix's join finds nothing
+ * else, so a caller that did not say which shot would get a version no read sees.
+ */
+export async function collectAudioJobResults(
+    request: desktop.CollectAudioJobResultsRequest,
+): Promise<desktop.CollectedCandidateDTO[]> {
+    if (!isDramaBindingsAvailable()) throw unavailableError();
+    const { CollectAudioJobResults } = await loadDramaBinding();
+    return CollectAudioJobResults(request);
+}
+
 export async function createPanelVersion(
     request: desktop.CreatePanelVersionRequest,
 ): Promise<desktop.StoryboardPanelVersionDTO> {

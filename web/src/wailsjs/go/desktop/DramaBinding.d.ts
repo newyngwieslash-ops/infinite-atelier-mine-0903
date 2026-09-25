@@ -30,6 +30,8 @@ export function CheckStoryboardGate(arg1:desktop.CheckStoryboardGateRequest):Pro
 
 export function ClearStaleMark(arg1:desktop.ClearStaleMarkRequest):Promise<boolean>;
 
+export function CollectAudioJobResults(arg1:desktop.CollectAudioJobResultsRequest):Promise<Array<desktop.CollectedCandidateDTO>>;
+
 export function CollectBatchResults(arg1:desktop.CollectBatchResultsRequest):Promise<Array<desktop.CollectedCandidateDTO>>;
 
 export function CountDomainEvents(arg1:desktop.ListDomainEventsRequest):Promise<number>;

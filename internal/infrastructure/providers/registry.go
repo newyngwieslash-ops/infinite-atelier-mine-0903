@@ -63,6 +63,10 @@ type Registry struct {
 	// must be selectable: a build keeps the mock for its own tests and a user configures a real
 	// provider beside it.
 	openaiVideo appjobs.VideoPort
+	// openaiAudio is the real synchronous speech adapter, resolved for `openai_compatible`. It is a
+	// field of its own for the same reason `openaiVideo` is: the mock serves `mock_media` and both must
+	// be selectable, so one field would make one of them unreachable.
+	openaiAudio appjobs.AudioPort
 
 	// mockText is the deterministic text adapter. It is optional and reachable
 	// only for KindMockText, which no persisted configuration can carry; see
@@ -110,6 +114,19 @@ func (r *Registry) WithOpenAIVideoAdapter(adapter appjobs.VideoPort) *Registry {
 		return r
 	}
 	r.openaiVideo = adapter
+	return r
+}
+
+// WithOpenAIAudioAdapter registers the real synchronous speech adapter.
+//
+// It is a third registration rather than a widening of `WithMediaAdapters`, which takes the MOCK, and
+// its reasoning is the video one: the two are selected by different provider kinds and a single field
+// would make one unreachable.
+func (r *Registry) WithOpenAIAudioAdapter(adapter appjobs.AudioPort) *Registry {
+	if r == nil {
+		return r
+	}
+	r.openaiAudio = adapter
 	return r
 }
 
@@ -292,6 +309,19 @@ func (r *Registry) AudioPortFor(ctx context.Context, providerID string) (appjobs
 			return nil, provider.NewUnsupportedError()
 		}
 		return r.audio, nil
+	case provider.KindOpenAICompatible:
+		// A REAL adapter now resolves here (WP-30), for the same reason the video one does: the protocol
+		// — JSON in, audio bytes out — is the OpenAI-compatible family's, and a fourth kind would have
+		// cost a migration plus a validation change to buy a NAME.
+		//
+		// WHAT KEEPS A TEXT PROVIDER FROM BEING ASKED FOR SPEECH is not this switch: it is the provider's
+		// own answer. An endpoint with no speech capability refuses the request with an HTTP error, the
+		// adapter classifies it, and the job fails with a message — which is how a real provider behaves
+		// and what a user needs to see, rather than a local guess about what a URL can do.
+		if r.openaiAudio == nil {
+			return nil, provider.NewUnsupportedError()
+		}
+		return r.openaiAudio, nil
 	default:
 		return nil, provider.NewUnsupportedError()
 	}

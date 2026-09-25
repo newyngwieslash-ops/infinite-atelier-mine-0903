@@ -69,3 +69,4 @@
 | 0028 | Multi-character voice casting, effect suggestions, and two rules no code could reach | Accepted |
 | 0029 | The first/last-frame picker, the empty data URL behind it, and the shot batch | Accepted |
 | 0030 | Background music import, the bed that started eight seconds late, and the link that could never succeed | Accepted |
+| 0031 | The speech adapter, the chain that had a hole in the middle, and style references | Accepted |

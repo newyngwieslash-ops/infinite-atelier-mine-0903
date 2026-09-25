@@ -336,6 +336,15 @@ func (w *agentWiring) Production() *appproductionpipeline.Service {
 	return w.production
 }
 
+// The compile-time proof that the production service satisfies the batch port the drama binding declares.
+//
+// IT WAS MISSING, and its absence is the shape WP-29 found: `AttachProductionBatch` takes an interface,
+// the composition root passes the concrete service, and nothing asserted the two agreed — so widening the
+// port would have been caught only by the BUILD, at the one call site, if the call site happened to be
+// compiled. A build that composed a different implementation would have discovered it at runtime as a
+// binding that answered "unavailable" for a command that exists.
+var _ desktop.ProductionBatch = (*appproductionpipeline.Service)(nil)
+
 // Pipeline returns the script pipeline, or nil when this stack is not composed.
 func (w *agentWiring) Pipeline() *appscriptpipeline.Service {
 	if w == nil {

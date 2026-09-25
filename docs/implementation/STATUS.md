@@ -58,6 +58,67 @@
 > now closed and **P1 to P4 are unchanged** — P1 opens with FR-100's explicit-stage-dependency
 > ruling, which is a product decision rather than a code task.
 
+# 0zh. WP-30: the speech adapter, and the chain that had a hole in the middle (2026-09-25)
+
+WP-30 delivers the last two things P3 named as open: FR-080's 音效建议与**生成适配**, and the video
+`references` field's picker. Reading the audio side before writing the adapter found a third, larger
+thing.
+
+## The chain had a hole in the middle
+
+**A TTS JOB'S RESULT NEVER BECAME AN ASSET VERSION.** The bytes were committed, the job was marked
+succeeded, and that was the end. `attachAudioClips` joins `asset_usages` on a shot and requires the
+version to be the asset's current approved one — and **no version existed**, so the speech a user
+generated never reached the mix. The only rows of that shape in the build were written by WP-11's walk BY
+HAND, under a comment saying it writes "the asset, version, file and usage **a TTS job's result leaves**".
+`AttachJobResult` had a Wails binding, the audio section listed a job's `resultFiles`, and nothing joined
+the two ends. Same shape as WP-29's D2 and D3: every test passed because every test supplied its own
+equivalent of production.
+
+`CollectAudioJobResults` (with a Wails binding and the audio section's own attach action) closes it:
+attach the result, approve it, record the usage — against the SHOT, because the mix's join finds nothing
+else, and the command REFUSES a caller that does not name both halves.
+
+## The adapter
+
+`openai_audio.go` is SYNCHRONOUS, shaped like the image adapter: `AudioPort` has one method where
+`VideoPort` has four, and an adapter that polled anyway would invent a protocol the port does not have.
+Two response shapes branched on content type, the transport's own ceiling as the bound, and the
+capability column's `'audio'` value written for the FIRST time — it had been admitted since migration
+000003 with no writer, so a query for a project's speech calls found none. `AudioPortFor` now resolves
+`openai_compatible`; it returned `unsupported` for every kind but the mock, which is WP-26's sentence
+verbatim. **The protocol's field names are an assumption** (ADR-0031), and STATUS does not claim a live
+vendor.
+
+## Style references, and a compile-time proof that was missing
+
+The picker takes OTHER SHOTS' approved frames, by the `mediaHash` the timeline already carries and WP-28's
+loader already opens — **no new binding**. Two bounds, because both are real: eight references (the
+binding's own) and twelve megabytes (a job's input is a database row).
+
+A compile-time proof was added for the batch port (`var _ desktop.ProductionBatch = (*appproductionpipeline.Service)(nil)`).
+Its absence is how WP-29's adapter went untested: a port satisfied only by the build's one call site is a
+port nothing checks.
+
+## Verification
+
+| Command | Result |
+|---|---|
+| `go test ./... -count=1` | **PASS** |
+| `go vet ./...` | **PASS** |
+| mutation set, 18 mutations over three files | **18/18 killed**, all files restored byte-exact |
+| `web` `npm run typecheck` / `npm test` | **PASS**, 128 tests |
+| `sh scripts/verify.sh` | **PASS**, exit 0 (705 files scanned; 25 Playwright; all fixture, SBOM and security checks) |
+
+`audio_chain_wp30_test.go` drives a job's result to the mix over the real schema, and the walk was
+verified non-vacuous: removing the collector's approval step makes it fail with "a generated effect did
+not reach the mix".
+
+## What remains open
+
+**Not verifiable here**: that a real vendor accepts either request body (ADR-0031). **Environment**, not
+code: the local ONNX model is not committed and its path is an environment variable. Both stay named.
+
 # 0zg. WP-29: background music import, and three defects it found in code that already shipped (2026-09-25)
 
 WP-29 delivers FR-080's 背景音乐导入 — the last of that V1 audio list's four clauses that a user could not
@@ -177,9 +238,11 @@ adapter's test fail with "the reference travelled as an EMPTY data URL" and the 
 
 ## What remains open from item 21
 
-**Not built**: style references have no picker (`references` stays unsent) and the size field has no
-control. **Not verifiable here**: that a real vendor accepts the submission body — ADR-0027 records the
-protocol's field names as an assumption, and no authorised call was possible.
+**Style references: DONE — WP-30 (STATUS §0zh, ADR-0031).** The picker takes other shots' approved
+frames by the `mediaHash` the timeline already carries, so no new binding was added, and the twelve-
+megabyte bound is the section's own because a job's input is a database row. **Still unbuilt**: the size
+field has no control. **Not verifiable here**: that a real vendor accepts the submission body — ADR-0027
+records the protocol's field names as an assumption.
 
 # 0ze. WP-27: voice casting and effect suggestions, and two rules no code could reach (2026-09-25)
 

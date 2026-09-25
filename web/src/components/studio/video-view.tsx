@@ -86,6 +86,21 @@ export function VideoSection({ projectId, episodes, activeEpisodeId, onSelectEpi
     const [batchSelection, setBatchSelection] = useState<Record<string, boolean>>({});
     const [batching, setBatching] = useState(false);
     const [batchResult, setBatchResult] = useState<desktop.SubmitVideoBatchResultDTO | null>(null);
+    /**
+     * The style references the user picked, as a map from shot id to the loaded frame.
+     *
+     * # What a style reference IS here
+     *
+     * The frames of OTHER shots in the episode — the ones the timeline already carries a hash for. That
+     * is the honest source: a reference in this build means "make this shot look like that shot", and the
+     * alternative (an arbitrary upload) is a different capability with its own transfer, its own
+     * allowlist and its own story about where the bytes came from.
+     *
+     * The frames are loaded eagerly on selection, so the bound can be enforced on what was actually read
+     * rather than on what was asked for.
+     */
+    const [references, setReferences] = useState<Record<string, ShotFrame>>({});
+    const [referenceError, setReferenceError] = useState("");
 
     const activeEpisode = useMemo(() => episodes.find((episode) => episode.id === activeEpisodeId) || null, [episodes, activeEpisodeId]);
 
@@ -108,6 +123,24 @@ export function VideoSection({ projectId, episodes, activeEpisodeId, onSelectEpi
      * to look when one moves.
      */
     const batchLimit = 6;
+    /**
+     * referenceLimit mirrors the binding's own `maxMediaReferences`.
+     *
+     * It is a SECOND COPY of a number, on the terms `batchLimit`'s note gives: the constant is unexported
+     * Go, and the core REFUSES an oversized request rather than truncating it — so a drifted value
+     * produces a refusal a user sees rather than a silently shortened request. Eight matches the core's.
+     */
+    const referenceLimit = 8;
+    /**
+     * referenceBytesLimit bounds the frames one request carries.
+     *
+     * A job's input is a DATABASE ROW, so a request carrying eight multi-megabyte frames is a request
+     * whose cost lands on every read of that job — the listing, the recovery scan, the detail view. Twelve
+     * megabytes is far above eight panel images at the sizes this build produces and far below what would
+     * make a row unwieldy. The count bound and this one are both needed: eight tiny frames are fine, and
+     * so is one large one, but eight large ones are not.
+     */
+    const referenceBytesLimit = 12 * 1024 * 1024;
 
     /**
      * reload reads the timeline, the machine's capability and the project's video jobs.
@@ -238,6 +271,9 @@ export function VideoSection({ projectId, episodes, activeEpisodeId, onSelectEpi
      * literally named `default::grok-imagine-video`. So the selection is DECODED here through the
      * same shared helper the secure image path uses.
      */
+    /** referenceList is the picked references in a stable order, which the request and the UI share. */
+    const referenceList = useMemo(() => Object.values(references), [references]);
+
     const submit = async () => {
         if (!selectedShot || !activeEpisode) return;
         const selection = config.videoModel || config.model;
@@ -282,6 +318,11 @@ export function VideoSection({ projectId, episodes, activeEpisodeId, onSelectEpi
                 firstFrameMime: wantsFirst ? frame!.mime : undefined,
                 lastFrame: wantsLast ? frame!.dataUrl : undefined,
                 lastFrameMime: wantsLast ? frame!.mime : undefined,
+                // THE STYLE REFERENCES, in the order the picks were made (object key order, which for
+                // string keys is insertion order). The core assembles them before the two frames, which is
+                // FR-080's order and the only statement of which is which.
+                references: referenceList.length > 0 ? referenceList.map((entry) => entry.dataUrl) : undefined,
+                referenceMimes: referenceList.length > 0 ? referenceList.map((entry) => entry.mime) : undefined,
             } as never);
             message.success(t("studio.video.submitted", { job: job.id.slice(0, 8) }));
             setPrompt("");
@@ -292,6 +333,49 @@ export function VideoSection({ projectId, episodes, activeEpisodeId, onSelectEpi
         } finally {
             setSubmitting(false);
         }
+    };
+
+    /**
+     * toggleReference adds or removes another shot's approved frame as a style reference.
+     *
+     * # The two bounds, and why both are checked here
+     *
+     * The COUNT is the binding's own (`maxMediaReferences`, which the core also enforces) and the BYTES
+     * are this section's: eight frames of a large panel image would put megabytes into one job's input,
+     * and the job row is a database row rather than a file. A frame that cannot be read is reported
+     * rather than added as an empty entry, which is the rule the first-frame picker already keeps.
+     */
+    const toggleReference = async (shot: desktop.TimelineShotDTO, wanted: boolean) => {
+        if (!wanted) {
+            setReferences((current) => {
+                const next = { ...current };
+                delete next[shot.shotId];
+                return next;
+            });
+            return;
+        }
+        if (Object.keys(references).length >= referenceLimit) {
+            setReferenceError(t("studio.video.referenceLimit", { max: referenceLimit }));
+            return;
+        }
+        if (!shot.mediaHash) {
+            setReferenceError(t("studio.video.referenceNoMedia"));
+            return;
+        }
+        const loaded = await loadShotFrame(shot.mediaHash);
+        if (!loaded) {
+            setReferenceError(t("studio.video.frameUnreadable"));
+            return;
+        }
+        // The total is bounded because a job's input is a row, not a file: a request carrying eight
+        // multi-megabyte frames is a request whose cost lands on every read of that job.
+        const total = Object.values(references).reduce((sum, frame) => sum + frame.size, 0) + loaded.size;
+        if (total > referenceBytesLimit) {
+            setReferenceError(t("studio.video.referenceTooLarge"));
+            return;
+        }
+        setReferenceError("");
+        setReferences((current) => ({ ...current, [shot.shotId]: loaded }));
     };
 
     /**
@@ -385,6 +469,24 @@ export function VideoSection({ projectId, episodes, activeEpisodeId, onSelectEpi
                 <Button size="small" type={row.shotId === selectedShotId ? "primary" : "default"} data-testid={`studio-video-select-${row.shotId}`} onClick={() => setSelectedShotId(row.shotId)}>
                     {t("studio.video.selectShot")}
                 </Button>
+            ),
+        },
+        {
+            // THE STYLE REFERENCE, per shot. The subject is a shot the user is NOT generating — "make
+            // this one look like that one" — so the switch lives on every row rather than on the selected
+            // shot's form. A shot with no approved frame has nothing to contribute, and its switch is
+            // disabled rather than silently doing nothing.
+            title: t("studio.video.referenceLabel"),
+            key: "reference",
+            width: 130,
+            render: (_value, row) => (
+                <Switch
+                    size="small"
+                    checked={Boolean(references[row.shotId])}
+                    disabled={!row.mediaHash}
+                    data-testid={`studio-video-reference-${row.shotId}`}
+                    onChange={(checked) => void toggleReference(row, checked)}
+                />
             ),
         },
     ];
@@ -618,6 +720,14 @@ export function VideoSection({ projectId, episodes, activeEpisodeId, onSelectEpi
                     unsent because there is no picker for a style reference, and the size field has no
                     control either. Both are the binding's to accept and this section's to leave out. */}
                 <Typography.Paragraph className="mt-3 text-xs text-stone-500">{t("studio.video.framesNote")}</Typography.Paragraph>
+                {referenceError ? (
+                    <Alert className="mt-2" type="warning" showIcon message={referenceError} data-testid="studio-video-reference-error" />
+                ) : null}
+                {referenceList.length > 0 ? (
+                    <Typography.Paragraph className="mt-2 text-xs text-stone-500" data-testid="studio-video-reference-count">
+                        {t("studio.video.referenceChosen", { count: referenceList.length, max: referenceLimit })}
+                    </Typography.Paragraph>
+                ) : null}
             </section>
 
             <section>

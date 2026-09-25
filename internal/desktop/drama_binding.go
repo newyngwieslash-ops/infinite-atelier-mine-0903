@@ -2085,6 +2085,10 @@ type ProductionBatch interface {
 	CheckStoryboardGate(ctx context.Context, request appproductionpipeline.GateCheckRequest) error
 	RunImageBatch(ctx context.Context, request appproductionpipeline.RunImageBatchRequest) (appproductionpipeline.RunImageBatchResult, error)
 	CollectBatchResults(ctx context.Context, request appproductionpipeline.CollectBatchResultsRequest) ([]appproductionpipeline.CollectedCandidate, error)
+	// CollectAudioJobResults is the audio counterpart (WP-30). It is on THIS port rather than on a new
+	// one because it is the same act over the same service — a succeeded job's result becoming a
+	// version with a usage — and a second port would be a second place for the two to drift.
+	CollectAudioJobResults(ctx context.Context, request appproductionpipeline.CollectAudioJobResultsRequest) ([]appproductionpipeline.CollectedCandidate, error)
 	ApproveCandidate(ctx context.Context, request appproductionpipeline.ApproveCandidateRequest) (storyboard.StoryboardPanelVersion, error)
 }
 
@@ -2230,6 +2234,55 @@ func (b *DramaBinding) CollectBatchResults(request CollectBatchResultsRequest) (
 		AssetByItem: request.AssetByItem,
 		JobIDs:      request.JobIDs,
 		UsageRole:   request.UsageRole,
+	})
+	if err != nil {
+		return nil, toDramaError(err)
+	}
+	out := make([]CollectedCandidateDTO, 0, len(collected))
+	for _, candidate := range collected {
+		out = append(out, CollectedCandidateDTO{
+			JobID: candidate.JobID, ItemID: candidate.ItemID, AssetID: candidate.AssetID,
+			VersionID: candidate.VersionID, VersionNumber: candidate.VersionNumber,
+			Duplicate: candidate.Duplicate,
+		})
+	}
+	return out, nil
+}
+
+// CollectAudioJobResultsRequest names the audio jobs to collect and the role their versions carry.
+type CollectAudioJobResultsRequest struct {
+	// AssetByJob maps a job to the asset its result becomes a version of.
+	AssetByJob map[string]string `json:"assetByJob"`
+	JobIDs     []string          `json:"jobIds"`
+	// UsageRole is `audio_dialogue` for a line's speech, `audio_effect` for a sound effect.
+	UsageRole string `json:"usageRole,omitempty"`
+	// ConsumerType and ConsumerID name what consumes the version. Both are required, because the mix's
+	// join is (consumer_type='shot', consumer_id=<a shot>) and a usage recorded any other way is a row
+	// no read finds.
+	ConsumerType string `json:"consumerType"`
+	ConsumerID   string `json:"consumerId"`
+}
+
+// CollectAudioJobResults turns a succeeded audio job's result into the version a mix reads.
+//
+// # Why this command is the one that makes speech audible
+//
+// A TTS job's bytes were committed and the job was marked succeeded — and that was the end of it.
+// Nothing turned the result into an asset version, so the speech a user generated never reached the mix:
+// the read joins on the shot and requires the version to be the asset's current approved one. This
+// command performs the three steps that close it — attach the result as a version, approve it, record
+// the usage — over the service that owns each.
+func (b *DramaBinding) CollectAudioJobResults(request CollectAudioJobResultsRequest) ([]CollectedCandidateDTO, error) {
+	batch := b.productionBatch()
+	if batch == nil {
+		return nil, bindingUnavailable()
+	}
+	collected, err := batch.CollectAudioJobResults(b.context(), appproductionpipeline.CollectAudioJobResultsRequest{
+		AssetByJob:   request.AssetByJob,
+		JobIDs:       request.JobIDs,
+		UsageRole:    request.UsageRole,
+		ConsumerType: request.ConsumerType,
+		ConsumerID:   request.ConsumerID,
 	})
 	if err != nil {
 		return nil, toDramaError(err)
