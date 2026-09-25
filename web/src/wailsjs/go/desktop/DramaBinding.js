@@ -298,6 +298,10 @@ export function MergeChapter(arg1) {
   return window['go']['desktop']['DramaBinding']['MergeChapter'](arg1);
 }
 
+export function MergeStoryEntity(arg1) {
+  return window['go']['desktop']['DramaBinding']['MergeStoryEntity'](arg1);
+}
+
 export function OpenStoryConflict(arg1) {
   return window['go']['desktop']['DramaBinding']['OpenStoryConflict'](arg1);
 }

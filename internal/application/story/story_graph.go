@@ -4,6 +4,8 @@ import (
 	"context"
 	"strings"
 
+	eventsapp "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/events"
+	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/event"
 	storydomain "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/story"
 )
 
@@ -546,6 +548,100 @@ type MergeChapterRequest struct {
 // discarded rather than concatenated, since joining two names produces a name no
 // document contained. What the merged chapter covers is the union of the two
 // ranges, so the text still adds up.
+// MergeStoryEntityRequest merges one entity into another.
+type MergeStoryEntityRequest struct {
+	// SurvivorID is the entity that keeps its row. The caller names it because which of two
+	// duplicates should be KNOWN by which name is a writer's decision, and this command has no basis
+	// for making it.
+	SurvivorID string
+	// AbsorbedID is the entity whose references move and whose row is removed.
+	AbsorbedID string
+	// Revision is the SURVIVOR's revision, because a merge changes that row.
+	Revision int64
+}
+
+// MergeStoryEntity moves every reference from one entity to another and removes the absorbed row.
+//
+// # FR-030's 「用户可合并重复实体并保留别名」
+//
+// Two extractions of one character arrive as two rows, each with the names and events its own chapter
+// gave it. Merging is the user's act — the domain has recorded since WP-05 that a canonical-name
+// collision is 「报告而非合并」, and this is the command that lets a person decide — and what it
+// does is keep EVERYTHING: the absorbed entity's aliases, its event participations, its character
+// states and its original-text evidence all move to the survivor.
+//
+// # What is refused
+//
+//   - merging an entity into itself, which would delete it;
+//   - a survivor that does not exist, or one whose revision moved (the repository's guard);
+//   - an absorbed entity that is LOCKED. A lock is a user's statement that this row is settled, and
+//     a merge is exactly the kind of change the lock exists to prevent — the same refusal
+//     `AddStoryEntityAlias` makes for the same reason.
+//
+// # What it does NOT do
+//
+// It does not turn the absorbed entity's canonical name into an alias of the survivor. Which name a
+// merged character should be known by is the decision the caller made by naming the survivor, and
+// adding the other name silently would be this command making it for them. The absorbed name comes
+// back in the result so a UI can offer it.
+func (s *Service) MergeStoryEntity(ctx context.Context, request MergeStoryEntityRequest) (MergeEntitiesResult, error) {
+	if !s.Available() {
+		return MergeEntitiesResult{}, storageFailure()
+	}
+	survivorID := strings.TrimSpace(request.SurvivorID)
+	absorbedID := strings.TrimSpace(request.AbsorbedID)
+	if survivorID == "" || absorbedID == "" {
+		return MergeEntitiesResult{}, storydomain.InvalidError("A merge needs both entities.")
+	}
+	if survivorID == absorbedID {
+		return MergeEntitiesResult{}, storydomain.InvalidError("An entity cannot be merged into itself.")
+	}
+	// Both rows are read first so the refusals below are about the STORED state rather than about what
+	// the caller believes, which is the same order every command in this file keeps.
+	survivor, err := s.repository.GetStoryEntity(ctx, survivorID)
+	if err != nil {
+		return MergeEntitiesResult{}, err
+	}
+	absorbed, err := s.repository.GetStoryEntity(ctx, absorbedID)
+	if err != nil {
+		return MergeEntitiesResult{}, err
+	}
+	if survivor.ProjectID != absorbed.ProjectID {
+		return MergeEntitiesResult{}, storydomain.InvalidError("Only entities of the same project can be merged.")
+	}
+	// A lock is a user's statement that a row is settled, and a merge is exactly the change it exists
+	// to prevent. The refusal is the one AddStoryEntityAlias makes for the same reason, and it names
+	// WHICH entity is locked because the two need different actions.
+	if absorbed.Status == storydomain.FactLocked {
+		return MergeEntitiesResult{}, storydomain.ConflictError("The entity being absorbed is locked, so it cannot be merged. Unlock it first.")
+	}
+	if survivor.Status == storydomain.FactLocked {
+		return MergeEntitiesResult{}, storydomain.ConflictError("The surviving entity is locked, so it cannot be merged. Unlock it first.")
+	}
+	result, err := s.repository.MergeEntities(ctx, survivorID, absorbedID, request.Revision)
+	if err != nil {
+		return MergeEntitiesResult{}, err
+	}
+	if result.AbsorbedName == "" {
+		result.AbsorbedName = absorbed.CanonicalName
+	}
+	// Section 17's StoryFactAccepted, which is the vocabulary's name for a fact-layer change a person
+	// made. A merge has no type of its own and this command does NOT invent one: the list is closed
+	// and §17 defines it, so a new name would be this package writing a specification. `StoryFactAccepted`
+	// is the honest fit — the survivor's fact set changed, and the event names the survivor as its
+	// aggregate, which is what a reader following the stream needs.
+	//
+	// Best effort: the rows are committed, so a failed announcement must not tell the caller the merge
+	// did not happen.
+	s.recordEvent(ctx, eventsapp.Draft{
+		Type:          event.StoryFactAccepted,
+		AggregateType: event.AggregateStoryEntity,
+		AggregateID:   survivorID,
+		ProjectID:     survivor.ProjectID,
+	})
+	return result, nil
+}
+
 func (s *Service) MergeChapter(ctx context.Context, request MergeChapterRequest) (storydomain.Chapter, error) {
 	if !s.Available() {
 		return storydomain.Chapter{}, storageFailure()

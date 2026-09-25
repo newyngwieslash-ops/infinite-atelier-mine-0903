@@ -87,6 +87,15 @@ type ChapterRepository interface {
 	// and renumbering the boundaries that follow it. expectedRevision is the
 	// revision the caller read for the surviving chapter, for the same reason.
 	MergeChapters(ctx context.Context, merged storydomain.Chapter, absorbedID string, expectedRevision int64) error
+	// MergeEntities moves every reference from one story entity to another and
+	// removes the absorbed row, reporting what moved.
+	//
+	// The reference set is the implementation's knowledge — four tables plus a
+	// polymorphic column today — and it is stated there rather than here because a
+	// port method's job is to name the ACT rather than to freeze the schema.
+	// `expectedRevision` is the SURVIVOR's revision, for the reason MergeChapters'
+	// is: a merge changes the surviving row, so a stale caller is refused.
+	MergeEntities(ctx context.Context, survivorID, absorbedID string, expectedRevision int64) (MergeEntitiesResult, error)
 	// ConfirmChapters marks a version's boundaries confirmed and records the
 	// governance event in the same transaction.
 	//
@@ -224,6 +233,20 @@ type Service struct {
 	clock      Clock
 	ids        IDGenerator
 	events     EventRecorder
+}
+
+// MergeEntitiesResult reports what a merge moved.
+//
+// It lives in the application layer rather than beside the implementation because a
+// CALLER reads it: the counts are what a panel shows a user who has just merged two
+// characters, and the absorbed name is what it offers to keep as an alias.
+type MergeEntitiesResult struct {
+	AliasesMoved         int
+	AliasesDropped       int
+	ParticipantsMoved    int
+	CharacterStatesMoved int
+	FactSourcesMoved     int
+	AbsorbedName         string
 }
 
 // Options configures a Service.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 
+	appstory "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/story"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/story"
 )
 
@@ -372,6 +373,26 @@ func (r *StoryRepository) SplitChapter(ctx context.Context, first story.Chapter,
 	}
 	committed = true
 	return nil
+}
+
+// MergeEntities moves every reference from one entity to another and removes the absorbed row.
+//
+// It delegates to the merger, which owns the reference list and the collision rule for duplicate
+// aliases, and it lives here because this file already owns the fact layer's child rows — the same
+// three tables the merge moves.
+func (a *StoryRepository) MergeEntities(ctx context.Context, survivorID, absorbedID string, expectedRevision int64) (appstory.MergeEntitiesResult, error) {
+	result, err := NewEntityMerger(a.db).MergeEntities(ctx, survivorID, absorbedID, expectedRevision)
+	if err != nil {
+		return appstory.MergeEntitiesResult{}, err
+	}
+	return appstory.MergeEntitiesResult{
+		AliasesMoved:         result.AliasesMoved,
+		AliasesDropped:       result.AliasesDropped,
+		ParticipantsMoved:    result.ParticipantsMoved,
+		CharacterStatesMoved: result.CharacterStatesMoved,
+		FactSourcesMoved:     result.FactSourcesMoved,
+		AbsorbedName:         result.AbsorbedName,
+	}, nil
 }
 
 // MergeChapters replaces two adjacent chapters with one.

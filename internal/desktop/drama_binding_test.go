@@ -2942,6 +2942,36 @@ func (s *dramaStore) SplitChapter(_ context.Context, first storydomain.Chapter, 
 }
 
 // MergeChapters mirrors the real repository.
+// MergeEntities is the port's merge over the binding's double.
+//
+// It moves the absorbed entity's references the way the real one does — the aliases and the
+// participations this double holds — because a BINDING test asserts the result the binding converts,
+// and a double that reported nothing would leave that conversion unexercised.
+func (s *dramaStore) MergeEntities(_ context.Context, survivorID, absorbedID string, expectedRevision int64) (appstory.MergeEntitiesResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.failNext != nil {
+		return appstory.MergeEntitiesResult{}, s.failNext
+	}
+	survivor, ok := s.entities[survivorID]
+	if !ok {
+		return appstory.MergeEntitiesResult{}, storydomain.NotFoundError()
+	}
+	absorbed, ok := s.entities[absorbedID]
+	if !ok {
+		return appstory.MergeEntitiesResult{}, storydomain.NotFoundError()
+	}
+	result := appstory.MergeEntitiesResult{AbsorbedName: absorbed.CanonicalName}
+	for _, alias := range s.aliases {
+		if alias.StoryEntityID == absorbedID {
+			result.AliasesMoved++
+		}
+	}
+	delete(s.entities, absorbedID)
+	_ = survivor
+	return result, nil
+}
+
 func (s *dramaStore) MergeChapters(_ context.Context, merged storydomain.Chapter, absorbedID string, expectedRevision int64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

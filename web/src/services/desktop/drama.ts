@@ -657,6 +657,26 @@ export async function listStoryEntityAliases(storyEntityId: string): Promise<des
     return ListStoryEntityAliases(storyEntityId);
 }
 
+/**
+ * mergeStoryEntity merges one extracted entity into another (FR-030).
+ *
+ * 「用户可合并重复实体并保留别名」. The command keeps everything the absorbed entity carried — its
+ * names, its events, its per-position states and its original-text evidence — and removes its row.
+ *
+ * The SURVIVOR is named by the caller rather than chosen by the command, because which of two
+ * duplicates should be known by which name is the writer's decision. `revision` is the survivor's,
+ * and a stale one is refused rather than merged into a state the caller did not read.
+ */
+export async function mergeStoryEntity(request: {
+    survivorId: string;
+    absorbedId: string;
+    revision: number;
+}): Promise<desktop.MergeStoryEntityResultDTO> {
+    if (!isDramaBindingsAvailable()) throw unavailableError();
+    const { MergeStoryEntity } = await loadDramaBinding();
+    return MergeStoryEntity(request as never);
+}
+
 /** listStoryEventParticipants reads one event's participants. */
 export async function listStoryEventParticipants(storyEventId: string): Promise<desktop.StoryEventParticipantDTO[]> {
     if (!isDramaBindingsAvailable()) return [];

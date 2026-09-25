@@ -972,6 +972,59 @@ func (b *DramaBinding) MergeChapter(request MergeChapterRequest) (ChapterDTO, er
 	return toChapterDTO(record), nil
 }
 
+// MergeStoryEntityRequest merges one extracted entity into another.
+type MergeStoryEntityRequest struct {
+	// SurvivorID keeps its row. The caller names it because which of two duplicates should be KNOWN
+	// by which name is a writer's decision.
+	SurvivorID string `json:"survivorId"`
+	// AbsorbedID has its references moved and its row removed.
+	AbsorbedID string `json:"absorbedId"`
+	// Revision is the SURVIVOR's revision: a merge changes that row.
+	Revision int64 `json:"revision"`
+}
+
+// MergeStoryEntityResultDTO reports what a merge moved.
+//
+// The counts are what a panel SHOWS a user who has just merged two characters — "3 names, 2 events"
+// is how they check the merge did what they meant — and the absorbed name is what it offers to keep.
+type MergeStoryEntityResultDTO struct {
+	AliasesMoved         int    `json:"aliasesMoved"`
+	AliasesDropped       int    `json:"aliasesDropped"`
+	ParticipantsMoved    int    `json:"participantsMoved"`
+	CharacterStatesMoved int    `json:"characterStatesMoved"`
+	FactSourcesMoved     int    `json:"factSourcesMoved"`
+	AbsorbedName         string `json:"absorbedName,omitempty"`
+}
+
+// MergeStoryEntity merges one entity into another.
+//
+// FR-030's 「用户可合并重复实体并保留别名」. The command keeps EVERYTHING the absorbed entity
+// carried — its names, its events, its per-position states and its original-text evidence — and the
+// service refuses a locked entity on either side, because a lock is a user's statement that a row is
+// settled.
+func (b *DramaBinding) MergeStoryEntity(request MergeStoryEntityRequest) (MergeStoryEntityResultDTO, error) {
+	service := b.storyService()
+	if service == nil {
+		return MergeStoryEntityResultDTO{}, bindingUnavailable()
+	}
+	result, err := service.MergeStoryEntity(b.context(), appstory.MergeStoryEntityRequest{
+		SurvivorID: request.SurvivorID,
+		AbsorbedID: request.AbsorbedID,
+		Revision:   request.Revision,
+	})
+	if err != nil {
+		return MergeStoryEntityResultDTO{}, toDramaError(err)
+	}
+	return MergeStoryEntityResultDTO{
+		AliasesMoved:         result.AliasesMoved,
+		AliasesDropped:       result.AliasesDropped,
+		ParticipantsMoved:    result.ParticipantsMoved,
+		CharacterStatesMoved: result.CharacterStatesMoved,
+		FactSourcesMoved:     result.FactSourcesMoved,
+		AbsorbedName:         result.AbsorbedName,
+	}, nil
+}
+
 // LockStoryEntityRequest pins or releases a fact under a revision guard.
 type LockStoryEntityRequest struct {
 	ID       string `json:"id"`

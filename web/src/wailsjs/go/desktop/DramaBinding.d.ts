@@ -150,6 +150,8 @@ export function MarkStale(arg1:desktop.MarkStaleRequest):Promise<desktop.StaleMa
 
 export function MergeChapter(arg1:desktop.MergeChapterRequest):Promise<desktop.ChapterDTO>;
 
+export function MergeStoryEntity(arg1:desktop.MergeStoryEntityRequest):Promise<desktop.MergeStoryEntityResultDTO>;
+
 export function OpenStoryConflict(arg1:desktop.OpenStoryConflictRequest):Promise<desktop.StoryFactConflictDTO>;
 
 export function ProjectScriptVersion(arg1:desktop.ProjectScriptVersionRequest):Promise<desktop.ProjectScriptVersionResult>;

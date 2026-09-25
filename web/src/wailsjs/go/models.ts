@@ -3339,6 +3339,44 @@ export namespace desktop {
 	        this.revision = source["revision"];
 	    }
 	}
+	export class MergeStoryEntityRequest {
+	    survivorId: string;
+	    absorbedId: string;
+	    revision: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new MergeStoryEntityRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.survivorId = source["survivorId"];
+	        this.absorbedId = source["absorbedId"];
+	        this.revision = source["revision"];
+	    }
+	}
+	export class MergeStoryEntityResultDTO {
+	    aliasesMoved: number;
+	    aliasesDropped: number;
+	    participantsMoved: number;
+	    characterStatesMoved: number;
+	    factSourcesMoved: number;
+	    absorbedName?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new MergeStoryEntityResultDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.aliasesMoved = source["aliasesMoved"];
+	        this.aliasesDropped = source["aliasesDropped"];
+	        this.participantsMoved = source["participantsMoved"];
+	        this.characterStatesMoved = source["characterStatesMoved"];
+	        this.factSourcesMoved = source["factSourcesMoved"];
+	        this.absorbedName = source["absorbedName"];
+	    }
+	}
 	export class MissingLineDTO {
 	    lineId: string;
 	    type: string;

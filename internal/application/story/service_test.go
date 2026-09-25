@@ -1046,6 +1046,26 @@ func (s *memoryStore) SplitChapter(_ context.Context, first storydomain.Chapter,
 
 // MergeChapters mirrors the real repository: the absorbed chapter is removed and
 // the chapters after it shift down.
+// MergeEntities is the port's merge, and this double answers it without moving anything.
+//
+// The refusal the SERVICE makes — a locked entity, a cross-project pair — is what these tests are
+// about, and they read the entities through the getters the double already serves. A double that
+// moved references would be a second implementation of the merge to keep in step, and the real one's
+// evidence is the database package's tests over the actual tables.
+func (s *memoryStore) MergeEntities(_ context.Context, survivorID, absorbedID string, expectedRevision int64) (MergeEntitiesResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.entities[survivorID]; !ok {
+		return MergeEntitiesResult{}, storydomain.NotFoundError()
+	}
+	absorbed, ok := s.entities[absorbedID]
+	if !ok {
+		return MergeEntitiesResult{}, storydomain.NotFoundError()
+	}
+	delete(s.entities, absorbedID)
+	return MergeEntitiesResult{AbsorbedName: absorbed.CanonicalName}, nil
+}
+
 func (s *memoryStore) MergeChapters(_ context.Context, merged storydomain.Chapter, absorbedID string, expectedRevision int64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

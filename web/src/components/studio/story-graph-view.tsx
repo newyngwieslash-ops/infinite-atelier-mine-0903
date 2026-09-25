@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Alert, App, Button, Empty, Input, Select, Space, Table, Tag } from "antd";
+import { Alert, App, Button, Empty, Input, Modal, Popconfirm, Select, Space, Table, Tag, Typography } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { Check, GitBranch, RefreshCw, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -16,6 +16,7 @@ import {
     listStoryRelations,
     lockStoryEntity,
     lockStoryEvent,
+    mergeStoryEntity,
     rejectStoryEntity,
     resolveStoryConflict,
     unlockStoryEntity,
@@ -79,6 +80,8 @@ export function StoryGraphSection({ projectId }: StoryGraphSectionProps) {
     const [evidence, setEvidence] = useState<{ factId: string; rows: desktop.StoryFactSourceDTO[] } | null>(null);
     const [participants, setParticipants] = useState<{ eventId: string; rows: desktop.StoryEventParticipantDTO[] } | null>(null);
     const [busy, setBusy] = useState<string | null>(null);
+    // The entity a merge is being performed FROM, so the dialog knows which row survives.
+    const [mergeSource, setMergeSource] = useState<desktop.StoryEntityDTO | null>(null);
 
     const [type, setType] = useState<string>("character");
     const [name, setName] = useState("");
@@ -165,6 +168,95 @@ export function StoryGraphSection({ projectId }: StoryGraphSectionProps) {
      * making one: releasing it returns the fact to 'accepted', which is the state
      * it was in before it was pinned.
      */
+// The merge picker. It is a MODAL rather than a row-level menu because the choice is the other
+// entity, which is a row somewhere in the same table — and because the confirmation names what
+// will move, which a user reads before agreeing.
+const mergeDialog = (
+    <Modal
+        open={mergeSource !== null}
+        title={mergeSource ? t("studio.storyGraph.mergeTitle", { name: mergeSource.canonicalName }) : ""}
+        footer={null}
+        onCancel={() => setMergeSource(null)}
+        width="min(92vw, 640px)"
+    >
+        <Typography.Paragraph type="secondary" className="text-xs">
+            {t("studio.storyGraph.mergeHint")}
+        </Typography.Paragraph>
+        <Table<desktop.StoryEntityDTO>
+            size="small"
+            rowKey="id"
+            // Only the SAME project, and only entities other than the survivor: the service refuses
+            // both, and offering them would be a control that fails on its next call.
+            dataSource={entities.filter((candidate) => candidate.id !== mergeSource?.id && candidate.projectId === mergeSource?.projectId)}
+            pagination={{ pageSize: 8 }}
+            data-testid="studio-merge-picker"
+            columns={[
+                { title: t("studio.storyGraph.name"), dataIndex: "canonicalName" },
+                { title: t("studio.storyGraph.type"), dataIndex: "entityType", width: 110 },
+                {
+                    title: "",
+                    key: "action",
+                    width: 140,
+                    render: (_: unknown, candidate: desktop.StoryEntityDTO) =>
+                        mergeSource ? (
+                            <Popconfirm
+                                title={t("studio.storyGraph.mergeConfirmTitle")}
+                                description={t("studio.storyGraph.mergeConfirmBody", {
+                                    absorbed: candidate.canonicalName,
+                                    survivor: mergeSource.canonicalName,
+                                })}
+                                okButtonProps={{ danger: true }}
+                                onConfirm={() => void merge(mergeSource, candidate)}
+                            >
+                                <Button size="small" danger data-testid={`studio-merge-into-${candidate.id}`}>
+                                    {t("studio.storyGraph.mergeInto")}
+                                </Button>
+                            </Popconfirm>
+                        ) : null,
+                },
+            ]}
+        />
+    </Modal>
+);
+
+    /**
+     * merge absorbs one entity into another.
+     *
+     * FR-030's 「用户可合并重复实体并保留别名」. The SURVIVOR is the row the user pressed merge on and the
+     * ABSORBED one is chosen in the dialog, which is the order the wording implies: a user looking at the
+     * row they want to keep is the one who knows which duplicate should win.
+     *
+     * The result is REPORTED rather than assumed — how many names, events and states moved is how a user
+     * checks the merge did what they meant — and the duplicate-name count is reported separately, because
+     * a name both rows carried cannot be moved and silently skipping it would look like a loss.
+     */
+    const merge = async (survivor: desktop.StoryEntityDTO, absorbed: desktop.StoryEntityDTO) => {
+        setBusy(survivor.id);
+        try {
+            const result = await mergeStoryEntity({
+                survivorId: survivor.id,
+                absorbedId: absorbed.id,
+                revision: survivor.revision ?? 0,
+            });
+            message.success(
+                t("studio.storyGraph.merged", {
+                    name: result.absorbedName || absorbed.canonicalName,
+                    aliases: result.aliasesMoved ?? 0,
+                    events: result.participantsMoved ?? 0,
+                }),
+            );
+            if ((result.aliasesDropped ?? 0) > 0) {
+                message.info(t("studio.storyGraph.mergedDuplicates", { count: result.aliasesDropped }));
+            }
+            setMergeSource(null);
+            await load();
+        } catch (failure) {
+            message.error(String(failure));
+        } finally {
+            setBusy("");
+        }
+    };
+
     const toggleLock = async (id: string, revision: number, locked: boolean) => {
         setBusy(id);
         try {
@@ -269,6 +361,15 @@ export function StoryGraphSection({ projectId }: StoryGraphSectionProps) {
                         onClick={() => void toggleLock(record.id, record.revision, record.status === "locked")}
                     >
                         {record.status === "locked" ? t("studio.storyGraph.unlock") : t("studio.storyGraph.lock")}
+                    </Button>
+                    <Button
+                        size="small"
+                        loading={busy === record.id}
+                        disabled={record.status === "locked"}
+                        data-testid={`studio-entity-merge-${record.id}`}
+                        onClick={() => setMergeSource(record)}
+                    >
+                        {t("studio.storyGraph.merge")}
                     </Button>
                     <Button size="small" type="text" onClick={() => void showEvidence("entity", record.id)}>
                         {t("studio.storyGraph.evidence")}
@@ -388,6 +489,7 @@ export function StoryGraphSection({ projectId }: StoryGraphSectionProps) {
 
     if (!available) {
         return (
+
             <Alert
                 type="info"
                 showIcon
@@ -644,6 +746,7 @@ export function StoryGraphSection({ projectId }: StoryGraphSectionProps) {
                     )}
                 </section>
             ) : null}
+            {mergeDialog}
         </div>
     );
 }
