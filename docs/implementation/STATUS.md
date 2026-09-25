@@ -58,6 +58,63 @@
 > now closed and **P1 to P4 are unchanged** — P1 opens with FR-100's explicit-stage-dependency
 > ruling, which is a product decision rather than a code task.
 
+# 0zg. WP-29: background music import, and three defects it found in code that already shipped (2026-09-25)
+
+WP-29 delivers FR-080's 背景音乐导入 — the last of that V1 audio list's four clauses that a user could not
+reach. `AudioRoleMusic` mixed at a documented 0.35 and the timeline section had no control that could
+produce an `audio_music` usage; STATUS section 0y recorded it as open.
+
+Building the control found **three defects**, two of them in code that already shipped.
+
+## D1. A music bed started at its shot
+
+`AudioClip.StartMS` documents that zero "is where a music bed starts and where a dialogue clip does NOT".
+`buildMix` passed EVERY clip the offset of the shot it was attached to, so a bed hung off shot 3 of a
+four-second-per-shot episode began at **8000ms** — the first eight seconds silent, which is the opposite
+of what a bed is for. **No existing test could see it**: every one attached its music to the FIRST shot,
+where the shot's offset is zero and the two answers coincide. A fixture with a bed anywhere but the
+beginning is what makes the difference exist.
+
+## D2. The previs snapshot could never work in production
+
+`asset_files.file_hash` has a FOREIGN KEY to `file_objects(hash)`. The store adapter called only the
+filesystem `Import`, which writes the file and **nothing else** — so `Store` reported success,
+`file_objects` held ZERO rows for the hash, and the `Link` that follows failed with "the requested asset
+no longer exists". WP-21's snapshot path performs exactly those two steps, so **a shipped feature could
+never complete a snapshot in production**; its own suite supplies a double that records the metadata
+itself, and every test passed. The fix is in the shared adapter, so both callers are repaired, and a
+regression asserts the row for EACH caller.
+
+## D3. The production adapter that decides the role had no test
+
+The first mutation run reported a HARNESS ERROR — an anchor matching nothing — and following it led to
+`musicImporterAdapter` in the composition root. It was only compile-checked: the binding's suite uses a
+double, and the database walk builds the same rows BY HAND. A mutation changing `asset.ConsumerShot` to
+`asset.ConsumerJob` there **survived**, and its consequence would have been D2's shape — a bed recorded
+against a job is a valid row no read finds, the import reports success, and the music never plays.
+`music_wiring_test.go` now drives the real composition root over a real database.
+
+## Verification
+
+| Command | Result |
+|---|---|
+| `go test ./... -count=1` | **PASS** |
+| `go vet ./...` | **PASS** |
+| mutation set, 16 mutations over four files | **16/16 killed**, all files restored byte-exact |
+| `web` `npm run typecheck` / `npm test` | **PASS**, 127 tests (2 new) |
+| `sh scripts/verify.sh` | **PASS**, exit 0 (700 files scanned; 25 Playwright; all fixture, SBOM and security checks) |
+
+The acceptance walk (`music_bed_wp29_test.go`) drives an imported bed through the real services to the
+request the export hands the engine, and asserts it starts at 0 with a gain of 0.35. A second test asserts
+the other direction: a bed whose usage exists but whose version is NOT approved is invisible to the mix,
+which is why the import's approval step exists.
+
+## What remains open
+
+**音效 GENERATION**: FR-080 says 「音效建议与生成适配」. The 建议 and the path that accepts one are
+delivered (WP-27); a real effect provider is adapter work of WP-26's shape. **Style references** have no
+picker. Both stay named rather than counted.
+
 # 0zf. WP-28: the first/last-frame picker, the empty data URL behind it, and the shot batch (2026-09-25)
 
 WP-28 finishes **P3 item 21**'s two remaining halves. It opens by correcting this file: §0zd said
@@ -658,8 +715,12 @@ second shot so the difference is measurable, and the mutation is killed now.
   A mapping table and a picker; not a mix.
 - **音效建议与生成适配's 建议 half**: `AudioRoleEffect` exists and mixes, and nothing SUGGESTS an effect
   for a shot.
-- **背景音乐导入** is reachable through the mix (`AudioRoleMusic`, a stated start, a gain) and has no UI
-  control yet: a user cannot point at a music file from the timeline section.
+- **背景音乐导入: DONE — WP-29 (STATUS §0zg, ADR-0030).** `MusicImportBinding` carries a file in bounded
+  chunks, stores it, creates the asset and its approved version, attaches the bytes as `primary` and
+  records an `audio_music` usage against a SHOT — the only consumer the mix's join finds. The timeline
+  section has the control. **Building it found three defects**: a bed started at its SHOT's offset
+  rather than the film's top, the previs snapshot's store wrote NO `file_objects` row so its link could
+  never succeed in production, and the production adapter that decides the usage role had no test.
 - **P3's remaining three items**: 17 (local ONNX embeddings), 19 (MONOFORM deep integration), 21 (real
   video providers — needs paid-provider authorisation), 25 (stable Windows install/upgrade — needs
   `makensis`).

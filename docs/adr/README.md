@@ -68,3 +68,4 @@
 | 0027 | The asynchronous video adapter, the protocol shape it assumes, and two defects a boundary test found | Accepted |
 | 0028 | Multi-character voice casting, effect suggestions, and two rules no code could reach | Accepted |
 | 0029 | The first/last-frame picker, the empty data URL behind it, and the shot batch | Accepted |
+| 0030 | Background music import, the bed that started eight seconds late, and the link that could never succeed | Accepted |

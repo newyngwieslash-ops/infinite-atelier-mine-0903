@@ -61,6 +61,9 @@ type app struct {
 	// monoformBinding carries a previs snapshot from the embedded studio into the asset aggregate
 	// (WP-21, FR-060's 预览图 clause).
 	monoformBinding *desktop.MonoformBinding
+	// musicBinding carries the user's own background music into the library as an approved bed
+	// (WP-29, FR-080's 背景音乐导入).
+	musicBinding *desktop.MusicImportBinding
 	// agentBinding is the WP-07 surface. It is declared before Wails starts so it
 	// exists on the binding surface, and its services are attached only when the
 	// agent stack composes.
@@ -243,6 +246,9 @@ func (a *app) startup(ctx context.Context) {
 				}
 				if a.importBinding != nil {
 					dramaStack.importBinding = a.importBinding
+				}
+				if a.musicBinding != nil {
+					dramaStack.musicBinding = a.musicBinding
 				}
 				if a.monoformBinding != nil {
 					dramaStack.monoformBinding = a.monoformBinding

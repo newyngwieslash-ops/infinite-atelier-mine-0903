@@ -43,31 +43,59 @@ type StoredBytes struct {
 	Hash       string
 	StorageKey string
 	Size       int64
+	// MIME is the type the STORE'S SNIFFER decided, never a caller's claim. It is carried because the
+	// music import checks it against an allowlist before building an asset: a shape that dropped it
+	// would force that caller to re-open the object to learn what it had just stored.
+	MIME string
 }
 
 // DocumentStoring is the narrow surface a caller outside this package uses to commit bytes.
 //
-// It is a TYPE ALIAS-free wrapper over the same `Import` the import service uses, because a second
-// store path would be a second place the size bound lives.
+// # WHY IT ALSO WRITES THE METADATA ROW, which is the defect this comment exists for
+//
+// `asset_files.file_hash` has a FOREIGN KEY to `file_objects(hash)`, so a caller that links a version to
+// a stored hash needs that row to exist. This adapter used to call only the filesystem `Import` — which
+// writes the file and nothing else — and the consequence was measured by a probe: `Store` reported
+// success, `file_objects` held ZERO rows for the hash, and the `Link` that follows failed with "the
+// requested asset no longer exists".
+//
+// IT WAS A REAL DEFECT IN A SHIPPED FEATURE. The previs snapshot path (WP-21) stores a hash and links it
+// to a version, and it could never have worked in production — its own suite uses a double that records
+// the metadata itself, so every test passed while the real composition could not complete a snapshot.
+// The music import found it because it performs the same two steps against the real stack.
+//
+// The pair is `appfiles.Service.Import`'s own: store the bytes, then upsert the row. Doing it here keeps
+// ONE implementation of that pair for every non-import caller, rather than each adapter remembering.
 type DocumentStoring struct {
-	store *importDocumentStore
+	store      *importDocumentStore
+	repository appfiles.Repository
 }
 
 // NewDocumentStoreForSnapshots exposes the same adapter under the shape a non-import caller needs.
-func NewDocumentStoreForSnapshots(store *filestore.Store) *DocumentStoring {
-	return &DocumentStoring{store: &importDocumentStore{store: store}}
+//
+// The repository is REQUIRED rather than optional: an adapter that could be built without it would be one
+// whose callers silently lose the metadata row, which is the defect above. A composition root that has no
+// repository has no business storing bytes that something will link.
+func NewDocumentStoreForSnapshots(store *filestore.Store, repository appfiles.Repository) *DocumentStoring {
+	return &DocumentStoring{store: &importDocumentStore{store: store}, repository: repository}
 }
 
-// ImportBytes commits bytes and reports their address.
+// ImportBytes commits bytes and records their metadata row.
 func (d *DocumentStoring) ImportBytes(ctx context.Context, displayName string, body []byte) (StoredBytes, error) {
-	if d == nil || d.store == nil {
+	if d == nil || d.store == nil || d.repository == nil {
 		return StoredBytes{}, importdomain.StorageError("The document store is unavailable.", nil)
 	}
 	object, err := d.store.Import(ctx, displayName, body)
 	if err != nil {
 		return StoredBytes{}, err
 	}
-	return StoredBytes{Hash: object.Hash, StorageKey: object.StorageKey, Size: object.Size}, nil
+	// The row is written BEFORE the caller can link anything to the hash, and its failure is REPORTED
+	// rather than ignored: a stored file with no row is a file nothing can attach, which is exactly the
+	// state that made the snapshot path fail.
+	if err := d.repository.UpsertObject(ctx, object); err != nil {
+		return StoredBytes{}, importdomain.StorageError("The stored file could not be recorded.", err)
+	}
+	return StoredBytes{Hash: object.Hash, StorageKey: object.StorageKey, Size: object.Size, MIME: object.MIME}, nil
 }
 
 // Import stores bytes under a display name and returns the stored object.

@@ -368,6 +368,20 @@ export namespace desktop {
 	        this.chunk = source["chunk"];
 	    }
 	}
+	export class AppendMusicChunkRequest {
+	    uploadId: string;
+	    data: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new AppendMusicChunkRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.uploadId = source["uploadId"];
+	        this.data = source["data"];
+	    }
+	}
 	export class AppendSnapshotChunkRequest {
 	    uploadId: string;
 	    chunk: string;
@@ -907,6 +921,38 @@ export namespace desktop {
 	
 	    static createFrom(source: any = {}) {
 	        return new BeginImportUploadResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.uploadId = source["uploadId"];
+	        this.chunkBytes = source["chunkBytes"];
+	    }
+	}
+	export class BeginMusicImportRequest {
+	    projectId: string;
+	    displayName: string;
+	    totalBytes: number;
+	    shotId: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new BeginMusicImportRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.projectId = source["projectId"];
+	        this.displayName = source["displayName"];
+	        this.totalBytes = source["totalBytes"];
+	        this.shotId = source["shotId"];
+	    }
+	}
+	export class BeginMusicImportResult {
+	    uploadId: string;
+	    chunkBytes: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new BeginMusicImportResult(source);
 	    }
 	
 	    constructor(source: any = {}) {
@@ -2482,6 +2528,42 @@ export namespace desktop {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.uploadId = source["uploadId"];
+	    }
+	}
+	export class FinishMusicImportRequest {
+	    uploadId: string;
+	    name?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new FinishMusicImportRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.uploadId = source["uploadId"];
+	        this.name = source["name"];
+	    }
+	}
+	export class FinishMusicImportResult {
+	    assetId: string;
+	    versionId: string;
+	    fileHash: string;
+	    bytes: number;
+	    mimeType: string;
+	    storageKey: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new FinishMusicImportResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.assetId = source["assetId"];
+	        this.versionId = source["versionId"];
+	        this.fileHash = source["fileHash"];
+	        this.bytes = source["bytes"];
+	        this.mimeType = source["mimeType"];
+	        this.storageKey = source["storageKey"];
 	    }
 	}
 	export class FinishSnapshotUploadRequest {

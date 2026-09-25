@@ -215,6 +215,92 @@ func TestTheComposedRequestOrdersBedsBeforeEffectsBeforeDialogue(t *testing.T) {
 	}
 }
 
+// TestAMusicBedStartsAtTheTopWhereverItIsAttached is the defect a WP-29 probe found.
+//
+// # What was wrong
+//
+// `AudioClip.StartMS` documents that "zero means the beginning, which is where a music bed starts and
+// where a dialogue clip does NOT". `buildMix` passed EVERY clip the offset of the shot it was attached
+// to, so a bed hung off shot 3 of a four-second-per-shot episode began at 8000ms — the first eight
+// seconds of the film were silent, which is the opposite of what a bed is for.
+//
+// # Why no existing test could see it
+//
+// Every one of them attached its music to the FIRST shot, where the shot's start is zero and the two
+// answers coincide. The fixture has to put the bed somewhere other than the beginning for the
+// difference to exist at all, which is what this test does.
+func TestAMusicBedStartsAtTheTopWhereverItIsAttached(t *testing.T) {
+	harness := newMediaHarness(t)
+	ctx := context.Background()
+	// Three shots at four seconds each, so the third begins at 8000ms.
+	harness.approvedBoard(t, 3, 4)
+	harness.attachAudioWithRole(t, ctx, "wp11-shot-3", "bed", appmedia.UsageRoleAudioMusic)
+
+	engine := &recordingEngine{}
+	harness.service = appmedia.NewExportService(appmedia.ExportOptions{
+		Timeline: *harness.timeline, Engine: engine, Files: harness.files, Exports: harness.exports,
+		Audio: NewAssetRepository(harness.db), Temp: scratchTemp{root: t.TempDir()},
+		Subtitle: harness.subtitle, Clock: mediaClock{at: harness.now}, IDs: harness,
+	})
+	if _, _, err := harness.service.Export(ctx, appmedia.ExportRequest{
+		EpisodeID: "drama-episode", Quality: domainmedia.QualityPreview, FPS: 15, CreatedByType: "user",
+	}); err != nil {
+		t.Fatalf("the export: %v", err)
+	}
+	if len(engine.composed) != 1 {
+		t.Fatalf("the engine was asked to compose %d times", len(engine.composed))
+	}
+	clips := engine.composed[0].AudioMix.Clips
+	if len(clips) != 1 {
+		t.Fatalf("%d clips: %+v", len(clips), clips)
+	}
+	if clips[0].Role != appmedia.AudioRoleMusic {
+		t.Fatalf("the clip is a %q", clips[0].Role)
+	}
+	// THE ASSERTION IS THE START, and it is asserted against the SHOT'S OWN offset as well: a test that
+	// only checked "not negative" would pass for a bed that began at the third shot.
+	if clips[0].StartMS != 0 {
+		t.Fatalf("a bed attached to the third shot begins at %dms; a bed runs from the top", clips[0].StartMS)
+	}
+	// And the label still names where it came from, so a failure can be traced to the attachment.
+	if !strings.Contains(clips[0].Label, "shot 3") {
+		t.Fatalf("the bed's label lost its attachment: %q", clips[0].Label)
+	}
+}
+
+// TestADialogueClipStillStartsAtItsShot is the other half of the same rule.
+//
+// The fix must not move dialogue to the top: a line's offset IS its shot's start, and a change that
+// zeroed every clip would make every episode's lines play over each other at the beginning.
+func TestADialogueClipStillStartsAtItsShot(t *testing.T) {
+	harness := newMediaHarness(t)
+	ctx := context.Background()
+	harness.approvedBoard(t, 3, 4)
+	harness.attachAudioWithRole(t, ctx, "wp11-shot-3", "line", appmedia.UsageRoleAudioDialogue)
+
+	engine := &recordingEngine{}
+	harness.service = appmedia.NewExportService(appmedia.ExportOptions{
+		Timeline: *harness.timeline, Engine: engine, Files: harness.files, Exports: harness.exports,
+		Audio: NewAssetRepository(harness.db), Temp: scratchTemp{root: t.TempDir()},
+		Subtitle: harness.subtitle, Clock: mediaClock{at: harness.now}, IDs: harness,
+	})
+	if _, _, err := harness.service.Export(ctx, appmedia.ExportRequest{
+		EpisodeID: "drama-episode", Quality: domainmedia.QualityPreview, FPS: 15, CreatedByType: "user",
+	}); err != nil {
+		t.Fatalf("the export: %v", err)
+	}
+	clips := engine.composed[0].AudioMix.Clips
+	if len(clips) != 1 {
+		t.Fatalf("%d clips", len(clips))
+	}
+	if clips[0].Role != appmedia.AudioRoleDialogue {
+		t.Fatalf("the clip is a %q", clips[0].Role)
+	}
+	if clips[0].StartMS != 8000 {
+		t.Fatalf("a line in the third shot begins at %dms, want 8000", clips[0].StartMS)
+	}
+}
+
 // TestTheLegacyAudioRoleStillMixesAsDialogue is the data-compatibility rule.
 //
 // `'audio'` is what WP-11's walk writes and what any project exported before this package carries.

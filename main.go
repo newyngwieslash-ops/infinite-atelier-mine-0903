@@ -78,6 +78,10 @@ func run() error {
 	// surface from startup; its store is attached only when the composition root builds one, so a
 	// safe-mode build refuses a snapshot rather than panicking.
 	application.monoformBinding = &desktop.MonoformBinding{}
+	// The background-music import (WP-29). Declared here so the binding exists from startup; its importer
+	// is attached only when the composition root builds one, so a safe-mode build refuses an import rather
+	// than panicking.
+	application.musicBinding = &desktop.MusicImportBinding{}
 	application.emit = wailsruntime.EventsEmit
 	shutdown := newShutdownSequence(application.closeDatabase, logger, logCloser.Close, reportIndependent)
 	application.shutdown = shutdown
@@ -116,6 +120,7 @@ func run() error {
 			application.memoryBinding,
 			application.mediaBinding,
 			application.monoformBinding,
+			application.musicBinding,
 		},
 		SingleInstanceLock: &options.SingleInstanceLock{
 			UniqueId: singleInstanceID,

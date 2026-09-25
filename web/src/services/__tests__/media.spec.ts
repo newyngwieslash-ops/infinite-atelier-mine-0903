@@ -38,7 +38,25 @@ import {
 } from "../desktop/media";
 import { isMediaJobSubmissionAvailable, isVideoBatchAvailable, submitAudioJob, submitVideoJob } from "../desktop/jobs";
 import { isFrameLoadingAvailable, loadShotFrame } from "../desktop/frames";
+import { importBackgroundMusic, isMusicImportAvailable } from "../desktop/music";
 import { withDesktopCore, type FakeBindings } from "./desktop-core";
+
+test("a window with no desktop core offers no music import", () => {
+    // A build whose binding predates the import still reads a timeline and runs an export, so the
+    // section hides the control rather than offering one that cannot act.
+    assert.equal(isMusicImportAvailable(), false);
+});
+
+test("the music import throws a reason rather than reporting a success that stored nothing", async () => {
+    // Every function here is a step in a command a user started, so none of them answers empty. A
+    // half-finished import that reported success would leave a track the core had not stored, and the
+    // user would hear nothing while the library showed a row.
+    await assert.rejects(() => importBackgroundMusic("shot-1", "project-1", new File(["x"], "t.mp3")));
+    // The shot is refused HERE as well as in the core, because the failure it prevents is silent: a bed
+    // attached to nothing would import successfully and never play.
+    await assert.rejects(() => importBackgroundMusic("", "project-1", new File(["x"], "t.mp3")));
+    await assert.rejects(() => importBackgroundMusic("   ", "project-1", new File(["x"], "t.mp3")));
+});
 
 test("the frame loader answers null rather than throwing when nothing can be read", async () => {
     // The absence direction for the frame picker, which is WP-28's own rule at the UI's end: a frame

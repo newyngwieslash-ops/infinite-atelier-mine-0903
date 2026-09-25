@@ -4,6 +4,7 @@ import (
 	"context"
 
 	appassets "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/assets"
+	appmedia "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/media"
 	appevents "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/events"
 	appextraction "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/extraction"
 	appimporting "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/importing"
@@ -54,6 +55,73 @@ func (a snapshotStoreAdapter) Link(ctx context.Context, versionID, fileHash, rol
 	return err
 }
 
+// musicImporterAdapter satisfies the music import's port over the asset service and the same
+// content-addressed store the document path uses.
+//
+// # Why it is a second adapter rather than a method on the snapshot one
+//
+// The two ports share ONE operation (`Store`) and differ in everything else: a snapshot LINKS a file to
+// a version that already exists, while an import CREATES the asset, its version, the file link, the
+// approval and the usage. Merging them would give one adapter a five-step method no other caller wants,
+// and the snapshot path would have to argue that it never reaches the parts it does not use.
+type musicImporterAdapter struct {
+	assets    *appassets.Service
+	documents *desktop.DocumentStoring
+}
+
+// The compile-time proof that this adapter satisfies the binding's port.
+var _ desktop.MusicImporter = musicImporterAdapter{}
+
+func (a musicImporterAdapter) Store(ctx context.Context, displayName string, body []byte) (desktop.StoredBytes, error) {
+	return a.documents.ImportBytes(ctx, displayName, body)
+}
+
+// CreateBeddableAsset creates an audio asset with its first version.
+//
+// The type is `audio` rather than a music-specific one, because the asset aggregate's vocabulary is the
+// schema's and a bed is an audio file: what distinguishes it is the ROLE its usage carries, which is a
+// different column. A seventh asset type would need a migration to say what a usage role already says.
+func (a musicImporterAdapter) CreateBeddableAsset(ctx context.Context, projectID, name string) (string, string, error) {
+	record, version, err := a.assets.CreateAsset(ctx, appassets.CreateAssetRequest{
+		ProjectID: projectID, Type: asset.TypeAudio, Name: name,
+	})
+	if err != nil {
+		return "", "", err
+	}
+	return record.ID, version.ID, nil
+}
+
+func (a musicImporterAdapter) Attach(ctx context.Context, versionID, fileHash string) error {
+	// `primary` is the role the audio reader selects (`AudioFileFor` reads `role = 'primary'`), so a
+	// file attached under any other role would be stored and never played.
+	_, err := a.assets.AttachFile(ctx, versionID, fileHash, asset.RolePrimary)
+	return err
+}
+
+func (a musicImporterAdapter) Approve(ctx context.Context, assetID, versionID string) error {
+	// The impact flag is set because the caller IS the impact step: a freshly imported track replaces
+	// nothing, and `ApprovalImpactOf` would return an empty list for a version with no consumers. The
+	// flag is a statement about having LOOKED, and this adapter has: the version was created one step
+	// ago by this same command.
+	_, err := a.assets.ApproveVersion(ctx, appassets.ApproveVersionRequest{
+		VersionID: versionID, ImpactAcknowledged: true,
+	})
+	return err
+}
+
+func (a musicImporterAdapter) Bed(ctx context.Context, versionID, shotID string) error {
+	// The role is the mixer's own vocabulary rather than a string invented here, and it is what makes the
+	// clip a bed: `buildMix` places a `music` clip from the top and mixes it at the bed's gain.
+	_, err := a.assets.AddUsage(ctx, appassets.AddUsageRequest{
+		AssetVersionID: versionID,
+		ConsumerType:   asset.ConsumerShot,
+		ConsumerID:     shotID,
+		UsageRole:      appmedia.UsageRoleForAudio(appmedia.AudioRoleMusic),
+		Required:       false,
+	})
+	return err
+}
+
 type dramaWiring struct {
 	story      *appstory.Service
 	script     *appscript.Service
@@ -76,6 +144,11 @@ type dramaWiring struct {
 	importUploadBinding *desktop.ImportUploadBinding
 	// monoformBinding is the previs snapshot surface (WP-21).
 	monoformBinding *desktop.MonoformBinding
+	// musicBinding is the background-music import surface (WP-29).
+	musicBinding *desktop.MusicImportBinding
+	// musicImporter is what that binding commits through. It is a second adapter rather than a second
+	// method on the snapshot one: the two share the store and differ in the other four operations.
+	musicImporter musicImporterAdapter
 	// snapshotStore is what that binding commits through, built here because this is where the file
 	// store and the asset service are both in scope. `attach` receives only a context, so carrying the
 	// built adapter is what lets the two halves meet without either learning about the other.
@@ -183,7 +256,10 @@ func composeDrama(handle *database.Handle, store *filestore.Store, canvas *apppr
 
 	return &dramaWiring{
 		snapshotStore: snapshotStoreAdapter{
-			store: assetService, documents: desktop.NewDocumentStoreForSnapshots(store),
+			store: assetService, documents: desktop.NewDocumentStoreForSnapshots(store, database.NewFileRepository(connection)),
+		},
+		musicImporter: musicImporterAdapter{
+			assets: assetService, documents: desktop.NewDocumentStoreForSnapshots(store, database.NewFileRepository(connection)),
 		},
 		ids:   ids,
 		story: storyService,
@@ -273,6 +349,11 @@ func (w *dramaWiring) attach(ctx context.Context) {
 		// and the asset service for the link. The snapshot path adds no storage of its own, which is
 		// the ruling ADR-0025 records.
 		desktop.AttachMonoform(w.monoformBinding, ctx, w.snapshotStore, w.ids.New)
+	}
+	if w.musicBinding != nil {
+		// The same content-addressed store the import and the snapshot use, joined here with the asset
+		// service: this path adds no storage of its own.
+		desktop.AttachMusicImport(w.musicBinding, ctx, w.musicImporter, w.ids.New)
 	}
 }
 

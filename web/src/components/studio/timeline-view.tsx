@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, App, Button, Collapse, Empty, Input, InputNumber, Popconfirm, Select, Space, Switch, Table, Tag, Typography } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { Download, Play, RefreshCw } from "lucide-react";
+import { Download, Music, Play, RefreshCw } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import {
@@ -29,6 +29,7 @@ import {
     submitSubtitleTrackForReview,
 } from "@/services/desktop/media";
 import { ensureStoryboard, getScriptStructure, isDramaBindingsAvailable, listScriptVersions, listStoryboardVersions } from "@/services/desktop/drama";
+import { importBackgroundMusic, isMusicImportAvailable } from "@/services/desktop/music";
 import { isVoiceSurfaceAvailable, suggestShotEffects } from "@/services/desktop/voices";
 import type { desktop } from "@/wailsjs/go/models";
 
@@ -227,6 +228,14 @@ export function TimelineSection({ episodes, activeEpisodeId, onSelectEpisode, on
      * nothing rather than as "no effect" — the two are different claims.
      */
     const [effectSuggestions, setEffectSuggestions] = useState<Record<string, desktop.EffectSuggestionDTO>>({});
+    /**
+     * The background-music import: its own upload state, and the last file's outcome.
+     *
+     * The outcome is kept rather than toasted alone, so a user can see which track was imported and how
+     * large it was after the message that announced it has gone.
+     */
+    const [importingMusic, setImportingMusic] = useState(false);
+    const [importedMusic, setImportedMusic] = useState<{ name: string; bytes: number } | null>(null);
     const [busy, setBusy] = useState("");
     const [error, setError] = useState("");
     const [notice, setNotice] = useState("");
@@ -888,6 +897,26 @@ export function TimelineSection({ episodes, activeEpisodeId, onSelectEpisode, on
     const shots = timeline?.shots ?? [];
 
     /**
+     * Whether this build can import a music file, asked as its own question.
+     *
+     * A build whose binding predates the import still reads a timeline and runs an export, so the
+     * control is offered only when there is something behind it.
+     */
+    const musicImportAvailable = isMusicImportAvailable();
+
+    /**
+     * The project the music import belongs to, read off the ACTIVE EPISODE.
+     *
+     * This section deliberately takes no `projectId` prop — see the note on `TimelineSectionProps` —
+     * because every other read and write here is episode-scoped and a prop it could only ignore would
+     * be noise. The import is the section's first command that needs a project, and the episode
+     * already names one: deriving it is exact rather than a guess, and adding a prop for this single
+     * caller would put a second answer to "which project is this episode in" beside the episode's own.
+     */
+    const activeEpisodeForMusic = episodes.find((episode) => episode.id === activeEpisodeId) || null;
+    const projectId = activeEpisodeForMusic?.projectId ?? "";
+
+    /**
      * The effect suggestions, read from the script version the timeline names.
      *
      * `audioIntent` lives on the SCRIPT's shots, and the timeline's own rows carry `shotId` — so the
@@ -939,6 +968,38 @@ export function TimelineSection({ episodes, activeEpisodeId, onSelectEpisode, on
         return <Alert type="info" showIcon data-testid="studio-timeline-no-media-core" message={t("studio.timeline.noMediaCoreTitle")} description={t("studio.timeline.noMediaCoreBody")} />;
     }
 
+    /**
+     * importMusic carries the chosen file into the library as a bed.
+     *
+     * # The shot it is attached to
+     *
+     * The episode's FIRST shot, and the choice is about which mix carries the music rather than about
+     * when it begins: the core starts a bed at zero wherever it was attached, and the mix's join is
+     * shot-keyed, so a usage recorded any other way would be a row nothing reads. A board with no rows
+     * has no shot to attach to, and the refusal says so.
+     */
+    const importMusic = async (file: File) => {
+        const firstShot = shots[0];
+        if (!activeEpisodeId || !firstShot) {
+            message.error(t("studio.timeline.musicNoShot"));
+            return;
+        }
+        setImportingMusic(true);
+        try {
+            const imported = await importBackgroundMusic(firstShot.shotId, projectId, file);
+            setImportedMusic({ name: file.name, bytes: imported.bytes });
+            message.success(t("studio.timeline.musicImported", { name: file.name }));
+            // The timeline is re-read rather than patched: the bed is an approved audio version, and the
+            // audio column is what says whether the episode has any. A local patch would be a second
+            // answer to a question the read already answers.
+            await reload();
+        } catch (failure) {
+            message.error(failure instanceof Error ? failure.message : t("studio.timeline.musicFailed"));
+        } finally {
+            setImportingMusic(false);
+        }
+    };
+
     return (
         <div className="space-y-8" data-testid="studio-timeline">
             <section>
@@ -956,11 +1017,43 @@ export function TimelineSection({ episodes, activeEpisodeId, onSelectEpisode, on
                                 label: `S${episode.seasonNumber}E${episode.episodeNumber} · ${episode.title}`,
                             }))}
                         />
+                        {/* THE BACKGROUND MUSIC, which FR-080 lists as a V1 clause and which had no
+                            control: `AudioRoleMusic` mixed and a user could not point at a file.
+                            The label is a control rather than a styled button because the platform's own
+                            file chooser is what a user expects here, and its `accept` is a HINT rather than
+                            a check — the core checks the type its sniffer decides, so a renamed file is
+                            stored as what it actually is. */}
+                        {musicImportAvailable ? (
+                            <label className={`inline-flex items-center gap-2 rounded border border-stone-300 px-3 py-1 text-sm dark:border-stone-600 ${importingMusic ? "opacity-60" : "cursor-pointer"}`} data-testid="studio-timeline-music-label">
+                                <Music className="size-4" />
+                                {importingMusic ? t("studio.timeline.musicImporting") : t("studio.timeline.musicImport")}
+                                <input
+                                    type="file"
+                                    accept="audio/*,.mp3,.wav,.ogg,.m4a"
+                                    className="hidden"
+                                    disabled={importingMusic}
+                                    data-testid="studio-timeline-music-input"
+                                    onChange={(event) => {
+                                        const chosen = event.target.files?.[0];
+                                        // The input is cleared so choosing the SAME file twice fires again:
+                                        // a user who fixed something on disk and re-picked it would
+                                        // otherwise get no reaction at all.
+                                        event.target.value = "";
+                                        if (chosen) void importMusic(chosen);
+                                    }}
+                                />
+                            </label>
+                        ) : null}
                         <Button icon={<RefreshCw className="size-4" />} loading={loading} data-testid="studio-timeline-reload" onClick={() => void reload()}>
                             {t("studio.timeline.reload")}
                         </Button>
                     </Space>
                 </div>
+                {importedMusic ? (
+                    <Typography.Paragraph className="mt-2 text-xs text-stone-500" data-testid="studio-timeline-music-imported">
+                        {t("studio.timeline.musicImportedDetail", { name: importedMusic.name, mb: (importedMusic.bytes / (1024 * 1024)).toFixed(1) })}
+                    </Typography.Paragraph>
+                ) : null}
 
                 {capability && !capability.exportAvailable ? (
                     // The core's own sentence, verbatim: it names what this machine is missing, and

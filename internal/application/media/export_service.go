@@ -483,7 +483,25 @@ func (s *ExportService) buildMix(ctx context.Context, scratch string, timeline T
 			// The label names the role as well as the position, because a failure that said "shot 3
 			// line 2" for a music bed would send a reader looking for a line of dialogue.
 			label := "shot " + itoa(shot.Ordinal) + " " + string(audio.Role) + " " + itoa(index+1)
-			clip, reference, err := s.audioClipFor(ctx, scratch, audio.VersionID, audio.Role, shot.StartMS, label)
+			// WHERE THE CLIP STARTS DEPENDS ON ITS ROLE, and passing the shot's start for every role was
+			// a defect a WP-29 probe found: `AudioClip.StartMS` documents that "zero means the beginning,
+			// which is where a music bed starts and where a dialogue clip does NOT", and the code gave
+			// EVERY clip the shot's offset. A bed attached to shot 3 of a four-second-per-shot episode
+			// therefore began at 8000ms — the first eight seconds of the film were silent, which is the
+			// opposite of what a music bed is for.
+			//
+			// The existing tests could not see it because every one of them attached its music to the
+			// FIRST shot, where the shot's start is zero and the two answers coincide. A fixture that
+			// puts a bed anywhere but the beginning is what makes the difference observable.
+			startMS := shot.StartMS
+			if audio.Role == AudioRoleMusic {
+				// A BED RUNS FROM THE TOP regardless of which shot it was attached to. The attachment
+				// is how a user says "this episode has this music"; the placement is the mixer's, and a
+				// user who wants the bed to begin later says so by trimming it rather than by hanging it
+				// off a later shot.
+				startMS = 0
+			}
+			clip, reference, err := s.audioClipFor(ctx, scratch, audio.VersionID, audio.Role, startMS, label)
 			if err != nil {
 				return AudioMix{}, nil, err
 			}
