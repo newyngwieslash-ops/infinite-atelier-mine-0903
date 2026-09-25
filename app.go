@@ -3,9 +3,12 @@ package main
 import (
 	"context"
 	"log/slog"
+	"runtime"
 	"sync"
+	"time"
 
 	agentruntime "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/agentruntime"
+	appdiagnostics "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/diagnostics"
 	appfiles "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/files"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/health"
 	appjobs "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/jobs"
@@ -44,6 +47,7 @@ type app struct {
 	projectsBinding     *desktop.ProjectsBinding
 	legacyUploadBinding *desktop.LegacyUploadBinding
 	backupBinding       *desktop.BackupBinding
+	diagnosticsBinding  *desktop.DiagnosticsBinding
 	// dramaBinding and assetsBinding are the WP-05 surface: the studio reads and
 	// writes the drama aggregates through the first, and the asset bible
 	// through the second.
@@ -178,6 +182,17 @@ func (a *app) startup(ctx context.Context) {
 			// migrated project's media lands in the same content-addressed store
 			// the job pipeline writes to.
 			projectStack := composeProjects(handle, dirs, store, a.legacyUploadBinding, a.backupBinding)
+			// The diagnostics bundle. It is composed HERE because it needs three things that exist at
+			// this point and nowhere earlier: the open connection, the managed directories (for the log
+			// file) and the build's version.
+			if a.diagnosticsBinding != nil {
+				desktop.AttachDiagnostics(a.diagnosticsBinding, ctx, appdiagnostics.NewService(appdiagnostics.Options{
+					Reader:     database.NewDiagnosticsReader(handle.SQL(), dirs.Logs),
+					Clock:      diagnosticsClock{},
+					AppVersion: buildinfo.Version,
+					Platform:   runtime.GOOS + "/" + runtime.GOARCH,
+				}))
+			}
 			// A restore stages into the private temp area; a copy left by an
 			// interrupted attempt is removed at startup rather than accumulating.
 			if projectStack != nil {
@@ -482,3 +497,9 @@ func newShutdownSequence(
 		return nil
 	}
 }
+
+// diagnosticsClock is the bundle time source. It is the real clock: a bundle is stamped with when
+// a user made it, and a fixture clock would date it to whenever the test ran.
+type diagnosticsClock struct{}
+
+func (diagnosticsClock) Now() time.Time { return time.Now().UTC() }
