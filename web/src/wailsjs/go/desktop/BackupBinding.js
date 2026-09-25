@@ -6,6 +6,10 @@ export function BackupStateHeld() {
   return window['go']['desktop']['BackupBinding']['BackupStateHeld']();
 }
 
+export function CancelGarbageCollection() {
+  return window['go']['desktop']['BackupBinding']['CancelGarbageCollection']();
+}
+
 export function DiscardBackupState() {
   return window['go']['desktop']['BackupBinding']['DiscardBackupState']();
 }
@@ -18,6 +22,14 @@ export function PreviewBackup(arg1) {
   return window['go']['desktop']['BackupBinding']['PreviewBackup'](arg1);
 }
 
+export function PreviewGarbageListing() {
+  return window['go']['desktop']['BackupBinding']['PreviewGarbageListing']();
+}
+
 export function RestoreBackup(arg1, arg2) {
   return window['go']['desktop']['BackupBinding']['RestoreBackup'](arg1, arg2);
+}
+
+export function RunGarbageCollection(arg1) {
+  return window['go']['desktop']['BackupBinding']['RunGarbageCollection'](arg1);
 }

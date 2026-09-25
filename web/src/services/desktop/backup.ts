@@ -210,3 +210,44 @@ export function backupArchiveName(madeAt: Date): string {
     const stamp = `${madeAt.getFullYear()}${pad(madeAt.getMonth() + 1)}${pad(madeAt.getDate())}-${pad(madeAt.getHours())}${pad(madeAt.getMinutes())}${pad(madeAt.getSeconds())}`;
     return `infinite-atelier-backup-${stamp}.zip`;
 }
+
+// --- Garbage collection (FR-160) ---
+//
+// 「垃圾回收执行前显示将删除内容并支持取消」. The cluster is three calls and the split is the one
+// every client here keeps: `previewGarbageListing` is a QUERY, so a browser session gets an empty
+// list rather than an error; the other two are COMMANDS and throw when the core is absent.
+//
+// The preview is deliberately a query even though a collection is destructive, because a preview
+// removes nothing: "nothing is collectable" is a true answer to give a browser session, and the
+// panel renders no list rather than a message about a machine nobody asked.
+
+/** isGarbageCollectionAvailable reports whether the core can answer a collection. */
+export function isGarbageCollectionAvailable(): boolean {
+    const binding = getDesktopWindow()?.go?.desktop?.BackupBinding;
+    return Boolean(binding) &&
+        typeof binding?.PreviewGarbageListing === "function" &&
+        typeof binding?.RunGarbageCollection === "function";
+}
+
+export async function previewGarbageListing(): Promise<desktop.GarbagePreviewDTO> {
+    if (!isGarbageCollectionAvailable()) {
+        // The honest empty answer: this session can collect nothing, which is not the same as
+        // "there is nothing to collect" — the panel distinguishes the two with the probe.
+        return { candidates: [], totalBytes: 0, collecting: false } as never;
+    }
+    const binding = await loadBackupBinding();
+    return binding.PreviewGarbageListing();
+}
+
+export async function runGarbageCollection(confirm: boolean): Promise<desktop.GarbageCollectResultDTO> {
+    if (!isGarbageCollectionAvailable()) throw unavailableError();
+    const binding = await loadBackupBinding();
+    return binding.RunGarbageCollection(confirm);
+}
+
+export async function cancelGarbageCollection(): Promise<boolean> {
+    const probe = getDesktopWindow()?.go?.desktop?.BackupBinding;
+    if (typeof probe?.CancelGarbageCollection !== "function") return false;
+    const binding = await loadBackupBinding();
+    return binding.CancelGarbageCollection();
+}

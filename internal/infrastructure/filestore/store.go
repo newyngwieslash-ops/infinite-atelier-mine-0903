@@ -149,6 +149,62 @@ func (s *Store) Open(_ context.Context, storageKey string) (io.ReadCloser, error
 	return file, nil
 }
 
+// Remove deletes an object's bytes.
+//
+// # Why the STORE owns this rather than the caller
+//
+// The path layout — a two-character shard directory under `filesDir` — is this type's knowledge, and
+// nothing outside it should reconstruct a path. `objectPath` already validates the key's shape and
+// refuses an escape, so the delete gets the same guards as a read: a key that could not be opened
+// cannot be removed either.
+//
+// # What the caller must have established
+//
+// That NOTHING references this object. The store cannot know that — the reference columns live in the
+// database — and this method deliberately does not check: a store that consulted ownership would
+// need the whole schema, which is the layering AGENTS section 7.2 forbids. The contract is stated
+// here because getting it wrong deletes a user's approved work, and the collector is the caller that
+// establishes it (`GarbageCollector.Collect`, which re-checks each candidate in the transaction that
+// removes its row).
+//
+// A key whose bytes are ALREADY gone is not an error: the row and the object are two things, and a
+// collection resuming after a partial run must be able to finish.
+func (s *Store) Remove(_ context.Context, storageKey string) error {
+	if s == nil {
+		return fileError("FILE_NOT_FOUND", "The requested file could not be found.", errors.New("no store"))
+	}
+	path, err := s.objectPath(storageKey)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fileError("FILE_DELETE_FAILED", "The file could not be removed.", err)
+	}
+	return nil
+}
+
+// Exists reports whether an object's bytes are present.
+//
+// It exists for the garbage collection's report: a candidate whose row is removed and whose bytes are
+// already gone is a different situation from one whose bytes were there, and a collector that could
+// not tell them apart would report freeing space it did not free.
+func (s *Store) Exists(_ context.Context, storageKey string) (bool, error) {
+	if s == nil {
+		return false, fileError("FILE_NOT_FOUND", "The requested file could not be found.", errors.New("no store"))
+	}
+	path, err := s.objectPath(storageKey)
+	if err != nil {
+		return false, err
+	}
+	if _, err := os.Lstat(path); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		return false, fileError("FILE_NOT_FOUND", "The requested file could not be found.", err)
+	}
+	return true, nil
+}
+
 func (s *Store) objectPath(storageKey string) (string, error) {
 	if !storageKeyPattern.MatchString(storageKey) {
 		return "", fileError("FILE_NOT_FOUND", "The requested file could not be found.", errors.New("invalid storage key"))

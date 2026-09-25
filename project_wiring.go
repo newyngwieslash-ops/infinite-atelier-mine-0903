@@ -31,7 +31,13 @@ type projectWiring struct {
 	backup      *desktop.BackupBinding
 	// backupStore is both the export source and the restore sink.
 	backupStore *database.BackupStore
-	binding     *desktop.ProjectsBinding
+	// collector answers FR-160's garbage collection. Nil in the restore-only composition, which has
+	// no connection to read what is referenced — and a collection that could not answer that would
+	// delete live content, so nil is a capability the binding reports as unavailable.
+	collector *database.GarbageCollector
+	// files is the store the collected objects' bytes live in.
+	files   *filestore.Store
+	binding *desktop.ProjectsBinding
 }
 
 // composeProjects builds the project, import and backup stack over a writable
@@ -99,6 +105,10 @@ func composeProjects(handle *database.Handle, dirs appdirs.Dirs, store *filestor
 		upload:      uploadBinding,
 		backup:      backupBinding,
 		backupStore: backupStore,
+		// The two the collection needs, taken from the parameters rather than rebuilt: the connection
+		// is already open and the store already owns the directory layout.
+		collector: database.NewGarbageCollector(handle.SQL()),
+		files:     store,
 	}
 }
 
@@ -166,6 +176,12 @@ func (w *projectWiring) attach(ctx context.Context) {
 		// while its restore methods work. Losing the export in safe mode costs nothing: an
 		// archive taken from a database that would not open is not worth having.
 		desktop.AttachBackup(w.backup, ctx, w.export, w.restore, w.backupStore, w.backupStore)
+		// The garbage collection shares the backup panel because both are data-maintenance acts a
+		// user takes from the same place, and because the composition root already holds the two
+		// dependencies it needs: the connection and the file store. A build in safe mode has no
+		// connection, so the collection is unavailable there — which is correct, since a collection
+		// needs the database to answer what is referenced.
+		desktop.AttachGarbageCollection(w.backup, w.collector, w.files)
 	}
 }
 

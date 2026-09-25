@@ -7,6 +7,8 @@ import (
 
 	appbackup "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/backup"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/apperror"
+	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/infrastructure/database"
+	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/infrastructure/filestore"
 )
 
 // BackupBinding is the narrow Wails surface for the ordinary backup.
@@ -29,6 +31,17 @@ type BackupBinding struct {
 	// being validated, and promoting happens after a user has been shown what the
 	// archive contains and has confirmed.
 	promoter appbackup.Promoter
+	// collector answers FR-160's 「垃圾回收执行前显示将删除内容并支持取消」: a preview of the objects
+	// nothing references, and a collection that removes their rows.
+	collector *database.GarbageCollector
+	// files is the store the collected objects' BYTES live in. The collector removes rows and this
+	// removes bytes: the two are different things, and the binding is where the two halves are joined
+	// because it is the component that holds both.
+	files *filestore.Store
+	// collecting reports whether a collection is in flight, so a cancel can be told apart from a
+	// no-op and a second collection cannot start on top of the first.
+	collecting bool
+	cancel     context.CancelFunc
 }
 
 // AttachBackup supplies the services. A nil service leaves the binding
@@ -43,6 +56,23 @@ func AttachBackup(binding *BackupBinding, ctx context.Context, export *appbackup
 	binding.restore = restore
 	binding.sink = sink
 	binding.promoter = promoter
+	binding.mu.Unlock()
+}
+
+// AttachGarbageCollection supplies the collector and the store the collection needs.
+//
+// A separate method rather than another parameter on `AttachBackup`, for the reason
+// `WithFinalRuleset` is separate from the storyboard checker's constructor: the two capabilities are
+// independent, and a signature that made them look like a pair would invite a caller to pass one
+// connection where the other was meant. A build that calls only `AttachBackup` answers the
+// collection's calls as unavailable, which is a state the UI can render.
+func AttachGarbageCollection(binding *BackupBinding, collector *database.GarbageCollector, files *filestore.Store) {
+	if binding == nil {
+		return
+	}
+	binding.mu.Lock()
+	binding.collector = collector
+	binding.files = files
 	binding.mu.Unlock()
 }
 
@@ -275,4 +305,169 @@ func (b *BackupBinding) BackupStateHeld() (bool, error) {
 		return false, bindingUnavailable()
 	}
 	return promoter.HasBackupState(), nil
+}
+
+// ---------------------------------------------------------------------------
+// Garbage collection (FR-160's 「垃圾回收执行前显示将删除内容并支持取消」)
+// ---------------------------------------------------------------------------
+
+// GarbageCandidateDTO is one object a collection would remove.
+type GarbageCandidateDTO struct {
+	Hash       string `json:"hash"`
+	StorageKey string `json:"storageKey"`
+	MIME       string `json:"mimeType"`
+	SizeBytes  int64  `json:"sizeBytes"`
+}
+
+// GarbagePreviewDTO is the list a user decides on.
+type GarbagePreviewDTO struct {
+	Candidates []GarbageCandidateDTO `json:"candidates"`
+	TotalBytes int64                 `json:"totalBytes"`
+	// Collecting reports whether a collection is running, so a panel that reloaded mid-run does not
+	// offer a second one.
+	Collecting bool `json:"collecting"`
+}
+
+// GarbageCollectResultDTO reports what a collection removed.
+type GarbageCollectResultDTO struct {
+	Removed []GarbageCandidateDTO `json:"removed"`
+	// Skipped names the objects the collection found referenced even though the preview offered them,
+	// which happens when something adopts an object between the two calls.
+	Skipped []string `json:"skipped"`
+	// FreedBytes is what the removed objects occupied.
+	FreedBytes int64 `json:"freedBytes"`
+	// Cancelled reports whether a user stopped the collection part-way. The objects already removed
+	// stay removed: a collection is not a transaction across the store, and pretending it were would
+	// mean putting back bytes whose rows are gone.
+	Cancelled bool `json:"cancelled"`
+	// BytesRemoved counts the objects whose BYTES were deleted, which can be fewer than the rows
+	// removed when a file was already absent — the two are reported apart because a collector that
+	// could not tell them apart would report freeing space it did not free.
+	BytesRemoved int `json:"bytesRemoved"`
+}
+
+// PreviewGarbageListing answers 「执行前显示将删除内容」.
+//
+// It is a READ and safe to call twice: nothing is removed by looking. It is separate from
+// `RunGarbageCollection` for the reason `PreviewBackup` is separate from `RestoreBackup` — a preview
+// answers a question, and a destructive act is the ANSWER rather than the same act with a flag.
+func (b *BackupBinding) PreviewGarbageListing() (GarbagePreviewDTO, error) {
+	b.mu.RLock()
+	collector := b.collector
+	collecting := b.collecting
+	b.mu.RUnlock()
+	if collector == nil {
+		return GarbagePreviewDTO{}, bindingUnavailable()
+	}
+	preview, err := collector.Preview(b.context())
+	if err != nil {
+		return GarbagePreviewDTO{}, err
+	}
+	candidates := make([]GarbageCandidateDTO, 0, len(preview.Candidates))
+	for _, candidate := range preview.Candidates {
+		candidates = append(candidates, GarbageCandidateDTO{
+			Hash: candidate.Hash, StorageKey: candidate.StorageKey,
+			MIME: candidate.MIME, SizeBytes: candidate.SizeBytes,
+		})
+	}
+	return GarbagePreviewDTO{Candidates: candidates, TotalBytes: preview.TotalBytes, Collecting: collecting}, nil
+}
+
+// RunGarbageCollection removes the objects nothing references.
+//
+// # The confirmation is a parameter, not a dialog
+//
+// The same shape `RestoreBackup` uses and for the same reason: the refusal happens at the boundary,
+// before anything is read, so a caller that forgot the flag hears it rather than discovering it after
+// a partial run. The service is the one that knows what confirming MEANS here; the binding's job is
+// not to let the call through without it.
+//
+// # Cancellation
+//
+// A user can stop a collection with `CancelGarbageCollection`. The objects already removed stay
+// removed — the store and the database are two things, and putting bytes back whose rows are gone
+// would leave references this build cannot repair — and the result says the run was cancelled so a
+// caller does not report it as complete.
+func (b *BackupBinding) RunGarbageCollection(confirm bool) (GarbageCollectResultDTO, error) {
+	if !confirm {
+		return GarbageCollectResultDTO{}, apperror.New("GARBAGE_NOT_CONFIRMED", "security", false,
+			"Collecting removes the files nothing references. Review the list before collecting.", nil)
+	}
+	b.mu.Lock()
+	collector := b.collector
+	files := b.files
+	if collector == nil || files == nil {
+		b.mu.Unlock()
+		return GarbageCollectResultDTO{}, bindingUnavailable()
+	}
+	if b.collecting {
+		b.mu.Unlock()
+		return GarbageCollectResultDTO{}, apperror.New("GARBAGE_ALREADY_RUNNING", "conflict", false,
+			"A collection is already running.", nil)
+	}
+	ctx, cancel := context.WithCancel(b.context())
+	b.collecting = true
+	b.cancel = cancel
+	b.mu.Unlock()
+
+	defer func() {
+		cancel()
+		b.mu.Lock()
+		b.collecting = false
+		b.cancel = nil
+		b.mu.Unlock()
+	}()
+
+	result, err := collector.Collect(ctx)
+	if err != nil {
+		// A cancelled context is the user's own act rather than a fault, so it is reported as a
+		// cancelled run rather than as a failure: the rows already removed are gone either way.
+		if ctx.Err() != nil {
+			return GarbageCollectResultDTO{Cancelled: true}, nil
+		}
+		return GarbageCollectResultDTO{}, err
+	}
+	// The BYTES are removed after the rows, and only for the objects the collection actually removed.
+	// Doing it in this order means an interruption leaves a row whose file is still on disk — which
+	// the next preview will offer again — rather than a file no row knows about.
+	removed := make([]GarbageCandidateDTO, 0, len(result.Removed))
+	bytesRemoved := 0
+	for _, candidate := range result.Removed {
+		if ctx.Err() != nil {
+			return GarbageCollectResultDTO{
+				Removed: removed, Skipped: result.Skipped, FreedBytes: result.FreedBytes,
+				Cancelled: true, BytesRemoved: bytesRemoved,
+			}, nil
+		}
+		if err := files.Remove(ctx, candidate.StorageKey); err != nil {
+			return GarbageCollectResultDTO{}, err
+		}
+		bytesRemoved++
+		removed = append(removed, GarbageCandidateDTO{
+			Hash: candidate.Hash, StorageKey: candidate.StorageKey,
+			MIME: candidate.MIME, SizeBytes: candidate.SizeBytes,
+		})
+	}
+	return GarbageCollectResultDTO{
+		Removed: removed, Skipped: result.Skipped,
+		FreedBytes: result.FreedBytes, BytesRemoved: bytesRemoved,
+	}, nil
+}
+
+// CancelGarbageCollection stops a running collection.
+//
+// It is a separate command rather than a flag on the run, because the user who wants it is looking at
+// a progress list rather than at the call they made. It reports whether anything was running, so a
+// caller can tell "stopped" from "there was nothing to stop" — a difference a button's feedback
+// depends on.
+func (b *BackupBinding) CancelGarbageCollection() (bool, error) {
+	b.mu.RLock()
+	cancel := b.cancel
+	collecting := b.collecting
+	b.mu.RUnlock()
+	if !collecting || cancel == nil {
+		return false, nil
+	}
+	cancel()
+	return true, nil
 }

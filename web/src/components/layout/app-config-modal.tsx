@@ -6,6 +6,7 @@ import { useTranslation } from "react-i18next";
 import { ModelPicker } from "@/components/model-picker";
 import { ChannelEditorDrawer } from "@/components/layout/channel-editor-drawer";
 import { ProjectBackupPanel } from "@/components/config/backup-panel";
+import { GarbageCollectionPanel } from "@/components/config/garbage-collection-panel";
 import { LegacySecretStatus } from "@/components/layout/legacy-secret-notice";
 import { exportAppConfig, importAppConfig } from "@/services/config-file";
 import { exportAppBackup, importAppBackup } from "@/services/backup-restore";
@@ -331,6 +332,9 @@ function ConfigBackupTab() {
                 package above does not touch. A separate section rather than a control inside that
                 one: the two archives carry different data and neither restores the other. */}
             <ProjectBackupPanel />
+            {/* FR-160's garbage collection, in the same tab because both are data-maintenance
+                acts a user takes from one place. */}
+            <GarbageCollectionPanel />
         </div>
     );
 }

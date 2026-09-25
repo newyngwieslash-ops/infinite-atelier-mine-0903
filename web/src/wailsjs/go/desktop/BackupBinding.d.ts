@@ -4,10 +4,16 @@ import {desktop} from '../models';
 
 export function BackupStateHeld():Promise<boolean>;
 
+export function CancelGarbageCollection():Promise<boolean>;
+
 export function DiscardBackupState():Promise<void>;
 
 export function ExportBackup():Promise<string>;
 
 export function PreviewBackup(arg1:string):Promise<desktop.BackupPreview>;
 
+export function PreviewGarbageListing():Promise<desktop.GarbagePreviewDTO>;
+
 export function RestoreBackup(arg1:string,arg2:boolean):Promise<desktop.RestoreResult>;
+
+export function RunGarbageCollection(arg1:boolean):Promise<desktop.GarbageCollectResultDTO>;
