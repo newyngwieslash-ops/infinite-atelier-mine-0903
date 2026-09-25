@@ -46,6 +46,10 @@ export function SubmitImageJob(arg1) {
   return window['go']['desktop']['JobsBinding']['SubmitImageJob'](arg1);
 }
 
+export function SubmitVideoBatch(arg1) {
+  return window['go']['desktop']['JobsBinding']['SubmitVideoBatch'](arg1);
+}
+
 export function SubmitVideoJob(arg1) {
   return window['go']['desktop']['JobsBinding']['SubmitVideoJob'](arg1);
 }

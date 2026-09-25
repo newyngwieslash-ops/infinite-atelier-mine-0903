@@ -79,6 +79,20 @@ export function isMediaJobSubmissionAvailable(): boolean {
     return typeof jobs?.SubmitVideoJob === "function" && typeof jobs?.SubmitAudioJob === "function";
 }
 
+/**
+ * isVideoBatchAvailable reports whether the batch command exists in this build.
+ *
+ * It is a FIFTH probe, on the same principle as the ones above: a build whose
+ * binding predates the batch can still submit one shot at a time, and folding
+ * this method into `isMediaJobSubmissionAvailable` would make that build's whole
+ * submission surface read as unavailable. The section offers the multi-select
+ * only when it can act on it.
+ */
+export function isVideoBatchAvailable(): boolean {
+    const jobs = getDesktopWindow()?.go?.desktop?.JobsBinding;
+    return typeof jobs?.SubmitVideoBatch === "function";
+}
+
 let jobsModule: Promise<typeof import("@/wailsjs/go/desktop/JobsBinding")> | undefined;
 
 async function loadJobsBinding() {
@@ -130,6 +144,26 @@ export async function submitVideoJob(request: desktop.SubmitVideoJobRequest): Pr
     if (!isDesktopJobBindingsAvailable()) throw new Error("desktop job bindings are unavailable");
     const { SubmitVideoJob } = await loadJobsBinding();
     return SubmitVideoJob(request);
+}
+
+/**
+ * submitVideoBatch enqueues one video generation per shot.
+ *
+ * It replaces NOTHING: the single-shot command stays, and the batch is the
+ * loop a user would otherwise run by hand. A provider's API generates one clip
+ * per request, so a batch is several submissions — and the core reports each
+ * one rather than an aggregate, because a report that said "3 of 5" would
+ * leave a user counting rows to find which two to retry.
+ *
+ * A refusal per shot is NOT an exception: the returned document carries
+ * `submitted` and `refused`, and a caller renders the two differently. Only a
+ * refusal of the WHOLE request — an empty selection, more shots than the bound
+ * admits, a missing identifier — throws.
+ */
+export async function submitVideoBatch(request: desktop.SubmitVideoBatchRequest): Promise<desktop.SubmitVideoBatchResultDTO> {
+    if (!isDesktopJobBindingsAvailable()) throw new Error("desktop job bindings are unavailable");
+    const { SubmitVideoBatch } = await loadJobsBinding();
+    return SubmitVideoBatch(request);
 }
 
 /**

@@ -2,8 +2,10 @@ package jobs
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -58,6 +60,10 @@ type videoVendor struct {
 	// authentication failure say so: without it, a request that went out with a zeroed header fails at
 	// the transport as "the provider could not be reached", which reads as a network fault.
 	authorizations []string
+	// bodies records every submission body, so a test can assert what was SENT. It is what found the
+	// empty-reference defect: the request succeeded and the reference was blank, so counting requests
+	// could not tell a working submission from one that carried nothing.
+	bodies []string
 }
 
 func newVideoVendor(t *testing.T, statuses ...string) *videoVendor {
@@ -68,6 +74,8 @@ func newVideoVendor(t *testing.T, statuses ...string) *videoVendor {
 		switch {
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/videos"):
 			vendor.submissions++
+			payload, _ := io.ReadAll(r.Body)
+			vendor.bodies = append(vendor.bodies, string(payload))
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"id":"vid-live-1"}`))
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/content"):
@@ -263,6 +271,81 @@ func TestTheRealAdapterSatisfiesTheRunnerAndTheResultStore(t *testing.T) {
 	}
 	if string(stored) != string(videoFTYPBytes()) {
 		t.Fatalf("the committed bytes are %q", stored)
+	}
+}
+
+// TestAFirstAndLastFrameReachTheVendorAsBytes is the defect a WP-28 probe found, crossed by the
+// boundary that hid it.
+//
+// # The defect
+//
+// The runner assembles references as `ImageInput{Data: …}` — a data URL — and leaves `Bytes` empty.
+// WP-26's adapter read `Bytes` alone, so every reference travelled as `data:image/png;base64,` with
+// nothing after the comma, and a provider would read that as a zero-byte image. The package's comment
+// claimed the first/last-frame pipe was complete; the pipe WAS complete and it delivered an empty
+// string end to end.
+//
+// # Why this test and not the adapter's
+//
+// The adapter's suite now has a regression for the same bug, and neither test is redundant: that one
+// builds the runner's SHAPE by hand, and this one has the RUNNER build it. If the runner ever changes
+// which field it fills — the exact drift that caused the defect — the hand-built test keeps passing
+// while this one fails.
+func TestAFirstAndLastFrameReachTheVendorAsBytes(t *testing.T) {
+	ctx := context.Background()
+	vendor := newVideoVendor(t, "completed")
+	registry, _ := liveVideoRegistry(t, vendor.server.URL)
+	runner := NewRunner(registry, NewResultStore(newFakeContentStore(), newFakeMetadataStore(), &recordingReferences{}),
+		&fakeDownloader{}, 1<<20)
+
+	// The two frames carry a real PNG signature as BYTES, escaped rather than written literally so
+	// the source file stays printable and the assertion is about content rather than about a base64
+	// round trip of a constant.
+	firstFrameBytes := append([]byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a}, []byte("first")...)
+	lastFrameBytes := append([]byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a}, []byte("last")...)
+	firstFrame := "data:image/png;base64," + base64.StdEncoding.EncodeToString(firstFrameBytes)
+	lastFrame := "data:image/png;base64," + base64.StdEncoding.EncodeToString(lastFrameBytes)
+	record := jobRecord(job.JobTypeVideoGeneration, map[string]any{
+		"providerId": "prov-live", "model": "vendor-video-1", "prompt": "a lantern on the ferry",
+		"seconds": 4, "firstFrame": firstFrame, "firstFrameMime": "image/png",
+		"lastFrame": lastFrame, "lastFrameMime": "image/png",
+	})
+	record.ProviderConfigID = "prov-live"
+
+	if _, err := runner.Run(ctx, record); err != nil {
+		t.Fatalf("the submit pass: %v", err)
+	}
+	if len(vendor.bodies) != 1 {
+		t.Fatalf("the vendor received %d submissions", len(vendor.bodies))
+	}
+	var sent map[string]any
+	if err := json.Unmarshal([]byte(vendor.bodies[0]), &sent); err != nil {
+		t.Fatalf("the submission body is not JSON: %s", vendor.bodies[0])
+	}
+	raw, ok := sent["input_reference"].([]any)
+	if !ok || len(raw) != 2 {
+		t.Fatalf("the submission carries %v references, want the first and last frame", sent["input_reference"])
+	}
+	// EACH FRAME IS ASSERTED SEPARATELY, in the ORDER the runner assembled them: a command that sent
+	// two copies of one frame would pass a count assertion.
+	for index, want := range []string{"first", "last"} {
+		entry, _ := raw[index].(map[string]any)
+		imageURL, _ := entry["image_url"].(string)
+		prefix := "data:image/png;base64,"
+		if !strings.HasPrefix(imageURL, prefix) {
+			t.Fatalf("frame %d is not a PNG data URL: %q", index, imageURL)
+		}
+		encoded := strings.TrimPrefix(imageURL, prefix)
+		if encoded == "" {
+			t.Fatalf("frame %d travelled as an EMPTY data URL, which is the defect this test exists for", index)
+		}
+		decoded, err := base64.StdEncoding.DecodeString(encoded)
+		if err != nil {
+			t.Fatalf("frame %d is not base64: %q", index, encoded)
+		}
+		if !strings.HasSuffix(string(decoded), want) {
+			t.Fatalf("frame %d carries %q, want the %s frame", index, decoded, want)
+		}
 	}
 }
 

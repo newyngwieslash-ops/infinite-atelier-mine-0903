@@ -143,7 +143,15 @@ func (a *OpenAIVideoAdapter) Submit(ctx context.Context, request appjobs.VideoRe
 	if err != nil {
 		return appjobs.RemoteJob{}, err
 	}
-	body, err := json.Marshal(videoSubmitBody(request))
+	// The body is built BEFORE the client is asked for anything, because a request whose references
+	// cannot be read is a request that must not reach a provider: an empty reference is refused here
+	// rather than generating a film without the frame the user chose.
+	document, err := videoSubmitBody(request)
+	if err != nil {
+		a.audit(ctx, request.JobID, request.Model, config, provider.StatusFailed, 0, started, err, "")
+		return appjobs.RemoteJob{}, err
+	}
+	body, err := json.Marshal(document)
 	if err != nil {
 		return appjobs.RemoteJob{}, provider.NewInvalidInputError()
 	}
@@ -496,7 +504,7 @@ func (a *OpenAIVideoAdapter) Cancel(ctx context.Context, remote appjobs.RemoteJo
 //
 // Each entry is a data URL because the runner handed over bytes with their MIME type and nothing else:
 // there is no uploaded file for the provider to point at.
-func videoSubmitBody(request appjobs.VideoRequest) map[string]any {
+func videoSubmitBody(request appjobs.VideoRequest) (map[string]any, error) {
 	body := map[string]any{
 		"model":  request.Model,
 		"prompt": request.Prompt,
@@ -517,13 +525,42 @@ func videoSubmitBody(request appjobs.VideoRequest) map[string]any {
 			if mimeType == "" {
 				mimeType = "image/png"
 			}
+			// THE BYTES ARE RESOLVED FROM EITHER FIELD, and this is a defect fix rather than a
+			// convenience. The runner fills `ImageInput.Data` — a data URL — and leaves `Bytes` empty,
+			// while this adapter read `Bytes` alone. The result was that EVERY reference travelled as a
+			// data URL with nothing after the comma:
+			//
+			//	"image_url": "data:image/png;base64,"
+			//
+			// which a provider reads as a reference image of zero bytes. The upstream comment claimed
+			// the first/last-frame pipe was complete, and the pipe WAS complete — it delivered an empty
+			// string end to end. A probe that submitted a frame the way the runner does is what found
+			// it, because every test up to that point built its `ImageInput` with `Bytes` directly and
+			// so exercised a shape no real caller produces.
+			//
+			// The resolution order and the refusal are `writeImagePart`'s, deliberately: an adapter that
+			// invented its own empty-reference rule would send a different request for the same input.
+			payload := reference.Bytes
+			if len(payload) == 0 && reference.Data != "" {
+				decoded, _, err := decodeImageData(reference.Data)
+				if err != nil {
+					return nil, err
+				}
+				payload = decoded
+			}
+			if len(payload) == 0 {
+				// Refused rather than sent as an empty reference: a provider handed a zero-byte image
+				// either errors with a message about the image or, worse, generates a film without the
+				// frame the user chose — and neither says which reference was empty.
+				return nil, provider.NewInvalidInputError()
+			}
 			references = append(references, map[string]string{
-				"image_url": "data:" + mimeType + ";base64," + encodeBase64(reference.Bytes),
+				"image_url": "data:" + mimeType + ";base64," + encodeBase64(payload),
 			})
 		}
 		body["input_reference"] = references
 	}
-	return body
+	return body, nil
 }
 
 // mapVideoStatus translates the protocol's status vocabulary into the port's.

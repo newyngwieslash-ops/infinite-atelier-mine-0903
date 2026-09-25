@@ -360,6 +360,100 @@ func TestACancelledVideoCarriesNoSecretAndReportsItsFailure(t *testing.T) {
 	}
 }
 
+// TestAReferenceTheRunnerBuiltTravelsAsBytes is the defect a WP-28 probe found.
+//
+// # What was wrong
+//
+// The runner fills `ImageInput.Data` — a data URL — and leaves `Bytes` empty. This adapter read
+// `Bytes` alone, so EVERY reference travelled as a data URL with nothing after the comma:
+//
+//	"image_url": "data:image/png;base64,"
+//
+// A provider reads that as a zero-byte reference. The package's own comment claimed the
+// first/last-frame pipe was complete, and it WAS complete — it delivered an empty string end to end.
+//
+// # Why the existing tests could not see it
+//
+// Every reference test built its `ImageInput` with `Bytes` directly, which is a shape NO REAL CALLER
+// produces: the runner is the only thing that builds one, and it builds `Data`. A test that
+// constructs its own input tests the adapter against itself. This one submits the way the runner
+// does, which is what makes the empty reference visible.
+func TestAReferenceTheRunnerBuiltTravelsAsBytes(t *testing.T) {
+	fake := newVideoTestServer(t, "queued")
+	adapter, _ := newVideoTestAdapter(t, fake.server, []byte("test-secret-value"))
+
+	// THE RUNNER'S SHAPE: Data carries a data URL, Bytes is empty.
+	request := videoRequest()
+	request.References = []appjobs.ImageInput{
+		{MIMEType: "image/png", Data: "data:image/png;base64," + base64.StdEncoding.EncodeToString([]byte("frame-bytes"))},
+	}
+	if _, err := adapter.Submit(context.Background(), request); err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	references := submitReferences(t, fake)
+	if len(references) != 1 {
+		t.Fatalf("%d references travelled", len(references))
+	}
+	imageURL, _ := references[0]["image_url"].(string)
+	if !strings.HasPrefix(imageURL, "data:image/png;base64,") {
+		t.Fatalf("the reference is not a data URL: %q", imageURL)
+	}
+	encoded := strings.TrimPrefix(imageURL, "data:image/png;base64,")
+	if encoded == "" {
+		t.Fatal("the reference travelled as an EMPTY data URL, which is the defect this test exists for")
+	}
+	decoded, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		t.Fatalf("the reference payload is not base64: %q", encoded)
+	}
+	if string(decoded) != "frame-bytes" {
+		t.Fatalf("the frame's bytes did not survive: %q", decoded)
+	}
+}
+
+// TestAReferenceWithNoBytesIsRefusedRatherThanSent is the other half of the same rule.
+//
+// An input carrying neither field is not a reference, and sending it would ask a provider to open a
+// zero-byte image — which either errors about the image or, worse, generates a film without the frame
+// the user chose. The adapter refuses, so the job fails with a message that names the input.
+func TestAReferenceWithNoBytesIsRefusedRatherThanSent(t *testing.T) {
+	fake := newVideoTestServer(t, "queued")
+	adapter, _ := newVideoTestAdapter(t, fake.server, []byte("test-secret-value"))
+	request := videoRequest()
+	request.References = []appjobs.ImageInput{{MIMEType: "image/png"}}
+	if _, err := adapter.Submit(context.Background(), request); err == nil {
+		t.Fatal("a reference with no bytes was submitted")
+	}
+	if len(fake.bodies) != 0 {
+		t.Fatalf("a request with an empty reference reached the provider: %s", fake.bodies)
+	}
+}
+
+// submitReferences decodes the reference list of the first submission the server received.
+func submitReferences(t *testing.T, fake *videoTestServer) []map[string]any {
+	t.Helper()
+	if len(fake.bodies) == 0 {
+		t.Fatal("the server received no submission")
+	}
+	var sent map[string]any
+	if err := json.Unmarshal([]byte(fake.bodies[0]), &sent); err != nil {
+		t.Fatalf("the submission body is not JSON: %s", fake.bodies[0])
+	}
+	raw, ok := sent["input_reference"].([]any)
+	if !ok {
+		t.Fatalf("the submission carries no reference list: %v", sent)
+	}
+	out := make([]map[string]any, 0, len(raw))
+	for _, entry := range raw {
+		object, ok := entry.(map[string]any)
+		if !ok {
+			t.Fatalf("a reference is not an object: %v", entry)
+		}
+		out = append(out, object)
+	}
+	return out
+}
+
 // TestAFailureTheProviderReportsIsADoneAndFailedStatus is the port's OTHER terminal state.
 //
 // The port has exactly two, and the runner reads them apart: `Done && !Failed` is a generation to

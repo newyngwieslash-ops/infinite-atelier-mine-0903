@@ -58,6 +58,72 @@
 > now closed and **P1 to P4 are unchanged** — P1 opens with FR-100's explicit-stage-dependency
 > ruling, which is a product decision rather than a code task.
 
+# 0zf. WP-28: the first/last-frame picker, the empty data URL behind it, and the shot batch (2026-09-25)
+
+WP-28 finishes **P3 item 21**'s two remaining halves. It opens by correcting this file: §0zd said
+「the PIPE is complete … What is missing is a UI picker」, and **the first clause was wrong.**
+
+## The defect §0zd's own sentence was hiding
+
+A probe that submitted a frame the way the RUNNER does — before any UI existed — found that every
+reference travelled as:
+
+```json
+{"image_url": "data:image/png;base64,"}
+```
+
+An empty data URL. `ImageInput` carries `Data string` (a data URL) and `Bytes []byte`; the runner fills
+`Data`, and WP-26's adapter read `Bytes` alone. `openai_image.go` and `gemini_image.go` both resolve
+`Bytes` → `Data` → refuse; the video adapter had missed the convention. **The pipe was complete in the
+sense that it delivered a string end to end, and the string was empty.**
+
+**WHY EVERY EXISTING TEST MISSED IT, which is the part worth keeping:** each reference test constructed
+`ImageInput{Bytes: …}` directly, and **no real caller produces that shape** — the runner is the only thing
+that builds one, and it builds `Data`. A test that constructs its own input tests the adapter against
+itself. Two regressions now exist and neither is redundant: the adapter's suite builds the runner's shape
+by hand, and the jobs suite has the RUNNER build it, so a change to which field the runner fills fails
+the second while the first keeps passing.
+
+The fix needed a signature change — `videoSubmitBody` returns an error now — because an unresolvable
+reference must be REFUSED before a provider sees it. A provider handed a zero-byte image either errors
+about the image or generates a film without the frame the user chose.
+
+## The picker, and the batch
+
+**首尾帧**: the source is the shot's OWN approved panel image, by its `mediaHash` — the key
+`ReadResultFile` already opens — so **no new binding was added**. A frame that cannot be loaded is a state
+the section renders (controls disabled, reason shown) and **never an empty string**, which is the same
+defect in its other form. A file chooser was rejected: "any image at all" is the style-reference
+capability, which stays unoffered.
+
+**批量镜头生成**: `SubmitVideoBatch` loops over the single command rather than introducing a job type,
+because a provider's API generates one clip per request (ADR-0027). `submitOneVideo` is SHARED with the
+single command **because the idempotency key is built from the scope** — a batch that marshalled its own
+input would give the same request a different key, and a user who submitted one shot and then the batch
+containing it would get two jobs. One shot's failure does not undo another's; the report is per item; and
+the bound is **six**, below the image batch's eight because a video is billed by the second and takes
+minutes, with the refusal NAMING the bound so the UI's copy of it cannot go stale silently.
+
+## Verification
+
+| Command | Result |
+|---|---|
+| `go test ./... -count=1` | **PASS** |
+| `go vet ./...` | **PASS** |
+| mutation set, 15 mutations over two files | **15/15 killed**, both files restored byte-exact |
+| `web` `npm run typecheck` / `npm test` | **PASS**, 125 tests (3 new) |
+| `sh scripts/verify.sh` | **PASS**, exit 0 (695 files scanned; 25 Playwright; all fixture, SBOM and security checks; Wails production build skipped — the pinned CLI is not installed on this host) |
+
+Both frame regressions were verified to be non-vacuous: restoring the `Bytes`-only read makes the
+adapter's test fail with "the reference travelled as an EMPTY data URL" and the boundary test with
+"frame 0 travelled as an EMPTY data URL".
+
+## What remains open from item 21
+
+**Not built**: style references have no picker (`references` stays unsent) and the size field has no
+control. **Not verifiable here**: that a real vendor accepts the submission body — ADR-0027 records the
+protocol's field names as an assumption, and no authorised call was possible.
+
 # 0ze. WP-27: voice casting and effect suggestions, and two rules no code could reach (2026-09-25)
 
 WP-27 finishes **P3 item 23**'s two remaining halves, which WP-20 recorded as 「still open and named」:
@@ -195,14 +261,17 @@ and the failure never mentions the credential.
 
 The item's title is 视频首尾帧与批量镜头生成（对接真实视频 Provider）, and only the provider is delivered:
 
-- **首尾帧: the PIPE is complete** — `SubmitVideoJob` carries `references`/`firstFrame`/`lastFrame` with
-  their MIME pairs, the runner assembles them in FR-080's order, and the adapter encodes them as data
-  URLs. **What is missing is a UI picker**: `video-view.tsx` has no control that could produce base64
-  frame bytes, and it says so in place rather than sending an empty array that would be
-  indistinguishable from "no references".
-- **批量镜头生成 is NOT built.** The section submits ONE shot at a time; there is no multi-shot
-  submission, and `SubmitImageBatch`'s `maxImageBatch = 8` is the precedent a batch would follow with a
-  cost limit of its own.
+- **首尾帧: this section's claim was WRONG, corrected by WP-28 (STATUS §0zf, ADR-0029).** It said the
+  pipe was complete and only a picker was missing. A probe that submitted a frame the way the RUNNER
+  does found every reference travelling as `data:image/png;base64,` — an EMPTY data URL — because the
+  runner fills `ImageInput.Data` and the adapter read `Bytes` alone. The pipe was complete in the
+  sense that it delivered a string end to end, and the string was empty. WP-28 fixed the resolution
+  (`Bytes` → `Data` → refuse, the convention `openai_image.go` and `gemini_image.go` already kept),
+  added the UI picker over the shot's own approved panel image, and added the shot batch.
+- **批量镜头生成: DONE — WP-28 (§0zf, ADR-0029).** `SubmitVideoBatch` loops over the single command
+  (a provider's API has no multi-shot form), shares `submitOneVideo` with it so the idempotency key
+  matches, reports per item, and bounds a batch at SIX with a refusal that names the bound.
+  **Still unoffered**: style references have no picker, and the size field has no control.
 
 Both are named as open work rather than counted as delivered.
 

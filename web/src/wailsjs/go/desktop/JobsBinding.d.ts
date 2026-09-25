@@ -24,4 +24,6 @@ export function SubmitAudioJob(arg1:desktop.SubmitAudioJobRequest):Promise<deskt
 
 export function SubmitImageJob(arg1:desktop.SubmitImageJobRequest):Promise<desktop.JobDTO>;
 
+export function SubmitVideoBatch(arg1:desktop.SubmitVideoBatchRequest):Promise<desktop.SubmitVideoBatchResultDTO>;
+
 export function SubmitVideoJob(arg1:desktop.SubmitVideoJobRequest):Promise<desktop.JobDTO>;

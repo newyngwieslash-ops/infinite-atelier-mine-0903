@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Alert, App, Button, Empty, Input, InputNumber, Select, Space, Table, Tag, Typography } from "antd";
+import { Alert, App, Button, Empty, Input, InputNumber, Select, Space, Switch, Table, Tag, Typography } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { Play, RefreshCw } from "lucide-react";
+import { Layers, Play, RefreshCw } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
-import { listJobs, submitVideoJob } from "@/services/desktop/jobs";
+import { isVideoBatchAvailable, listJobs, submitVideoBatch, submitVideoJob } from "@/services/desktop/jobs";
+import { loadShotFrame, type ShotFrame } from "@/services/desktop/frames";
 import { isMediaBindingsAvailable, mediaCapability, readTimeline } from "@/services/desktop/media";
 import { channelIdForModel, decodeModelSelection } from "@/services/desktop/model-selection";
 import { useEffectiveConfig } from "@/stores/use-config-store";
@@ -61,10 +62,52 @@ export function VideoSection({ projectId, episodes, activeEpisodeId, onSelectEpi
     const [prompt, setPrompt] = useState("");
     const [seconds, setSeconds] = useState<number>(4);
     const [submitting, setSubmitting] = useState(false);
+    /**
+     * The frames the user chose for the NEXT submission, and the bytes once they are loaded.
+     *
+     * Two pieces of state rather than one, because "chosen" and "loaded" are different facts and the
+     * gap between them is where a submission would otherwise go wrong: a request built while the load
+     * was still running would carry no frame, and a request built after a FAILED load would carry an
+     * empty one. `firstFrame`/`lastFrame` hold the loaded frames, and a null there with a non-empty
+     * choice is a load that failed — which is stated rather than sent.
+     */
+    const [firstFrameChoice, setFirstFrameChoice] = useState(false);
+    const [lastFrameChoice, setLastFrameChoice] = useState(false);
+    const [frame, setFrame] = useState<ShotFrame | null>(null);
+    const [frameError, setFrameError] = useState("");
+    const [loadingFrame, setLoadingFrame] = useState(false);
+    /**
+     * The shots a batch would generate for, keyed by `shotId`.
+     *
+     * A MAP rather than an array so adding and removing is not a scan, and keyed by the SHOT rather
+     * than the board row: the row's `itemId` is a board's row identity and the shot is what the job's
+     * entity is, so a selection keyed on the row would break when the board is re-versioned.
+     */
+    const [batchSelection, setBatchSelection] = useState<Record<string, boolean>>({});
+    const [batching, setBatching] = useState(false);
+    const [batchResult, setBatchResult] = useState<desktop.SubmitVideoBatchResultDTO | null>(null);
 
     const activeEpisode = useMemo(() => episodes.find((episode) => episode.id === activeEpisodeId) || null, [episodes, activeEpisodeId]);
 
     const bindingsAvailable = isMediaBindingsAvailable();
+    /**
+     * Whether this build can submit a batch, asked as its own question.
+     *
+     * A build whose binding predates the batch still submits one shot at a time, so the multi-select is
+     * offered only when there is something to do with it.
+     */
+    const batchAvailable = isVideoBatchAvailable();
+    /**
+     * batchLimit mirrors the core's `maxVideoBatch`.
+     *
+     * IT IS A SECOND COPY OF A NUMBER, which is normally the shape this codebase refuses — but the
+     * alternative is worse here: the constant is unexported Go, and the only way to learn it would be to
+     * submit an oversized batch and read the refusal. What keeps the copy honest is that the core
+     * REFUSES an oversized request rather than truncating it, so a drifted value produces a refusal the
+     * user sees rather than a silently shortened batch. Six matches the core's, and this note is where
+     * to look when one moves.
+     */
+    const batchLimit = 6;
 
     /**
      * reload reads the timeline, the machine's capability and the project's video jobs.
@@ -132,6 +175,60 @@ export function VideoSection({ projectId, episodes, activeEpisodeId, onSelectEpi
     const selectedShot = shots.find((shot) => shot.shotId === selectedShotId) || null;
 
     /**
+     * The selected shot's approved frame, loaded once per shot.
+     *
+     * The bytes come from the shot's own `mediaHash`, which the timeline already carries: there is no
+     * second read of the board and no new call, and a shot whose media is missing produces a null frame
+     * with a reason rather than a submission without one.
+     */
+    useEffect(() => {
+        const hash = selectedShot?.mediaHash ?? "";
+        if (!hash) {
+            setFrame(null);
+            setFrameError("");
+            return;
+        }
+        let cancelled = false;
+        setLoadingFrame(true);
+        setFrameError("");
+        void loadShotFrame(hash)
+            .then((loaded) => {
+                if (cancelled) return;
+                setFrame(loaded);
+                if (!loaded) {
+                    // The reason is stated because the alternative — a picker whose switch does nothing —
+                    // is what a user would otherwise have to interpret. It is not an error the section
+                    // reports: a frame that cannot be read disables the frame controls and the shot can
+                    // still be generated without one.
+                    setFrameError(t("studio.video.frameUnreadable"));
+                }
+            })
+            .catch(() => {
+                if (!cancelled) {
+                    setFrame(null);
+                    setFrameError(t("studio.video.frameUnreadable"));
+                }
+            })
+            .finally(() => {
+                if (!cancelled) setLoadingFrame(false);
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [selectedShot?.mediaHash, t]);
+
+    /**
+     * The two frame choices are reset when the shot changes.
+     *
+     * Carrying them over would send one shot's frame for another: the choice names THIS shot's frame,
+     * and a shot with no approved media has none to send.
+     */
+    useEffect(() => {
+        setFirstFrameChoice(false);
+        setLastFrameChoice(false);
+    }, [selectedShotId]);
+
+    /**
      * submit sends the shot's video request.
      *
      * THE MODEL AND PROVIDER COME FROM THE PROJECT'S OWN CONFIGURATION, which is the only place
@@ -158,6 +255,17 @@ export function VideoSection({ projectId, episodes, activeEpisodeId, onSelectEpi
         }
         setSubmitting(true);
         try {
+            // THE FRAMES ARE SENT ONLY WHEN THEY LOADED. A choice whose bytes are absent is refused
+            // here rather than sent: an empty `firstFrame` and an absent one are different requests, and
+            // the provider reads the first as a zero-byte image — the defect WP-28 found inside the Go
+            // adapter, in its other form.
+            const wantsFirst = firstFrameChoice && frame !== null;
+            const wantsLast = lastFrameChoice && frame !== null;
+            if ((firstFrameChoice || lastFrameChoice) && frame === null) {
+                message.error(t("studio.video.frameUnreadable"));
+                setSubmitting(false);
+                return;
+            }
             const job = await submitVideoJob({
                 projectId,
                 episodeId: activeEpisode.id,
@@ -166,6 +274,14 @@ export function VideoSection({ projectId, episodes, activeEpisodeId, onSelectEpi
                 model: decoded.model,
                 prompt: prompt.trim(),
                 seconds,
+                // The fields are OMITTED when a frame was not chosen, because `omitempty` on the Go side
+                // means an empty string never travels — so a caller that sent `firstFrame: ""` would be
+                // sending the same request as one that sent nothing, and the comment would claim a
+                // frame that is not there.
+                firstFrame: wantsFirst ? frame!.dataUrl : undefined,
+                firstFrameMime: wantsFirst ? frame!.mime : undefined,
+                lastFrame: wantsLast ? frame!.dataUrl : undefined,
+                lastFrameMime: wantsLast ? frame!.mime : undefined,
             } as never);
             message.success(t("studio.video.submitted", { job: job.id.slice(0, 8) }));
             setPrompt("");
@@ -177,6 +293,55 @@ export function VideoSection({ projectId, episodes, activeEpisodeId, onSelectEpi
             setSubmitting(false);
         }
     };
+
+    /**
+     * submitBatch generates for every selected shot.
+     *
+     * The result is SHOWN rather than toasted: a batch can half-succeed, and a message that said
+     * "submitted" for a run whose third shot was refused would be the report lying about what
+     * happened. The per-shot outcome is rendered below the button.
+     */
+    const submitBatch = async () => {
+        if (!activeEpisode) return;
+        const shotIDs = Object.keys(batchSelection).filter((shotId) => batchSelection[shotId]);
+        if (shotIDs.length === 0) return;
+        const selection = config.videoModel || config.model;
+        const decoded = decodeModelSelection(selection);
+        const channelId = channelIdForModel(config, selection);
+        if (!decoded.model || !channelId) {
+            message.error(t("studio.video.modelRequired"));
+            return;
+        }
+        setBatching(true);
+        try {
+            const result = await submitVideoBatch({
+                projectId,
+                episodeId: activeEpisode.id,
+                providerId: channelId,
+                model: decoded.model,
+                // The shared prompt is optional for a batch: one prompt cannot describe six different
+                // shots, and the core's own default says what the request is rather than sending none.
+                prompt: prompt.trim() || undefined,
+                seconds,
+                shotIds: shotIDs,
+            } as never);
+            setBatchResult(result);
+            // The selection is cleared only on a submission that reported something: a request refused
+            // WHOLESALE throws, and losing the user's selection to a failure they have to fix would make
+            // them pick six shots again.
+            if (result.submitted.length > 0) {
+                setBatchSelection({});
+                await refreshJobs();
+                onChanged();
+            }
+        } catch (failure) {
+            message.error(failure instanceof Error ? failure.message : t("studio.video.batchFailed"));
+        } finally {
+            setBatching(false);
+        }
+    };
+
+    const selectedCount = Object.values(batchSelection).filter(Boolean).length;
 
     const shotColumns: ColumnsType<desktop.TimelineShotDTO> = [
         { title: t("studio.video.ordinal"), dataIndex: "ordinal", key: "ordinal", width: 70 },
@@ -323,8 +488,53 @@ export function VideoSection({ projectId, episodes, activeEpisodeId, onSelectEpi
                         dataSource={shots}
                         data-testid="studio-video-shots"
                         rowClassName={(row) => (row.shotId === selectedShotId ? "bg-stone-50 dark:bg-stone-900" : "")}
+                        // The selection column appears ONLY when this build has the batch command: a
+                        // checkbox that could not act would be a control offering work it cannot do.
+                        rowSelection={
+                            batchAvailable
+                                ? {
+                                      selectedRowKeys: shots.filter((shot) => batchSelection[shot.shotId]).map((shot) => shot.itemId),
+                                      onChange: (_keys, rows) => {
+                                          const next: Record<string, boolean> = {};
+                                          for (const row of rows) next[row.shotId] = true;
+                                          setBatchSelection(next);
+                                      },
+                                      getCheckboxProps: (row) => ({ disabled: false, name: row.shotId }),
+                                  }
+                                : undefined
+                        }
                     />
                 )}
+
+                {/* THE BATCH, beside the single-shot form rather than replacing it: submitting one shot
+                    is the ordinary act, and a batch is what a user does once the board is settled. */}
+                {batchAvailable && shots.length > 0 ? (
+                    <div className="mt-3" data-testid="studio-video-batch">
+                        <Space wrap>
+                            <Button icon={<Layers className="size-4" />} loading={batching} disabled={selectedCount === 0} data-testid="studio-video-batch-submit" onClick={() => void submitBatch()}>
+                                {t("studio.video.batchSubmit", { count: selectedCount })}
+                            </Button>
+                            <Typography.Text type="secondary">{t("studio.video.batchHint", { max: batchLimit })}</Typography.Text>
+                        </Space>
+                        {batchResult ? (
+                            <div className="mt-2 text-xs" data-testid="studio-video-batch-result">
+                                {/* The two lists are rendered SEPARATELY and neither is hidden when
+                                    empty: a run that submitted four and refused one must not look like
+                                    a run that submitted four. */}
+                                {batchResult.submitted.map((item) => (
+                                    <div key={item.shotId} className="text-stone-600 dark:text-stone-400">
+                                        {t(item.duplicate ? "studio.video.batchAlready" : "studio.video.batchQueued", { shot: item.shotId.slice(0, 8), job: (item.jobId ?? "").slice(0, 8) })}
+                                    </div>
+                                ))}
+                                {batchResult.refused.map((item) => (
+                                    <div key={item.shotId} className="text-red-600 dark:text-red-400">
+                                        {t("studio.video.batchRefused", { shot: item.shotId.slice(0, 8), reason: item.refused })}
+                                    </div>
+                                ))}
+                            </div>
+                        ) : null}
+                    </div>
+                ) : null}
 
                 {timeline && shots.length > 0 ? (
                     <Typography.Paragraph className="mt-2 text-xs text-stone-500">
@@ -367,11 +577,46 @@ export function VideoSection({ projectId, episodes, activeEpisodeId, onSelectEpi
                     <span className="mb-1 block text-sm">{t("studio.video.promptLabel")}</span>
                     <Input.TextArea rows={3} value={prompt} maxLength={2000} data-testid="studio-video-prompt" placeholder={t("studio.video.promptPlaceholder")} onChange={(event) => setPrompt(event.target.value)} />
                 </label>
-                {/* The size and provider fields the binding accepts but this section does NOT
-                    send: `references`, `firstFrame`/`lastFrame` and their MIME pairs carry base64
-                    image bytes, and this section has no picker that could produce them. Sending an
-                    empty array would be indistinguishable from a request that meant "no references",
-                    so the fields are left out and this note says why. */}
+                {/* THE FIRST AND LAST FRAME, from the shot's OWN approved panel image.
+                    This is the picker WP-26's comment said was missing — and finding it missing is what
+                    exposed that the pipe underneath was broken too: the adapter read `ImageInput.Bytes`
+                    while the runner fills `Data`, so every reference travelled as an empty data URL.
+                    The pipe is fixed and this control is what uses it.
+                    The source is the approved frame rather than a file chooser: a frame in this build
+                    has an exact source, and "any image at all" is a different capability. */}
+                <div className="mt-3" data-testid="studio-video-frames">
+                    <span className="mb-1 block text-sm">{t("studio.video.framesLabel")}</span>
+                    {!selectedShot ? (
+                        <Typography.Text type="secondary">{t("studio.video.framesPickShot")}</Typography.Text>
+                    ) : !selectedShot.mediaHash ? (
+                        // No approved media is the ordinary state of a board under construction, and the
+                        // control says THAT rather than offering a switch that cannot do anything.
+                        <Typography.Text type="secondary">{t("studio.video.framesNoMedia")}</Typography.Text>
+                    ) : loadingFrame ? (
+                        <Typography.Text type="secondary">{t("studio.video.framesLoading")}</Typography.Text>
+                    ) : frame === null ? (
+                        <Typography.Text type="secondary">{frameError || t("studio.video.frameUnreadable")}</Typography.Text>
+                    ) : (
+                        <Space wrap align="start">
+                            {/* The thumbnail IS the choice: a user picking a first frame should see the
+                                frame, and this one is the exact image the request will carry. */}
+                            <img src={frame.dataUrl} alt={t("studio.video.framesLabel")} className="h-16 w-auto rounded border border-stone-200 dark:border-stone-700" data-testid="studio-video-frame-thumb" />
+                            <Space direction="vertical" size={4}>
+                                <label className="flex items-center gap-2 text-sm">
+                                    <Switch size="small" checked={firstFrameChoice} data-testid="studio-video-first-frame" onChange={(checked) => setFirstFrameChoice(checked)} />
+                                    {t("studio.video.useFirstFrame")}
+                                </label>
+                                <label className="flex items-center gap-2 text-sm">
+                                    <Switch size="small" checked={lastFrameChoice} data-testid="studio-video-last-frame" onChange={(checked) => setLastFrameChoice(checked)} />
+                                    {t("studio.video.useLastFrame")}
+                                </label>
+                            </Space>
+                        </Space>
+                    )}
+                </div>
+                {/* What is NOT offered, said rather than left to be discovered: `references` stays
+                    unsent because there is no picker for a style reference, and the size field has no
+                    control either. Both are the binding's to accept and this section's to leave out. */}
                 <Typography.Paragraph className="mt-3 text-xs text-stone-500">{t("studio.video.framesNote")}</Typography.Paragraph>
             </section>
 

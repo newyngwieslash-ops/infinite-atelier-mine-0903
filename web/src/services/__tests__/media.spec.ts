@@ -36,8 +36,31 @@ import {
     saveDocument,
     saveExport,
 } from "../desktop/media";
-import { isMediaJobSubmissionAvailable, submitAudioJob, submitVideoJob } from "../desktop/jobs";
+import { isMediaJobSubmissionAvailable, isVideoBatchAvailable, submitAudioJob, submitVideoJob } from "../desktop/jobs";
+import { isFrameLoadingAvailable, loadShotFrame } from "../desktop/frames";
 import { withDesktopCore, type FakeBindings } from "./desktop-core";
+
+test("the frame loader answers null rather than throwing when nothing can be read", async () => {
+    // The absence direction for the frame picker, which is WP-28's own rule at the UI's end: a frame
+    // that cannot be loaded is a state the section RENDERS — "this shot has no frame to send" — and
+    // never an empty `firstFrame`, which a provider reads as a zero-byte image.
+    assert.equal(await loadShotFrame(""), null);
+    // A key that is not the store's shape is refused before any call, so a malformed value never looks
+    // like a read failure.
+    assert.equal(await loadShotFrame("not-a-hash"), null);
+    assert.equal(await loadShotFrame("A".repeat(64)), null);
+    assert.equal(await loadShotFrame("a".repeat(63)), null);
+});
+
+test("a window with no desktop core offers no frame loading", () => {
+    assert.equal(isFrameLoadingAvailable(), false);
+});
+
+test("a window with no desktop core offers no video batch", () => {
+    // A build whose binding predates the batch still submits one shot at a time, and the section hides
+    // its multi-select rather than offering a control that cannot act.
+    assert.equal(isVideoBatchAvailable(), false);
+});
 
 test("a window with no desktop core reports both media capabilities unsatisfied", () => {
     assert.equal(isMediaBindingsAvailable(), false);

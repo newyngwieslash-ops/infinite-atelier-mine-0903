@@ -5604,6 +5604,86 @@ export namespace desktop {
 	        this.episodeId = source["episodeId"];
 	    }
 	}
+	export class SubmitVideoBatchRequest {
+	    projectId: string;
+	    episodeId: string;
+	    providerId: string;
+	    model: string;
+	    prompt?: string;
+	    seconds?: number;
+	    size?: string;
+	    shotIds: string[];
+	    priority?: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new SubmitVideoBatchRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.projectId = source["projectId"];
+	        this.episodeId = source["episodeId"];
+	        this.providerId = source["providerId"];
+	        this.model = source["model"];
+	        this.prompt = source["prompt"];
+	        this.seconds = source["seconds"];
+	        this.size = source["size"];
+	        this.shotIds = source["shotIds"];
+	        this.priority = source["priority"];
+	    }
+	}
+	export class VideoBatchItemDTO {
+	    shotId: string;
+	    jobId?: string;
+	    status?: string;
+	    duplicate?: boolean;
+	    refused?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new VideoBatchItemDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.shotId = source["shotId"];
+	        this.jobId = source["jobId"];
+	        this.status = source["status"];
+	        this.duplicate = source["duplicate"];
+	        this.refused = source["refused"];
+	    }
+	}
+	export class SubmitVideoBatchResultDTO {
+	    submitted: VideoBatchItemDTO[];
+	    refused: VideoBatchItemDTO[];
+	
+	    static createFrom(source: any = {}) {
+	        return new SubmitVideoBatchResultDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.submitted = this.convertValues(source["submitted"], VideoBatchItemDTO);
+	        this.refused = this.convertValues(source["refused"], VideoBatchItemDTO);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class SubmitVideoJobRequest {
 	    projectId: string;
 	    episodeId: string;
@@ -6164,6 +6244,7 @@ export namespace desktop {
 		    return a;
 		}
 	}
+	
 	
 	export class VoiceChoiceDTO {
 	    providerConfigId?: string;
