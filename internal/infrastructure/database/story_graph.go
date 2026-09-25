@@ -137,6 +137,62 @@ func (r *StoryRepository) ListStoryEvents(ctx context.Context, projectID, chapte
 const storyEventParticipantSelectColumns = `SELECT story_event_id, story_entity_id, role, state_before,
 	state_after, created_at FROM story_event_participants`
 
+// ListProjectEventParticipants returns every participation in one project.
+//
+// # Why the join is here rather than in the caller
+//
+// `story_event_participants` carries no project column: an event belongs to a
+// project and a participation belongs to an event, so the project filter is a
+// join through `story_events`. A caller assembling that from per-event reads
+// would make one query per event — the N+1 shape the graph view would hit on
+// its first render — and it would also have to apply the same status filter
+// twice, in two places that could disagree.
+//
+// # Why the event's status is filtered and the soft delete is checked
+//
+// The caller draws these as edges to event NODES, and the node list comes from
+// `ListStoryEvents` with the same filters. A participation whose event the same
+// view excludes would be an edge to nothing, which the drawing code drops
+// silently — so filtering here as well is what keeps "the edge is missing" and
+// "the node is missing" from being the same fact.
+//
+// The order is (event ordinal, role, entity) so a caller rendering one event's
+// participants among its other rows gets them grouped and stable, and two reads
+// of the same project produce the same sequence.
+func (r *StoryRepository) ListProjectEventParticipants(ctx context.Context, projectID string, status story.FactStatus) ([]story.StoryEventParticipant, error) {
+	conn := r.conn()
+	if conn == nil {
+		return nil, storageError("STORY_STORE_UNAVAILABLE", "The story store is unavailable.", nil)
+	}
+	rows, err := conn.QueryContext(ctx, `SELECT p.story_event_id, p.story_entity_id, p.role,
+			p.state_before, p.state_after, p.created_at
+		FROM story_event_participants p
+		JOIN story_events e ON e.id = p.story_event_id
+		WHERE e.project_id = ? AND e.deleted_at = '' AND (? = '' OR e.status = ?)
+		ORDER BY e.ordinal ASC, e.id ASC, p.role ASC, p.story_entity_id ASC`,
+		projectID, string(status), string(status))
+	if err != nil {
+		return nil, storageError("STORY_READ_FAILED", "The participants could not be read.", err)
+	}
+	defer rows.Close()
+	records := []story.StoryEventParticipant{}
+	for rows.Next() {
+		var record story.StoryEventParticipant
+		var role, createdAt string
+		if err := rows.Scan(&record.StoryEventID, &record.StoryEntityID, &role,
+			&record.StateBefore, &record.StateAfter, &createdAt); err != nil {
+			return nil, storageError("STORY_READ_FAILED", "The participants could not be read.", err)
+		}
+		record.Role = story.ParticipantRole(role)
+		record.CreatedAt = parseTime(createdAt)
+		records = append(records, record)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, storageError("STORY_READ_FAILED", "The participants could not be read.", err)
+	}
+	return records, nil
+}
+
 // CreateStoryEventParticipant links an entity to an event.
 func (r *StoryRepository) CreateStoryEventParticipant(ctx context.Context, record story.StoryEventParticipant) error {
 	conn := r.conn()

@@ -2,11 +2,12 @@
 
 > Last updated: 2026-09-25
 > Product: Infinite Atelier Core + Drama Production Pack
-> Current work package: **WP-16 — P3 item 20, the complete asset ruleset**
-> Status: **COMPLETE (section 0u). 12 mutations, 12/12 killed; the full gate passes.**
-> **WP-15 remains COMPLETE for its scope**: P1's ten items are all closed (section 0s), so the
-> acceptance contract has no outstanding clause it can close. The remaining P3 items are named in
-> ROADMAP section 6, which is now their single home.
+> Current work package: **WP-17 — P3 item 18, the event graph drawing**
+> Status: **COMPLETE (section 0v). 13 mutations, 13/13 killed; the full gate passes.**
+> **WP-16 remains COMPLETE (section 0u)** — the complete asset ruleset, two categories that had no
+> emitter, and the classification reaching the UI. **WP-15 remains COMPLETE for its scope**: P1's ten
+> items are all closed (section 0s), so the acceptance contract has no outstanding clause it can
+> close. The remaining P3 items are named in ROADMAP section 6, which is their single home.
 >
 > **WP-14 remains COMPLETE (section 0r).** `PRD.md:1168`'s 「同供应商并发不超过配置上限」 is enforced:
 > migration 000022 adds `provider_configs.max_concurrency` (0 = unlimited, so every upgrade behaves
@@ -45,6 +46,76 @@
 > `docs/implementation/project-progress-and-remaining-tasks-2026-09-23.md`, where the P0 section is
 > now closed and **P1 to P4 are unchanged** — P1 opens with FR-100's explicit-stage-dependency
 > ruling, which is a product decision rather than a code task.
+
+# 0v. WP-17: the event graph draws events, and an assertion that had checked nothing since WP-06 (2026-09-25)
+
+WP-17 works **P3 item 18** (事件图谱可视化). ADR-0021 carries the reasoning; this section records what
+changed and what building it found.
+
+## What the reconnaissance established, and what each finding became
+
+- **THE GRAPH DREW NO EVENTS.** `buildGraph(entities, relations)` never received the events list, so the
+  section called 事件图谱 drew characters connected to characters and every event was absent from the
+  drawing. FR-030 lists `StoryEvent` first among the node types. Events are nodes now.
+- **PARTICIPATION HAD NO PROJECT-WIDE READ.** `participates_in` is in the relation vocabulary and
+  NOTHING WRITES IT — participation lives in `story_event_participants`, readable only one event at a
+  time. Drawing those edges would have been one call per event. `ListProjectEventParticipants` joins
+  through `story_events` so the project filter and the status filter live in one statement.
+- **AN E2E ASSERTION HAD BEEN VACUOUS SINCE WP-06.** `web/e2e/studio.spec.ts` asserted
+  `studio-story-graph-gap` had a count of 0. That testid was in `pages/studio/sections.tsx`; WP-06
+  moved the section to its own file and deleted the notice, and the i18n strings went with it. The
+  assertion then checked the absence of an element NO FILE COULD PRODUCE — a negative assertion
+  against a nonexistent testid cannot fail. **Eleven work packages passed with a test that asserted
+  nothing.**
+
+## What was built
+
+- `internal/infrastructure/database/story_graph.go`: `ListProjectEventParticipants`, with the JOIN and
+  both filters, because a view that filtered events one way and participations another would draw
+  edges to nodes it did not show — and the drawing code drops those silently, so the bug would read as
+  a missing edge rather than as a filter mismatch.
+- `internal/application/story` + `internal/desktop`: the service method with its guards (a blank
+  project and an unknown status are refused, because the store would answer both with silence) and the
+  binding.
+- `web/src/services/desktop/story-graph.ts` (new): the layout and drop rules as PURE functions, per
+  ADR-0017's ruling, so `node:test` can assert them.
+- `web/src/components/studio/story-graph-view.tsx`: the section now builds its graph from all four
+  reads; events are nodes; participation is a dashed edge labelled by role; the counts line reports
+  entities, events, edges and **the edges not drawn**.
+
+## The e2e assertion, and why it is now gone rather than repaired
+
+It cannot be repaired from that surface: `pages/studio/project.tsx` returns the no-core notice BEFORE
+the section switch runs, so `StoryGraphSection` is never MOUNTED in browser mode and no assertion in
+that file can observe anything inside it. The facts that replaced the old gap are asserted (the
+section reports itself available; the shell says why it cannot render), and the section's own states
+are covered by the desktop build's tests. **The reason is written where the assertion stood**, because
+a reader who greps for the old testid should find out why it is gone — and because a repaired
+look-alike (asserting some new testid is absent) would be exactly as vacuous for exactly the same
+reason.
+
+## Verification
+
+| command | result |
+|---|---|
+| `go test ./... -count=1` | **PASS** - 57 packages ok, 0 failed |
+| `npm test` / `npm run typecheck` | **PASS** - 113 tests (11 new), 0 failures; typecheck clean |
+| `sh scripts/verify.sh` | **PASS**, exit 0 (25 Playwright, security scans over 657 files, all fixture checks, SBOM, Wails production build) |
+| mutations | **13, 13/13 killed** (6 Go, 7 frontend), each restored byte-identically |
+
+**The mutation run itself got two things wrong and the run exposed both**, which is recorded because
+the runner cannot tell the difference: the first m3 was a NO-OP (`AND 1 = 1`), which proves nothing
+about anything; and the first m6 removed the project check from `ListStoryEntities` rather than from
+the method under test, because the anchor matched four methods — the test went green and looked like a
+survivor. Both were redone with method-specific anchors and both then killed. **A mutation that
+cannot apply is not a survivor.**
+
+## STILL OPEN, named
+
+**P3's remaining seven items**: 17 (local ONNX embeddings), 19 (MONOFORM deep integration), 21 (real
+video providers — needs paid-provider authorisation), 22 (hierarchical summaries and the memory
+centre), 23 (fuller timeline with effects and mixing), 24 (PDF import), 25 (stable Windows
+install/upgrade — needs `makensis`).
 
 # 0u. WP-16: the complete asset ruleset, and two categories that had no emitter (2026-09-25)
 

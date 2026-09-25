@@ -900,6 +900,44 @@ func (s *memoryStore) ListStoryEventParticipants(_ context.Context, storyEventID
 	return records, nil
 }
 
+// ListProjectEventParticipants mirrors the store's join through the events table.
+//
+// The double has to do the join the SQL does, or the service test would be
+// asserting behaviour the real store does not have: the status filter applies to
+// the EVENT rather than to the participation, which is the property that keeps a
+// filtered graph from drawing edges to nodes it did not show.
+func (s *memoryStore) ListProjectEventParticipants(_ context.Context, projectID string, status storydomain.FactStatus) ([]storydomain.StoryEventParticipant, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// Which events are in scope: this project's, of this status, not deleted.
+	inScope := map[string]bool{}
+	for _, event := range s.events {
+		if event.ProjectID != projectID || !event.DeletedAt.IsZero() {
+			continue
+		}
+		if status != "" && event.Status != status {
+			continue
+		}
+		inScope[event.ID] = true
+	}
+	records := []storydomain.StoryEventParticipant{}
+	for _, record := range s.participants {
+		if inScope[record.StoryEventID] {
+			records = append(records, record)
+		}
+	}
+	sort.Slice(records, func(i, j int) bool {
+		if records[i].StoryEventID != records[j].StoryEventID {
+			return records[i].StoryEventID < records[j].StoryEventID
+		}
+		if records[i].Role != records[j].Role {
+			return records[i].Role < records[j].Role
+		}
+		return records[i].StoryEntityID < records[j].StoryEntityID
+	})
+	return records, nil
+}
+
 func (s *memoryStore) CreateStoryFactSource(_ context.Context, record storydomain.StoryFactSource) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

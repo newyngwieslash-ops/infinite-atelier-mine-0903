@@ -2711,6 +2711,33 @@ func (s *dramaStore) ListStoryEventParticipants(_ context.Context, storyEventID 
 	return records, nil
 }
 
+// ListProjectEventParticipants mirrors the store's join through the events table.
+//
+// The double applies the status filter to the EVENT rather than to the participation, which is the
+// property the real read's JOIN exists for: a binding test that filtered differently from the store
+// would pass here and fail in a build.
+func (s *dramaStore) ListProjectEventParticipants(_ context.Context, projectID string, status storydomain.FactStatus) ([]storydomain.StoryEventParticipant, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	inScope := map[string]bool{}
+	for _, event := range s.events {
+		if event.ProjectID != projectID {
+			continue
+		}
+		if status != "" && event.Status != status {
+			continue
+		}
+		inScope[event.ID] = true
+	}
+	var records []storydomain.StoryEventParticipant
+	for _, record := range s.participants {
+		if inScope[record.StoryEventID] {
+			records = append(records, record)
+		}
+	}
+	return records, nil
+}
+
 func (s *dramaStore) CreateStoryFactSource(_ context.Context, record storydomain.StoryFactSource) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

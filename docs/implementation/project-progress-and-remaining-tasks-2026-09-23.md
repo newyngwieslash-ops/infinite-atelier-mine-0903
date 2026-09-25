@@ -119,7 +119,7 @@
 ### P3 — 已裁定延后到 v1.0 的范围（PRD §16，非欠账，列作 roadmap）
 
 17. 本地多语言 ONNX Embedding / 可选 sqlite-vec（连带解决"最新 500 条候选窗"召回限界）
-18. 事件图谱**可视化**（现在是列表视图）
+18. ~~事件图谱**可视化**（现在是列表视图）~~ **DONE — WP-17, 2026-09-25 (STATUS §0v, ADR-0021).** The section was called an EVENT graph and drew none: `buildGraph(entities, relations)` never received the events list. Events are nodes now, participation (which lives in `story_event_participants`, not in `story_relations`) is a dashed edge labelled by role, and a new project-wide read feeds it. A force simulation was rejected for determinism; the counts line reports the edges it did NOT draw. **Building it found that an e2e assertion had been vacuous since WP-06** — it asserted the absence of a testid no file could produce, so eleven packages passed with a test that checked nothing. The original text follows. 事件图谱**可视化**（现在是列表视图）
 19. MONOFORM 深度双向集成
 20. ~~完整资产一致性检查（全部规则集的确定性半边 + Safety/Cost）~~ **DONE — WP-16, 2026-09-25 (STATUS §0u, ADR-0020).** The ASSET ruleset's two missing clauses (派生关系, 文件存在和类型) are rules over the versions a board cites; Safety and Cost each have an emitter; the classification reaches `review_issues.category` and the quality centre. **The file rule's first version was WRONG and two existing tests proved it** — it reported every cited version with no file, which is the asset-bible state rather than a fault; it now anchors on `generation_job_id`. The original text follows. 完整资产一致性检查（全部规则集的确定性半边 + Safety/Cost）
 21. 视频首尾帧与批量镜头生成（对接真实视频 Provider）

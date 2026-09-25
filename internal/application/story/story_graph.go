@@ -85,6 +85,25 @@ func (s *Service) ListStoryEventParticipants(ctx context.Context, storyEventID s
 	return s.repository.ListStoryEventParticipants(ctx, storyEventID)
 }
 
+// ListProjectEventParticipants returns every participation in one project.
+//
+// The status filter is validated here as well as in the store, and the validation
+// is not redundant: a caller that passed an unknown status would otherwise get an
+// empty list, which reads as "this project has no participations" rather than as
+// the caller's mistake.
+func (s *Service) ListProjectEventParticipants(ctx context.Context, projectID string, status storydomain.FactStatus) ([]storydomain.StoryEventParticipant, error) {
+	if !s.Available() {
+		return nil, storageFailure()
+	}
+	if strings.TrimSpace(projectID) == "" {
+		return nil, storydomain.InvalidError("A project is required.")
+	}
+	if status != "" && !storydomain.IsValidFactStatus(status) {
+		return nil, storydomain.InvalidError("That participation status is not recognised.")
+	}
+	return s.repository.ListProjectEventParticipants(ctx, projectID, status)
+}
+
 // ListStoryEntityAliases returns an entity's aliases.
 func (s *Service) ListStoryEntityAliases(ctx context.Context, storyEntityID string) ([]storydomain.StoryEntityAlias, error) {
 	if !s.Available() {

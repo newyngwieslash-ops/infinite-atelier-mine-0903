@@ -2841,6 +2841,20 @@ export namespace desktop {
 	        this.offset = source["offset"];
 	    }
 	}
+	export class ListProjectEventParticipantsRequest {
+	    projectId: string;
+	    status?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ListProjectEventParticipantsRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.projectId = source["projectId"];
+	        this.status = source["status"];
+	    }
+	}
 	export class ListProjectRulesRequest {
 	    projectId: string;
 	    includeDeleted?: boolean;

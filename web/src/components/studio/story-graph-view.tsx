@@ -8,6 +8,7 @@ import {
     acceptStoryEntity,
     createStoryEntity,
     isDramaBindingsAvailable,
+    listProjectEventParticipants,
     listStoryConflicts,
     listStoryEntities,
     listStoryEventParticipants,
@@ -23,6 +24,15 @@ import {
     unlockStoryEvent,
 } from "@/services/desktop/drama";
 import { ENTITY_TYPES } from "@/services/desktop/drama";
+import {
+    buildGraph,
+    graphCounts,
+    layoutGraph,
+    nodeColour,
+    shortenLabel,
+    type Graph,
+    type StoryGraphInput,
+} from "@/services/desktop/story-graph";
 import type { desktop } from "@/wailsjs/go/models";
 
 /**
@@ -72,6 +82,10 @@ export function StoryGraphSection({ projectId }: StoryGraphSectionProps) {
     const [entities, setEntities] = useState<desktop.StoryEntityDTO[]>([]);
     const [events, setEvents] = useState<desktop.StoryEventDTO[]>([]);
     const [relations, setRelations] = useState<desktop.StoryRelationDTO[]>([]);
+    // Every participation in the project, for the GRAPH. It is read separately from the per-event
+    // list the participants panel uses, because the graph needs every edge at once and the panel
+    // needs one event's rows after a click.
+    const [participations, setParticipations] = useState<desktop.StoryEventParticipantDTO[]>([]);
     const [conflicts, setConflicts] = useState<desktop.StoryFactConflictDTO[]>([]);
     const [resolving, setResolving] = useState<{ id: string; text: string } | null>(null);
     const [status, setStatus] = useState<string>("");
@@ -94,10 +108,9 @@ export function StoryGraphSection({ projectId }: StoryGraphSectionProps) {
         setLoading(true);
         setError(null);
         try {
-            // Three reads rather than one composite call, because the core exposes
-            // three lists and a combined query would be a fourth thing to keep in
-            // step with them.
-            const [entityRows, eventRows, relationRows, conflictRows] = await Promise.all([
+            // Five reads rather than one composite call, because the core exposes five lists and a
+            // combined query would be a sixth thing to keep in step with them.
+            const [entityRows, eventRows, relationRows, conflictRows, participantRows] = await Promise.all([
                 listStoryEntities(projectId, status),
                 listStoryEvents(projectId, "", status),
                 listStoryRelations(projectId, status),
@@ -106,11 +119,16 @@ export function StoryGraphSection({ projectId }: StoryGraphSectionProps) {
                 // resolved one behind "candidates only" would make the record
                 // unfindable — which is the gap this panel closes.
                 listStoryConflicts(projectId, ""),
+                // The graph's participation read, with the SAME status filter the events list uses:
+                // that is what keeps an edge from naming an event this view filtered out, and the Go
+                // query applies the filter to the EVENT for exactly this reason.
+                listProjectEventParticipants(projectId, status),
             ]);
             setEntities(entityRows);
             setEvents(eventRows);
             setRelations(relationRows);
             setConflicts(conflictRows);
+            setParticipations(participantRows);
         } catch (caught) {
             setError(caught instanceof Error ? caught.message : t("studio.shell.loadFailed"));
         } finally {
@@ -485,7 +503,14 @@ const mergeDialog = (
         }
     };
 
-    const graph = useMemo(() => buildGraph(entities, relations), [entities, relations]);
+    // The graph is built from all four reads, which is the fix this package exists for: the first
+    // version passed `entities` and `relations` only, so an event graph drew no events and a
+    // character's participation — stored in its own table rather than as a relation — was invisible.
+    const graph = useMemo<Graph>(
+        () => buildGraph({ entities, events, relations, participants: participations } satisfies StoryGraphInput),
+        [entities, events, relations, participations],
+    );
+    const counts = useMemo(() => graphCounts(graph), [graph]);
 
     if (!available) {
         return (
@@ -676,12 +701,26 @@ const mergeDialog = (
             </section>
 
             {graph.nodes.length > 0 ? (
-                <section className="space-y-2">
+                <section className="space-y-2" data-testid="studio-story-graph-section">
                     <h3 className="flex items-center gap-2 text-sm font-medium">
                         <GitBranch className="size-4" />
                         {t("studio.storyGraph.graphTitle")}
                     </h3>
                     <p className="text-xs text-stone-500">{t("studio.storyGraph.graphNote")}</p>
+                    {/* The counts, INCLUDING the dropped edges. A picture that omitted an edge
+                        without saying so would read as "these facts are unrelated" when the truth
+                        is that this view did not draw them — so the number is on the screen rather
+                        than only in the module's return value. */}
+                    <p className="text-xs text-stone-500" data-testid="studio-graph-counts">
+                        {t("studio.storyGraph.graphCounts", {
+                            entities: counts.entities,
+                            events: counts.events,
+                            edges: counts.edges,
+                        })}
+                        {counts.dropped > 0
+                            ? ` ${t("studio.storyGraph.graphDropped", { count: counts.dropped })}`
+                            : ""}
+                    </p>
                     <StoryGraphView graph={graph} />
                 </section>
             ) : null}
@@ -756,79 +795,62 @@ function shortId(value: string): string {
     return value.length <= 12 ? value : `${value.slice(0, 8)}…`;
 }
 
-type GraphNode = { id: string; label: string; type: string; status: string };
-type GraphEdge = { id: string; from: string; to: string; label: string };
-type Graph = { nodes: GraphNode[]; edges: GraphEdge[] };
-
 /**
- * buildGraph turns the two lists into a layout the SVG below can draw.
- *
- * A relation whose endpoint is not in the entity list is DROPPED rather than
- * drawn to nowhere: the two lists are read separately, so a relation can name an
- * entity the filter excluded, and an edge to a missing node would be a line the
- * user cannot follow. The count line above says how many relations exist, so a
- * dropped edge is not hidden by silence.
+ * The story graph is drawn from the pure module (`services/desktop/story-graph.ts`), which is where
+ * the layout and the drop rules live so `node:test` can assert them (ADR-0021). This file holds only
+ * the JSX.
  */
-function buildGraph(entities: desktop.StoryEntityDTO[], relations: desktop.StoryRelationDTO[]): Graph {
-    const nodes: GraphNode[] = entities.map((entity) => ({
-        id: entity.id,
-        label: entity.canonicalName,
-        type: entity.type,
-        status: entity.status,
-    }));
-    const present = new Set(nodes.map((node) => node.id));
-    const edges: GraphEdge[] = [];
-    for (const relation of relations) {
-        if (!present.has(relation.sourceEntityId) || !present.has(relation.targetEntityId)) continue;
-        edges.push({
-            id: relation.id,
-            from: relation.sourceEntityId,
-            to: relation.targetEntityId,
-            label: relation.type,
-        });
-    }
-    return { nodes, edges };
-}
+const SCREEN_WIDTH = 900;
+const SCREEN_HEIGHT = 520;
 
 /**
- * StoryGraphView draws the graph with plain SVG.
+ * StoryGraphView draws the fact layer's nodes and edges with plain SVG.
  *
- * It is a reading aid, not the canvas: a fixed circular layout, no dragging and no
- * zoom, because the canvas has those and two draggable surfaces over the same data
- * would be two things to keep in step. The layout is deterministic, so the same
- * graph renders the same way twice.
+ * It is a reading aid, not the canvas: a fixed deterministic grid, no dragging and no zoom, because
+ * the canvas has those and two draggable surfaces over the same data would be two things to keep in
+ * step. A user who wants to ARRANGE facts uses the canvas; this view is for reading what the stored
+ * facts say.
  */
 function StoryGraphView({ graph }: { graph: Graph }) {
     const { t } = useTranslation();
-    const width = 640;
-    const height = 360;
-    const radius = Math.min(width, height) / 2 - 60;
-    const centre = { x: width / 2, y: height / 2 };
-    const positions = new Map<string, { x: number; y: number }>();
-    graph.nodes.forEach((node, index) => {
-        const angle = (2 * Math.PI * index) / Math.max(1, graph.nodes.length) - Math.PI / 2;
-        positions.set(node.id, {
-            x: centre.x + radius * Math.cos(angle),
-            y: centre.y + radius * Math.sin(angle),
-        });
-    });
+    const positions = layoutGraph(graph.nodes, SCREEN_WIDTH, SCREEN_HEIGHT);
 
     return (
         <svg
-            viewBox={`0 0 ${width} ${height}`}
-            className="w-full max-w-3xl rounded-xl border border-stone-200 bg-white dark:border-stone-800 dark:bg-stone-950"
+            viewBox={`0 0 ${SCREEN_WIDTH} ${SCREEN_HEIGHT}`}
+            className="w-full rounded-xl border border-stone-200 bg-white dark:border-stone-800 dark:bg-stone-950"
             role="img"
             aria-label={t("studio.storyGraph.graphLabel")}
             data-testid="studio-story-graph-view"
+            data-graph-nodes={graph.nodes.length}
+            data-graph-edges={graph.edges.length}
         >
             {graph.edges.map((edge) => {
                 const from = positions.get(edge.from);
                 const to = positions.get(edge.to);
                 if (!from || !to) return null;
+                // Participation edges are dashed so a reader can tell "this character is IN this
+                // event" from "these two entities are related" — two different facts that would
+                // otherwise draw identically.
                 return (
-                    <g key={edge.id}>
-                        <line x1={from.x} y1={from.y} x2={to.x} y2={to.y} stroke="currentColor" strokeWidth={1} className="text-stone-300 dark:text-stone-700" />
-                        <text x={(from.x + to.x) / 2} y={(from.y + to.y) / 2} fontSize={9} textAnchor="middle" className="fill-stone-500">
+                    <g key={edge.id} data-graph-edge={edge.id} data-graph-edge-kind={edge.participation ? "participation" : "relation"}>
+                        <line
+                            x1={from.x}
+                            y1={from.y}
+                            x2={to.x}
+                            y2={to.y}
+                            stroke="currentColor"
+                            strokeWidth={1}
+                            strokeDasharray={edge.participation ? "4 3" : undefined}
+                            className="text-stone-300 dark:text-stone-700"
+                        />
+                        <text
+                            x={(from.x + to.x) / 2}
+                            y={(from.y + to.y) / 2 - 3}
+                            fontSize={9}
+                            textAnchor="middle"
+                            className="fill-stone-500"
+                        >
                             {edge.label}
                         </text>
                     </g>
@@ -837,11 +859,35 @@ function StoryGraphView({ graph }: { graph: Graph }) {
             {graph.nodes.map((node) => {
                 const position = positions.get(node.id);
                 if (!position) return null;
+                const colour = nodeColour(node.kind);
+                // An event is drawn as a rounded rect and an entity as a circle, so the two kinds are
+                // distinguishable by SHAPE as well as by colour: a reader with a colour deficiency
+                // still sees which dots are events.
                 return (
-                    <g key={node.id}>
-                        <circle cx={position.x} cy={position.y} r={8} className="fill-stone-400 dark:fill-stone-500" />
-                        <text x={position.x} y={position.y - 14} fontSize={11} textAnchor="middle" className="fill-stone-700 dark:fill-stone-200">
-                            {node.label.length > 8 ? `${node.label.slice(0, 8)}…` : node.label}
+                    <g key={node.id} data-graph-node={node.id} data-graph-node-kind={node.kind}>
+                        {node.kind === "event" ? (
+                            <rect
+                                x={position.x - 14}
+                                y={position.y - 10}
+                                width={28}
+                                height={20}
+                                rx={4}
+                                fill={colour.fill}
+                                stroke={colour.stroke}
+                                strokeWidth={1.5}
+                            />
+                        ) : (
+                            <circle cx={position.x} cy={position.y} r={10} fill={colour.fill} stroke={colour.stroke} strokeWidth={1.5} />
+                        )}
+                        <text
+                            x={position.x}
+                            y={position.y - 18}
+                            fontSize={11}
+                            textAnchor="middle"
+                            className="fill-stone-700 dark:fill-stone-200"
+                        >
+                            <title>{`${node.label} (${node.detail || node.kind})`}</title>
+                            {shortenLabel(node.label)}
                         </text>
                     </g>
                 );

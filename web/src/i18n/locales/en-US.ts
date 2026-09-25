@@ -1376,8 +1376,14 @@ export default {
             eventName: "Event",
             storyTime: "Story time",
             graphTitle: "Graph",
-            graphNote: "A reading aid: entities as nodes, relations as edges. The canvas is where this data is edited.",
-            graphLabel: "Story graph: entities and their relations",
+            graphNote:
+                "A reading aid: entities and events are nodes, relations and participations are edges (participations are dashed). The canvas is where this data is edited.",
+            graphLabel: "Event graph: entities, events and their relations",
+            // FR-030 lists StoryEvent first among the node types, so the count reports the two kinds
+            // separately AND reports the edges it did not draw: a picture that silently omitted an
+            // edge would read as "these facts are unrelated" rather than "this view did not draw it".
+            graphCounts: "{{entities}} entities, {{events}} events, {{edges}} edges.",
+            graphDropped: "{{count}} more edges are not drawn: their endpoints are facts outside this filter.",
             conflictsTitle: "Conflicts",
             conflictsEmpty: "No disagreements are recorded. A pass that finds two facts that cannot both hold records one here.",
             resolve: "Record resolution",

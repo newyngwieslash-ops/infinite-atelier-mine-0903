@@ -1374,8 +1374,13 @@ export default {
             eventName: "事件",
             storyTime: "故事时间",
             graphTitle: "图谱",
-            graphNote: "仅为阅读辅助:实体为节点,关系为边。画布才是编辑这些数据的地方。",
-            graphLabel: "故事图谱:实体及其关系",
+            graphNote:
+                "仅为阅读辅助：实体与事件为节点，关系与参与为边（参与用虚线）。画布才是编辑这些数据的地方。",
+            graphLabel: "事件图谱：实体、事件及其关系",
+            // FR-030 的节点类型里事件是第一类，所以计数分开报，并把「未画出的边」也报出来：
+            // 一张默默漏掉边的图会读成「这两件事实无关」，而真相是「这个视图没有画它」。
+            graphCounts: "实体 {{entities}}，事件 {{events}}，边 {{edges}}。",
+            graphDropped: "另有 {{count}} 条边未画出：它们的端点是当前筛选之外的事实。",
             conflictsTitle: "冲突",
             conflictsEmpty: "尚无冲突记录。当两件事实无法同时成立时,发现它的流程会在此记录一条。",
             resolve: "记录解决方式",

@@ -892,6 +892,40 @@ type StoryEventParticipantDTO struct {
 	CreatedAt     string `json:"createdAt"`
 }
 
+// ListProjectEventParticipants returns every participation in one project.
+//
+// It is a separate binding from `ListStoryEventParticipants` because the two answer
+// different questions: that one fills the participants panel for a single event the
+// user clicked, and this one feeds the GRAPH, which needs every edge at once. A view
+// that called the per-event method in a loop would make one round trip per event.
+func (b *DramaBinding) ListProjectEventParticipants(request ListProjectEventParticipantsRequest) ([]StoryEventParticipantDTO, error) {
+	service := b.storyService()
+	if service == nil {
+		return nil, bindingUnavailable()
+	}
+	records, err := service.ListProjectEventParticipants(b.context(), request.ProjectID, storydomain.FactStatus(request.Status))
+	if err != nil {
+		return nil, toDramaError(err)
+	}
+	participants := make([]StoryEventParticipantDTO, 0, len(records))
+	for _, record := range records {
+		participants = append(participants, StoryEventParticipantDTO{
+			StoryEventID: record.StoryEventID, StoryEntityID: record.StoryEntityID,
+			Role: string(record.Role), StateBefore: record.StateBefore,
+			StateAfter: record.StateAfter, CreatedAt: record.CreatedAt.UTC().Format(rfc3339),
+		})
+	}
+	return participants, nil
+}
+
+// ListProjectEventParticipantsRequest narrows the graph's participation read.
+type ListProjectEventParticipantsRequest struct {
+	ProjectID string `json:"projectId"`
+	// Status filters by the EVENT's status, matching the events list the same view
+	// reads. Empty means any status.
+	Status string `json:"status,omitempty"`
+}
+
 // ListStoryEventParticipants returns one event's participants.
 func (b *DramaBinding) ListStoryEventParticipants(storyEventID string) ([]StoryEventParticipantDTO, error) {
 	service := b.storyService()

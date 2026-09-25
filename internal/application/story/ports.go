@@ -153,6 +153,19 @@ type StoryEventRepository interface {
 	// ListStoryEventParticipants returns an event's participants ordered by role
 	// then entity, so the same event renders the same way twice.
 	ListStoryEventParticipants(ctx context.Context, storyEventID string) ([]storydomain.StoryEventParticipant, error)
+	// ListProjectEventParticipants returns every participation in one project,
+	// ordered by event then role then entity.
+	//
+	// It exists because the fact layer's participants are otherwise readable only
+	// ONE EVENT AT A TIME, and a graph that drew participation would have to call
+	// this method once per event — the N+1 shape this repository's reads avoid. The
+	// project is the argument rather than a set of event ids because the caller
+	// (the story graph view) has the project and not the events.
+	//
+	// The status filter matches `ListStoryEvents`'s so the two reads agree: a view
+	// that filtered events but not participations would draw edges to nodes it did
+	// not show, and the drop rule would hide that rather than report it.
+	ListProjectEventParticipants(ctx context.Context, projectID string, status storydomain.FactStatus) ([]storydomain.StoryEventParticipant, error)
 }
 
 // StoryRelationRepository persists story relations.

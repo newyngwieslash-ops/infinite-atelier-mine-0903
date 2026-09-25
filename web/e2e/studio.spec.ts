@@ -229,12 +229,27 @@ test.describe("the drama studio without a core", () => {
 
         await nav.locator("[data-section='source']").click();
         await expect(page.locator("[data-testid='studio-section-no-core']")).toBeVisible();
-        // The WP-05 gap notice must be gone: it claimed no query could list the
-        // fact layer, and WP-06 added them. Asserting its absence keeps the old
-        // notice from being restored by accident.
         await nav.locator("[data-section='story-graph']").click();
         await expect(page.locator("[data-testid='studio-section-no-core']")).toBeVisible();
-        await expect(page.locator("[data-testid='studio-story-graph-gap']")).toHaveCount(0);
+        // THE WP-05 GAP NOTICE IS NOT ASSERTED HERE, and that is the correction WP-17 made.
+        //
+        // This test used to assert `studio-story-graph-gap` had a count of 0. That testid lived in
+        // `pages/studio/sections.tsx`, and WP-06 moved the section into
+        // `components/studio/story-graph-view.tsx` and deleted the notice. Nothing pointed the
+        // assertion at the new file, so from WP-06 onward it asserted the absence of an element no
+        // file could produce — and a negative assertion against a testid that does not exist can
+        // never fail. It was a passing test that checked nothing for eleven work packages.
+        //
+        // It cannot be repaired from THIS surface, which is the part worth writing down: the shell
+        // returns the no-core notice before the section switch runs (`pages/studio/project.tsx`),
+        // so `StoryGraphSection` is never MOUNTED in browser mode and no assertion here can observe
+        // anything inside it. The facts that replaced the old gap ARE asserted above — the section
+        // reports itself available and the shell says why it cannot render — and the section's own
+        // states are covered by the desktop build's tests.
+        //
+        // What would be worse than deleting it is keeping a look-alike: an assertion that the
+        // section's `data-testid="studio-story-graph-section"` is absent would be exactly as
+        // vacuous for exactly the same reason.
     });
 
     test("a direct navigation and a reload both keep the shell working", async ({ page }) => {

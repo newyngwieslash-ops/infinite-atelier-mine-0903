@@ -194,6 +194,10 @@ export function ListPanels(arg1) {
   return window['go']['desktop']['DramaBinding']['ListPanels'](arg1);
 }
 
+export function ListProjectEventParticipants(arg1) {
+  return window['go']['desktop']['DramaBinding']['ListProjectEventParticipants'](arg1);
+}
+
 export function ListScenes(arg1) {
   return window['go']['desktop']['DramaBinding']['ListScenes'](arg1);
 }

@@ -918,3 +918,83 @@ func TestSplitAndMergeFailClosed(t *testing.T) {
 		t.Fatal("an unattached service merged chapters")
 	}
 }
+
+// TestListProjectEventParticipants is the graph's participation read.
+//
+// # Why the service validates what the store also validates
+//
+// The store's read takes the status straight into a comparison, so an unknown status would come back
+// as an empty list — and an empty list here means "nobody takes part in anything", which is a fact
+// about the PROJECT rather than about the caller's mistake. The refusal is what keeps the two apart,
+// and this test is the one that says so: the same mistake through the store would be silent.
+func TestListProjectEventParticipants(t *testing.T) {
+	store := newMemoryStore()
+	service := newTestService(store)
+	accepted, candidate := seedGraphProject(t, service, store)
+	ctx := context.Background()
+
+	event, err := service.CreateStoryEvent(ctx, CreateStoryEventRequest{
+		ProjectID: "project-1", Ordinal: 1, Name: "The Crossing",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	acceptedEvent, err := service.AcceptStoryEvent(ctx, FactDecisionRequest{ID: event.ID, Revision: event.Revision})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.AddStoryEventParticipant(ctx, AddStoryEventParticipantRequest{
+		StoryEventID: event.ID, StoryEntityID: accepted.ID, Role: storydomain.ParticipantActor,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// The unfiltered read returns the participation.
+	all, err := service.ListProjectEventParticipants(ctx, "project-1", "")
+	if err != nil {
+		t.Fatalf("ListProjectEventParticipants: %v", err)
+	}
+	if len(all) != 1 {
+		t.Fatalf("the read returned %d participations, want 1: %+v", len(all), all)
+	}
+	if all[0].StoryEventID != event.ID || all[0].StoryEntityID != accepted.ID {
+		t.Fatalf("the participation names the wrong rows: %+v", all[0])
+	}
+	// The accepted filter keeps it, because the EVENT is accepted.
+	filtered, err := service.ListProjectEventParticipants(ctx, "project-1", storydomain.FactAccepted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(filtered) != 1 {
+		t.Fatalf("the accepted filter returned %d participations: %+v", len(filtered), filtered)
+	}
+	if acceptedEvent.Status != storydomain.FactAccepted {
+		t.Fatalf("the fixture's event is %q rather than accepted", acceptedEvent.Status)
+	}
+	// A candidate filter drops it, which is the agreement with the events list: a view that filtered
+	// events but not participations would draw an edge to a node it did not show.
+	none, err := service.ListProjectEventParticipants(ctx, "project-1", storydomain.FactCandidate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(none) != 0 {
+		t.Fatalf("the candidate filter returned %d participations, want none: %+v", len(none), none)
+	}
+
+	// The refusals: a blank project, and a status that is not in the vocabulary. The second is the
+	// one that matters, because the store would answer it with silence.
+	if _, err := service.ListProjectEventParticipants(ctx, "  ", ""); err == nil {
+		t.Fatal("a blank project id was accepted")
+	}
+	for _, status := range []storydomain.FactStatus{"pending", "Accepted", "open"} {
+		if _, err := service.ListProjectEventParticipants(ctx, "project-1", status); err == nil {
+			t.Fatalf("the status %q was accepted as a filter", status)
+		}
+	}
+	// The candidate entity's existence is asserted so the fixture's shape is clear: it is a second
+	// entity of the same project that takes part in NOTHING, which is what makes the count above
+	// meaningful rather than incidental.
+	if candidate.ID == accepted.ID {
+		t.Fatal("the fixture's two entities are the same row")
+	}
+}

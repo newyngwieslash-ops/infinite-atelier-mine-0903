@@ -98,6 +98,8 @@ export function ListPanelVersions(arg1:string):Promise<Array<desktop.StoryboardP
 
 export function ListPanels(arg1:string):Promise<Array<desktop.StoryboardPanelVersionDTO>>;
 
+export function ListProjectEventParticipants(arg1:desktop.ListProjectEventParticipantsRequest):Promise<Array<desktop.StoryEventParticipantDTO>>;
+
 export function ListScenes(arg1:string):Promise<Array<desktop.SceneDTO>>;
 
 export function ListScriptFieldLocks(arg1:string):Promise<Array<desktop.FieldLockDTO>>;

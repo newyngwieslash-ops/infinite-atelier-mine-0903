@@ -684,6 +684,22 @@ export async function listStoryEventParticipants(storyEventId: string): Promise<
     return ListStoryEventParticipants(storyEventId);
 }
 
+/**
+ * listProjectEventParticipants reads every participation in one project.
+ *
+ * Separate from `listStoryEventParticipants`, which answers about ONE event: the graph needs every
+ * edge at once, and calling the per-event method in a loop would make one round trip per event on
+ * the view's first render.
+ */
+export async function listProjectEventParticipants(
+    projectId: string,
+    status = "",
+): Promise<desktop.StoryEventParticipantDTO[]> {
+    if (!isDramaBindingsAvailable()) return [];
+    const { ListProjectEventParticipants } = await loadDramaBinding();
+    return ListProjectEventParticipants({ projectId, status } as never);
+}
+
 /** listStoryFactSources reads the evidence one fact cites. */
 export async function listStoryFactSources(factType: string, factId: string): Promise<desktop.StoryFactSourceDTO[]> {
     if (!isDramaBindingsAvailable()) return [];
