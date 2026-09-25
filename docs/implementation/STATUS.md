@@ -107,13 +107,39 @@ measurements rather than assertions.
 - The command is recorded in `docs/INSTALL_AND_SIGNING.md`'s toolchain section so the next reader does
   not repeat the 32-bit conclusion.
 
-# 0s. WP-15: the P1-P4 backlog - TEN items CLOSED, the rest named (2026-09-24)
+# 0s. WP-15: the P1-P4 backlog - P1 COMPLETE, the rest named (2026-09-24)
 
-WP-15 works the P1-P4 backlog of `project-progress-and-remaining-tasks-2026-09-23.md`. **Ten items
-are CLOSED with the evidence below. The remaining items are NAMED in their own section, not implied
-complete.**
+WP-15 works the P1-P4 backlog of `project-progress-and-remaining-tasks-2026-09-23.md`. **Every P1
+item is now CLOSED, with the evidence below. The remaining items are NAMED in their own section,
+not implied complete.**
 
 ## CLOSED, with the defect each one found while being built
+
+**Item 5 - FR-070's 「表格编辑与画布节点双向同步」.** Shots projected to the canvas ONE WAY and a
+canvas node move could not reach the board: `UpdateStoryboardItem` accepted no `ordinal` (it DELETED
+the parameter rather than reordering, and said so in a comment) and no reorder command existed. There
+now is one, and **a simulation refused my first implementation**: it renumbered with SQL arithmetic
+(`ordinal = CASE WHEN ordinal > ? ...`), and replaying the six moves a user actually makes showed
+5 of 6 would CORRUPT the board - duplicate ordinals from a tie in the same UPDATE, or a gap where a
+row shifted twice. The rewrite computes the permutation in Go from the board's own order and writes
+it back, and `TestEveryReorderIsAPermutation` asserts it for all six moves. Ordinals are COMPACTED on
+reads rather than renumbered on writes, because the read model is the contract the canvas binds to
+and a renumber-on-write would need a transaction over the whole board for every drag. Six tests,
+five mutations, 5/5 killed.
+
+**Item 7 - FR-150's four job types.** The vocabulary admitted five types and FR-150's task list names
+eleven, so `thumbnail`, `import`, `export` and `migration` could not be inserted AT ALL. SQLite cannot
+ALTER a CHECK, so this is `generation_jobs` and its two children REBUILT on migration 000009's staged
+pattern - the risk is the COPY, not the constraint, so the acceptance test seeds four different job
+STATES with attempts and a dependency, applies the migration, and asserts every count and every COLUMN
+survived by reading back through the repository (a column that changed type or vanished fails the scan
+rather than passing silently). Then it asserts the new types insert AND an invented type is still
+refused - a CHECK widened to accept anything would pass the first half while being the wrong fix. Two
+tests that pinned `thumbnail` as illegal were updated to assert the widening AND the split it must not
+blur: the vocabulary is what the schema permits, the runner is what this build EXECUTES, and a type
+with no adapter comes back `unsupported` rather than as a constraint violation that reads like corrupt
+data. **My own first fixture was refused by a live database twice** - I invented columns on the two
+children, and omitted `revision`, which `CHECK (revision >= 1)` rejects.
 
 **Item 3 - FR-100's 「显式阶段依赖」.** The engine's header claimed "a stage's dependencies must be
 satisfied" over code that did not exist. There is now a DECLARED graph (`Layer.DependsOn`) checked
@@ -195,19 +221,16 @@ package that wrote them and each had been superseded.
 
 ## STILL OPEN - named, not implied
 
-**P1, two items:**
+**P1 - COMPLETE. All ten items (3 to 12) are closed.** One sub-item below is recorded as a capability
+this build does not have rather than a task that is late:
 
-- **Item 5 - FR-070's 「表格编辑与画布节点双向同步」.** Shots are projected to the canvas ONE WAY
-  (`ProjectScriptVersion`), `UpdateStoryboardItem` accepts no `ordinal`, and no reorder command exists.
-  A canvas node move does not reach the board. Not started.
-- **Item 7 - FR-150's four job types** (thumbnail / import / export / migration). The vocabulary has
-  five types and nothing submits four of them. This needs a migration that REBUILDS `generation_jobs`
-  and its two children, because SQLite cannot alter a CHECK - the pattern is `000009`'s staged rebuild.
-  Not started.
 - **Item 9's cache-clear half.** The diagnostics bundle is built; 「用户可清理缓存而不删除已批准资产」
   is not, because this build has no cache directory to clear (`appdirs` has Root/Database/Files/Temp/
   Logs/Snapshots and no cache). It is a capability this build does not have rather than a control that
-  is missing.
+  is missing. **The clause has an honest non-answer, and inventing a cache directory in order to be
+  able to clear it would be building the thing the clause is about, not satisfying it.**
+- **Item 11 (AC-E2E-002's whole-scenario walk) is CLOSED as `TestE2E002FromNovelToApprovedPanelImages`
+  (WP-13)**, three chapters and thirty thousand characters from import to approved panel images.
 
 **P2, two items:**
 
