@@ -465,6 +465,40 @@ func (s *Service) ListStoryboardItems(ctx context.Context, storyboardVersionID s
 	return s.items.ListStoryboardItems(ctx, storyboardVersionID)
 }
 
+// ReorderStoryboardItem moves one row to a new position.
+//
+// # FR-070's 「重新排序 Shot 后编号和上下游关系正确更新」
+//
+// The board's order is what the timeline, the coverage rule and the export all read, so a reorder has
+// to leave the ordinals as 1..n rather than as a permutation with a gap. The repository does the
+// move and the renumbering in one transaction, and this command is the caller's way in.
+//
+// # What it refuses
+//
+// A position outside the board, which the repository checks because the board's size is its fact
+// rather than the caller's. And a LOCKED row: a lock is a user's statement that a row is settled, and
+// moving a settled row is the change it exists to prevent — the same refusal `ApprovePanelImage`
+// makes for the same reason.
+func (s *Service) ReorderStoryboardItem(ctx context.Context, itemID string, toOrdinal int) (ReorderResult, error) {
+	if !s.Available() {
+		return ReorderResult{}, storageFailure()
+	}
+	if strings.TrimSpace(itemID) == "" {
+		return ReorderResult{}, storyboard.InvalidError("A reorder needs the row it moves.")
+	}
+	item, err := s.items.GetStoryboardItem(ctx, itemID)
+	if err != nil {
+		return ReorderResult{}, err
+	}
+	if item.Status == versioning.StatusApproved {
+		// An approved row's position is part of what was approved, so moving it would change an
+		// artifact a person signed off without recording a decision. A revision is the path.
+		return ReorderResult{}, storyboard.ConflictError(
+			"That row is part of an approved board. A reorder of an approved board needs a revision rather than a move.")
+	}
+	return s.items.ReorderStoryboardItem(ctx, itemID, toOrdinal)
+}
+
 // ListPanels returns an item's panel versions in version order.
 func (s *Service) ListPanels(ctx context.Context, storyboardItemID string) ([]storyboard.StoryboardPanelVersion, error) {
 	if !s.Available() {

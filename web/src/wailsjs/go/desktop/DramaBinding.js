@@ -322,6 +322,10 @@ export function RejectStoryEvent(arg1) {
   return window['go']['desktop']['DramaBinding']['RejectStoryEvent'](arg1);
 }
 
+export function ReorderStoryboardItem(arg1) {
+  return window['go']['desktop']['DramaBinding']['ReorderStoryboardItem'](arg1);
+}
+
 export function ResolveStoryConflict(arg1) {
   return window['go']['desktop']['DramaBinding']['ResolveStoryConflict'](arg1);
 }

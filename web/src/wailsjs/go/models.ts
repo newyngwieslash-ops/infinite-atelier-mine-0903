@@ -3940,6 +3940,34 @@ export namespace desktop {
 	        this.revision = source["revision"];
 	    }
 	}
+	export class ReorderStoryboardItemRequest {
+	    itemId: string;
+	    toOrdinal: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ReorderStoryboardItemRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.itemId = source["itemId"];
+	        this.toOrdinal = source["toOrdinal"];
+	    }
+	}
+	export class ReorderStoryboardItemResultDTO {
+	    moved: number;
+	    order: number[];
+	
+	    static createFrom(source: any = {}) {
+	        return new ReorderStoryboardItemResultDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.moved = source["moved"];
+	        this.order = source["order"];
+	    }
+	}
 	export class ResolveStoryConflictRequest {
 	    conflictId: string;
 	    resolution: string;

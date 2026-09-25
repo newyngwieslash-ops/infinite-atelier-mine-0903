@@ -242,6 +242,15 @@ func (r *memoryRepo) FindStoryboardItemByOrdinal(_ context.Context, storyboardVe
 	return storyboard.StoryboardItem{}, false, nil
 }
 
+// ReorderStoryboardItem answers the port's reorder without moving anything.
+//
+// The refusal the SERVICE makes - an approved row - is exercised by this file's tests, and the
+// permutation itself by the database package's walk over every source and destination. A double that
+// reordered would be a second implementation to keep in step.
+func (r *memoryRepo) ReorderStoryboardItem(_ context.Context, itemID string, toOrdinal int) (ReorderResult, error) {
+	return ReorderResult{Moved: 0, Order: []int{}}, nil
+}
+
 func (r *memoryRepo) ListStoryboardItems(_ context.Context, storyboardVersionID string) ([]storyboard.StoryboardItem, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

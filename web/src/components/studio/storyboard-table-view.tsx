@@ -13,6 +13,7 @@ import {
     listStageRuns,
     listWorkflowRuns,
     runScriptStage,
+    reorderStoryboardItem,
     runScriptSupervision,
     updateStoryboardItem,
 } from "@/services/desktop/drama";
@@ -327,6 +328,36 @@ export function StoryboardTableSection({ projectId, episodes, activeEpisodeId, o
         }
     }, [editing, form, message, reload, onChanged, t]);
 
+    /**
+     * moveRow moves one row to another position on the board.
+     *
+     * FR-070's 「重新排序 Shot 后编号和上下游关系正确更新」. The control asks for a POSITION rather
+     * than offering a drag: the ordinals come back renumbered 1..n, and a number is what a user can
+     * type when a row is off screen. A drag handle that communicated a position only after the drop
+     * would leave the row's new number to be discovered.
+     *
+     * An approved board is refused by the core, and the message says so rather than the control
+     * pretending the move failed for an unknown reason.
+     */
+    const moveRow = useCallback(
+        async (row: desktop.StoryboardItemDTO, toOrdinal: number) => {
+            if (toOrdinal === row.ordinal) return;
+            setBusy(true);
+            try {
+                const result = await reorderStoryboardItem({ itemId: row.id, toOrdinal });
+                message.success(t("studio.storyboardTable.moved", { ordinal: toOrdinal, count: result.moved ?? 0 }));
+                await reload();
+                onChanged();
+            } catch (failure) {
+                const text = String(failure);
+                message.error(text.includes("approved") ? t("studio.storyboardTable.moveApproved") : text);
+            } finally {
+                setBusy(false);
+            }
+        },
+        [message, t, reload, onChanged],
+    );
+
     const activeVersion = useMemo(
         () => versions.find((candidate) => candidate.id === activeVersionId) || null,
         [versions, activeVersionId],
@@ -349,11 +380,29 @@ export function StoryboardTableSection({ projectId, episodes, activeEpisodeId, o
         {
             title: "",
             key: "actions",
-            width: 60,
+            width: 130,
             render: (_: unknown, row: desktop.StoryboardItemDTO) => (
-                <Tooltip title={t("studio.storyboardTable.editHint")}>
-                    <Button size="small" type="text" icon={<Pencil className="size-4" />} onClick={() => openEditor(row)} />
-                </Tooltip>
+                <Space size={4}>
+                    <Tooltip title={t("studio.storyboardTable.editHint")}>
+                        <Button size="small" type="text" icon={<Pencil className="size-4" />} onClick={() => openEditor(row)} />
+                    </Tooltip>
+                    {/* The move control: a NUMBER rather than a drag handle, because a user moving a
+                        row to a position they cannot see on screen needs to type it. The ordinals come
+                        back renumbered 1..n, so the value shown is the row's own position. */}
+                    <Tooltip title={t("studio.storyboardTable.moveHint")}>
+                        <InputNumber
+                            size="small"
+                            min={1}
+                            max={items.length}
+                            defaultValue={row.ordinal}
+                            disabled={busy || activeVersion?.status === "approved"}
+                            data-testid={`studio-storyboard-move-${row.id}`}
+                            onPressEnter={(event) => void moveRow(row, Number((event.target as HTMLInputElement).value))}
+                            onBlur={(event) => void moveRow(row, Number(event.target.value))}
+                            style={{ width: 64 }}
+                        />
+                    </Tooltip>
+                </Space>
             ),
         },
     ];

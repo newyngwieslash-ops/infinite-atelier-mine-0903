@@ -162,6 +162,8 @@ export function RejectStoryEntity(arg1:desktop.DecideStoryEntityRequest):Promise
 
 export function RejectStoryEvent(arg1:desktop.DecideStoryEventRequest):Promise<desktop.StoryEventDTO>;
 
+export function ReorderStoryboardItem(arg1:desktop.ReorderStoryboardItemRequest):Promise<desktop.ReorderStoryboardItemResultDTO>;
+
 export function ResolveStoryConflict(arg1:desktop.ResolveStoryConflictRequest):Promise<desktop.StoryFactConflictDTO>;
 
 export function ReviseChapter(arg1:desktop.ReviseChapterRequest):Promise<desktop.ChapterDTO>;

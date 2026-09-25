@@ -941,6 +941,25 @@ export async function updateStoryboardItem(
     return UpdateStoryboardItem(request);
 }
 
+/**
+ * reorderStoryboardItem moves one board row to another position (FR-070).
+ *
+ * 「重新排序 Shot 后编号和上下游关系正确更新」. `toOrdinal` is a POSITION — 1 is the first row — and
+ * the ordinals come back as 1..n rather than as a permutation with a gap, because the board's order is
+ * what the timeline, the coverage rule and the export all read.
+ *
+ * An APPROVED board is refused: its order is part of what was approved, so changing it is a revision
+ * rather than a move.
+ */
+export async function reorderStoryboardItem(request: {
+    itemId: string;
+    toOrdinal: number;
+}): Promise<desktop.ReorderStoryboardItemResultDTO> {
+    if (!isDramaBindingsAvailable()) throw unavailableError();
+    const { ReorderStoryboardItem } = await loadDramaBinding();
+    return ReorderStoryboardItem(request as never);
+}
+
 export async function listPanelVersions(storyboardItemId: string): Promise<desktop.StoryboardPanelVersionDTO[]> {
     if (!isDramaBindingsAvailable()) return [];
     const { ListPanelVersions } = await loadDramaBinding();

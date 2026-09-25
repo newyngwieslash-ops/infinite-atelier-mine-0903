@@ -115,6 +115,14 @@ type StoryboardItemRepository interface {
 	FindStoryboardItemByOrdinal(ctx context.Context, storyboardVersionID string, ordinal int) (found storyboard.StoryboardItem, ok bool, err error)
 	// ListStoryboardItems returns a version's items in ordinal order.
 	ListStoryboardItems(ctx context.Context, storyboardVersionID string) ([]storyboard.StoryboardItem, error)
+	// ReorderStoryboardItem moves one row to a new position and renumbers the board, reporting how
+	// many rows changed position and the board's ordinals afterwards.
+	//
+	// The repository owns this as ONE call because a reorder cannot be expressed as a sequence of
+	// single-row updates: `UNIQUE (storyboard_version_id, ordinal)` is checked per statement, so a
+	// target position is occupied until its occupant moves. The implementation renumbers through a
+	// range the board cannot occupy, which only works inside one transaction.
+	ReorderStoryboardItem(ctx context.Context, itemID string, toOrdinal int) (ReorderResult, error)
 	// UpdateStoryboardItem persists a change guarded by the expected revision.
 	//
 	// It exists because AC-BOARD-002's single-shot redo must change ONE row and leave the
@@ -166,6 +174,20 @@ type Service struct {
 	clock         Clock
 	ids           IDGenerator
 	events        EventRecorder
+}
+
+// ReorderResult reports what a reorder changed.
+//
+// It lives here rather than beside the implementation because a CALLER reads it: the count is what a
+// panel shows and the order is what it renders, so neither should require the caller to re-read the
+// board to find out what happened.
+type ReorderResult struct {
+	// Moved is the number of rows whose POSITION changed — not the board's size. A move from the last
+	// position to the second-to-last changes one row's position and renumbers three, and the first
+	// number is the one a user reads as "what changed".
+	Moved int
+	// Order is the board's ordinals after the reorder, ascending, so a caller can render the result.
+	Order []int
 }
 
 // Options configures a Service.

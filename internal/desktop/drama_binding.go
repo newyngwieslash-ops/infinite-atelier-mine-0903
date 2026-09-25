@@ -2355,6 +2355,40 @@ type ApproveDirectorPlanVersionRequest struct {
 	TraceID   string `json:"traceId,omitempty"`
 }
 
+// ReorderStoryboardItemRequest moves one board row to another position.
+type ReorderStoryboardItemRequest struct {
+	// ItemID is the row being moved.
+	ItemID string `json:"itemId"`
+	// ToOrdinal is where it lands, as a POSITION: 1 is the first row of the board.
+	ToOrdinal int `json:"toOrdinal"`
+}
+
+// ReorderStoryboardItemResultDTO reports what a reorder changed.
+type ReorderStoryboardItemResultDTO struct {
+	// Moved is the number of rows whose POSITION changed, not the board's size.
+	Moved int `json:"moved"`
+	// Order is the board's ordinals afterwards, so a panel can render the result rather than re-read.
+	Order []int `json:"order"`
+}
+
+// ReorderStoryboardItem moves one row of a board.
+//
+// FR-070's 「重新排序 Shot 后编号和上下游关系正确更新」. The board's order is what the timeline, the
+// coverage rule and the export read, so the ordinals come back as 1..n rather than as a permutation
+// with a gap. An approved board is refused: its order is part of what was approved, so changing it is
+// a revision rather than a move.
+func (b *DramaBinding) ReorderStoryboardItem(request ReorderStoryboardItemRequest) (ReorderStoryboardItemResultDTO, error) {
+	service := b.storyboardService()
+	if service == nil {
+		return ReorderStoryboardItemResultDTO{}, bindingUnavailable()
+	}
+	result, err := service.ReorderStoryboardItem(b.context(), request.ItemID, request.ToOrdinal)
+	if err != nil {
+		return ReorderStoryboardItemResultDTO{}, toDramaError(err)
+	}
+	return ReorderStoryboardItemResultDTO{Moved: result.Moved, Order: result.Order}, nil
+}
+
 // UpdateStoryboardItemRequest changes one row.
 //
 // The pointers are the contract: a field that is absent is one the caller does not want

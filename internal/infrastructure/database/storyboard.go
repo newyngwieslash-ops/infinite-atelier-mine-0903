@@ -339,6 +339,18 @@ func (r *StoryboardRepository) CreateStoryboardItem(ctx context.Context, item st
 	return nil
 }
 
+// ReorderStoryboardItem moves one row and renumbers the board.
+//
+// It delegates to the reorderer, which owns the permutation and the constraint workaround, and it
+// lives here so the repository satisfies the port the storyboard service declares.
+func (r *StoryboardRepository) ReorderStoryboardItem(ctx context.Context, itemID string, toOrdinal int) (storyboardapp.ReorderResult, error) {
+	result, err := NewStoryboardReorderer(r.db).ReorderItems(ctx, itemID, toOrdinal)
+	if err != nil {
+		return storyboardapp.ReorderResult{}, err
+	}
+	return storyboardapp.ReorderResult{Moved: result.Moved, Order: result.Order}, nil
+}
+
 // GetStoryboardItem returns one storyboard item.
 func (r *StoryboardRepository) GetStoryboardItem(ctx context.Context, id string) (storyboard.StoryboardItem, error) {
 	conn := r.conn()

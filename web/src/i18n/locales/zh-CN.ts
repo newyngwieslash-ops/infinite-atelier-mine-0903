@@ -1983,6 +1983,9 @@ export default {
             progress: "进度",
         },
         storyboardTable: {
+            moved: "已移到第 {{ordinal}} 位，{{count}} 行位置变化。",
+            moveHint: "把这一行移到指定位置。编号会自动重排为 1..n。",
+            moveApproved: "该分镜已批准，其顺序是批准内容的一部分。请先做修订再调整顺序。",
             selectEpisode: "选择一个剧集以查看其分镜表。",
             noBoard: "尚无分镜版本。运行上方阶段以生成一个。",
             versions: "分镜版本",

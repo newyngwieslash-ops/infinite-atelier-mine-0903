@@ -1993,6 +1993,9 @@ export default {
             progress: "Progress",
         },
         storyboardTable: {
+            moved: "Moved to position {{ordinal}}; {{count}} rows changed position.",
+            moveHint: "Move this row to a position. The board is renumbered 1..n.",
+            moveApproved: "This board is approved, and its order is part of what was approved. Revise it instead of moving rows.",
             selectEpisode: "Select an episode to see its storyboard.",
             noBoard: "No storyboard version yet. Run the storyboard stage above to write one.",
             versions: "Board versions",

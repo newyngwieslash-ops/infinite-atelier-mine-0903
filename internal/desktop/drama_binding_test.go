@@ -2542,6 +2542,14 @@ func (s *dramaStore) ListStoryboardVersions(_ context.Context, storyboardID stri
 	return versions, nil
 }
 
+// ReorderStoryboardItem answers the port's reorder, so a binding test can assert what the DTO
+// conversion does with the result rather than only that the call succeeded.
+func (s *dramaStore) ReorderStoryboardItem(_ context.Context, itemID string, toOrdinal int) (appstoryboard.ReorderResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return appstoryboard.ReorderResult{Moved: 1, Order: []int{toOrdinal}}, nil
+}
+
 func (s *dramaStore) UpdateStoryboardItem(_ context.Context, item storyboard.StoryboardItem, expectedRevision int64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
