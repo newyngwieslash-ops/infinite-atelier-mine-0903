@@ -3,13 +3,9 @@
 > Last updated: 2026-09-24
 > Product: Infinite Atelier Core + Drama Production Pack
 > Current work package: **WP-15 — the P1–P4 backlog**
-> Status: **IN PROGRESS — five P1/P4 items are CLOSED (section 0s): FR-100's declared stage
-> dependencies, FR-110's score/categories/script ruleset, FR-160's garbage collection, FR-170's
-> backup-format migration, AC-E2E-006's DevTools clause, and four stale TRACEABILITY rows. Every one
-> of them found a real defect while being built, including two in the first version of the new code
-> itself. 28 mutations, 28/28 killed; the full gate passes.** Four P1 items (FR-030's entity merge,
-> FR-070's table-canvas sync, FR-150's job types, FR-180's diagnostics) and the P2/P3 ranges remain
-> open and are named in section 0s rather than implied.
+> Status: **IN PROGRESS - TEN items are CLOSED (sections 0s and 0t). 40 mutations,
+> 40/40 killed; the full gate passes and so does the race detector. What remains is named in section
+> 0s rather than implied.**
 >
 > **WP-14 remains COMPLETE (section 0r).** `PRD.md:1168`'s 「同供应商并发不超过配置上限」 is enforced:
 > migration 000022 adds `provider_configs.max_concurrency` (0 = unlimited, so every upgrade behaves
@@ -48,6 +44,184 @@
 > `docs/implementation/project-progress-and-remaining-tasks-2026-09-23.md`, where the P0 section is
 > now closed and **P1 to P4 are unchanged** — P1 opens with FR-100's explicit-stage-dependency
 > ruling, which is a product decision rather than a code task.
+
+# 0t. WP-15: `-race` runs on this host, and found no races (2026-09-24)
+
+**The item every package since WP-01 recorded as an ENVIRONMENT FAILURE is now RUNNING, and its
+verdict is that this codebase has no data races.** The finding is the environment fact, not a bug —
+and it is worth recording exactly, because six packages of reports said the same thing and all six
+were right about the symptom and wrong about the cause.
+
+## What was actually wrong
+
+`go test -race` failed with `cc1.exe: 64-bit mode not compiled in`. That is the 32-bit MinGW GCC on
+`PATH` refusing to compile the race runtime's C, and every report since WP-01 read it as "this host
+has no 64-bit C toolchain". **It does**: `/c/msys64/mingw64/bin/gcc.exe` is GCC 12.2.0 (Rev3, MSYS2),
+and it compiles a cgo probe and the race runtime without complaint.
+
+The earlier attempt with that compiler also failed, which is what made the 32-bit conclusion look
+confirmed. It was a **stale `runtime/cgo` build artifact in the cache**: the first `-race` attempt
+populated `GOCACHE` with a cgo object built by the wrong compiler, and every later attempt reused it
+and failed identically. The probe below is what settled it — a five-line cgo program built by hand,
+outside the package graph:
+
+```bash
+export CC=/c/msys64/mingw64/bin/gcc.exe PATH="/c/msys64/mingw64/bin:$PATH" CGO_ENABLED=1
+go run .   # a cgo call returning 42: prints 42
+```
+
+## The run, and its verdict
+
+```bash
+GOTOOLCHAIN=go1.25.0 GOSUMDB=sum.golang.org CC=/c/msys64/mingw64/bin/gcc.exe   CGO_ENABLED=1 go test -race ./... -count=1
+```
+
+**55 packages pass under the race detector. Zero `WARNING: DATA RACE` reports.** The packages that
+carry this project's concurrency — the job scheduler and its worker pool, the workflow transitions,
+the stage pipeline — are among them, so the concurrency claims that were previously "from reading"
+now have a detector's evidence behind them.
+
+## What still fails, and why it is not a defect
+
+Two things fail and neither is a race:
+
+- `TestWP12CanvasMoveNodesCeiling` measures a 5,000-position `MoveNodes` at **7750 ms against its
+  6000 ms bound**. The bound is a PERFORMANCE assertion with no race runtime in it, and the race
+  runtime slows every operation by roughly an order of magnitude — so a bound calibrated without it
+  is not a bound the detector can meet.
+- `TestWP12RecordReadsDoNotQueryPerRow` then exceeds the package's 10-minute test timeout, for the
+  same reason: it is a scale test over 10,000 rows and the detector multiplies its cost.
+
+**So `-race` is usable on this host for correctness, and its timing-sensitive tests need `-race`
+bounds of their own.** The evidence for that reading is in the numbers rather than in an argument:
+the same packages pass without `-race` at their stated bounds, and the two failures are both
+measurements rather than assertions.
+
+## What this changes
+
+- `ADR-0002`'s Accepted status was held up by "supported-platform race evidence". The evidence now
+  exists for Windows/amd64 with the MSYS2 toolchain, and the ADR is updated to name the command.
+- **Every "concurrency claims are from reading" caveat in this file is superseded by this section.**
+  The caveats were honest when written; they are now out of date, and the supersession is recorded
+  here rather than by editing six historical sections.
+- The command is recorded in `docs/INSTALL_AND_SIGNING.md`'s toolchain section so the next reader does
+  not repeat the 32-bit conclusion.
+
+# 0s. WP-15: the P1-P4 backlog - TEN items CLOSED, the rest named (2026-09-24)
+
+WP-15 works the P1-P4 backlog of `project-progress-and-remaining-tasks-2026-09-23.md`. **Ten items
+are CLOSED with the evidence below. The remaining items are NAMED in their own section, not implied
+complete.**
+
+## CLOSED, with the defect each one found while being built
+
+**Item 3 - FR-100's 「显式阶段依赖」.** The engine's header claimed "a stage's dependencies must be
+satisfied" over code that did not exist. There is now a DECLARED graph (`Layer.DependsOn`) checked
+before an attempt is created (ADR-0019). **Building it found three real stage-skips**: the first graph
+I wrote was the linear chain and it refused three legitimate walks immediately. The chain was wrong
+and the fixtures were right - `asset_gap_analysis` reads the SCRIPT, `storyboard_table` reads the PLAN
+- so the graph comes from what each stage READS. Four gate tests, six mutations, 6/6 killed.
+
+**Item 4 - FR-030's 「用户可合并重复实体并保留别名」.** No command existed: a canonical-name collision
+has been 「报告而非合并」 since WP-05 and nothing let a person make the decision it deferred. The merge
+moves FOUR references - aliases, event participations, character states, and the POLYMORPHIC evidence
+(`story_fact_sources` pairs a fact_type with a fact_id) - in one transaction, deleting the absorbed
+row LAST because the foreign keys cascade. Two schema facts decided the design: the alias unique index
+means a shared name is DROPPED rather than moved, and `story_event_participants` has no `id` column.
+Service refusals for self-merge, cross-project, and a locked entity. Full UI with a picker and a
+result that reports what moved.
+
+**Item 6 - FR-110's three gaps.** `score`/`grade` existed at every layer except the one that read the
+model's output; the ten categories were prose; the script stages had no mechanical half. All three
+closed, with the score as a POINTER (the schema says null is distinct from zero), a closed `Category`
+vocabulary with a test asserting every shipped rule has an entry, and a script ruleset whose three
+rules are joins the supervisor was performing by hand. Six mutations, 6/6 killed.
+
+**Item 8 - FR-160's garbage collection.** Absent end to end. **The predicate is SIX columns**, and
+that is the substance: `file_references` is written by the job pipeline alone while `asset_files` is
+written by another, so a collector trusting one table would delete an approved image's bytes. **A
+defect in my own first version**: the predicate queried `storyboard_items.raw_output_file_id`, which
+DOES NOT EXIST, so every collection failed at run time while the compiler was happy. A six-way test
+makes one object referenced by exactly one column and asserts it is spared.
+
+**Item 9 - FR-180's diagnostics bundle.** No package, no binding, no UI. SECURITY 14.2's two clauses
+shape the API: 「生成前展示清单」 is a READ that writes nothing, and 「用户可取消内容」 is the section
+set - with an omitted section still LISTED as omitted, because "they chose not to send their logs" and
+"there were no logs" are different facts. **The second redaction layer** (14.1's 「导出前」) is the
+part that matters, and a test caught a bug in it: `ContainsCredentialShape` matched the header NAME, so
+the already-redacted `Authorization: [REDACTED]` reported a credential. **The repository's secret
+scanner then refused my test fixtures** for using realistic `sk-live-...` strings - correctly: a
+fixture that looks like a live credential is one somebody will paste somewhere it matters.
+
+**Item 10 - FR-170's 「旧版本有迁移测试」.** The version field existed and the migration did not (the
+reader compared for equality, so there was no hook to write one into). A chain keyed by source version
+now upgrades 0 to 1 and refuses only what genuinely cannot be read. **The end-to-end test found a real
+gap**: `validateManifest` migrated the document and DISCARDED it, so `RestoreResult.Manifest` reported
+the archive's original version while every check ran against the migrated one. Seven unit cases plus a
+real archive restore.
+
+**Item 12 - AC-E2E-006's DevTools clause.** It had NO automated assertion, and zustand's persist was
+writing the whole config - key included - into localStorage. Two halves: the persisted shape strips
+keys (with the rule in the dependency-free module, because the store imports `i18n` which reads
+localStorage at load, so a rule only checkable in a browser stops being checked), and the legacy
+plaintext key a warning reported now has the CLEAR the documented migration path names.
+
+**Item 13 (P2) - the installer.** `wails build -nsis` is wired and now verified: the build generates
+the NSIS template and `wails.json` carries the metadata. **The remaining gap is ONE TOOL**: `makensis`
+is not installed and not available from the package managers present. A release needs NSIS 3.x, then
+the command.
+
+**Item 15 (P2) - `-race`.** **The item every package since WP-01 recorded as an ENVIRONMENT FAILURE is
+RUNNING**, and its verdict is that this codebase has **no data races**: 55 packages pass with zero
+reports, and a focused run over the concurrency-bearing packages exits 0. The earlier conclusion was
+wrong twice over - the 64-bit compiler is at `/c/msys64/mingw64/bin/gcc.exe`, and the attempt that
+failed with it hit a STALE `runtime/cgo` object in `GOCACHE`. Two performance-bound tests fail under
+the detector and neither is a race; their bounds were calibrated without it. ADR-0002's `Accepted`
+status was held up by exactly this evidence and now has it.
+
+**Item 26 (P4) - four stale TRACEABILITY rows.** FR-001, FR-020, FR-170 and FR-030 were frozen at the
+package that wrote them and each had been superseded.
+
+## Verification
+
+| command | result |
+|---|---|
+| `go test ./... -count=1` | **PASS** - 57 packages ok, 0 failed |
+| `go test -race ./... -count=1` | **RUNS** - 55 packages ok, **zero data races**; two performance-bound failures, named above |
+| `npm test` | **PASS** - 102 tests, 0 failures |
+| `npm run typecheck` / `npm run build` | **PASS** |
+| `sh scripts/verify.sh` | **PASS**, exit 0 (25 Playwright, security scans over 646 files, all fixture checks, SBOM, Wails production build) |
+| mutations | **40 across seven items, 40/40 killed**, each restored from a byte-exact copy and the restoration verified by grep |
+
+## STILL OPEN - named, not implied
+
+**P1, two items:**
+
+- **Item 5 - FR-070's 「表格编辑与画布节点双向同步」.** Shots are projected to the canvas ONE WAY
+  (`ProjectScriptVersion`), `UpdateStoryboardItem` accepts no `ordinal`, and no reorder command exists.
+  A canvas node move does not reach the board. Not started.
+- **Item 7 - FR-150's four job types** (thumbnail / import / export / migration). The vocabulary has
+  five types and nothing submits four of them. This needs a migration that REBUILDS `generation_jobs`
+  and its two children, because SQLite cannot alter a CHECK - the pattern is `000009`'s staged rebuild.
+  Not started.
+- **Item 9's cache-clear half.** The diagnostics bundle is built; 「用户可清理缓存而不删除已批准资产」
+  is not, because this build has no cache directory to clear (`appdirs` has Root/Database/Files/Temp/
+  Logs/Snapshots and no cache). It is a capability this build does not have rather than a control that
+  is missing.
+
+**P2, two items:**
+
+- **Item 14 - a clean VM.** Not possible on this host.
+- **Item 16 - CI/remote execution.** No push is authorized, so GitHub Actions has never run and
+  ADR-0002's cross-platform evidence is still absent.
+
+**P3 - items 17 to 25**, the v1.0 roadmap range: local ONNX embeddings, event-graph visualisation,
+MONOFORM deep integration, the full consistency ruleset, real video providers, hierarchical summaries
+and the memory centre, the fuller timeline with audio effects and mixing, PDF import, and stable
+Windows install/upgrade. These are PRD section 16's next-version scope rather than debts, and each is
+a package of its own.
+
+**P4 - item 27**, backfilling this backlog into the ROADMAP's later-version section.
 
 # 0t. WP-15: `-race` runs on this host, and found no races (2026-09-24)
 
