@@ -53,6 +53,66 @@ func IsValidAudioRole(value AudioRole) bool {
 	return false
 }
 
+// The `asset_usages.usage_role` values an audio version is attached as.
+//
+// # Why the mixer's role and the usage's role are different strings
+//
+// `AudioRole` is the MIXER's vocabulary and it predates this mapping: it names what a clip is for, and
+// the engine's gain default is keyed on it. The usage role is the ASSET layer's, and it is namespaced
+// (`audio_…`) because that column carries roles for every consumer — a shot, a panel, a prop — and a
+// bare `music` there would collide with whatever a picture's role happened to be called.
+//
+// # Why the legacy value maps to dialogue
+//
+// Rows written before this package carry `usage_role = 'audio'` — the value WP-11's walk writes — and
+// some carry the schema's default `'reference'`. Treating either as anything but dialogue would
+// CHANGE WHAT AN EXISTING PROJECT EXPORTS, which is data damage rather than a feature: every such row
+// was a line of speech, because speech was the only thing the mix could carry. Dialogue is the
+// identity element here, and the forward-compatibility rule is that an unknown role is dialogue too.
+const (
+	// UsageRoleAudioDialogue is a spoken line. It is also what the legacy `audio` value means.
+	UsageRoleAudioDialogue = "audio_dialogue"
+	// UsageRoleAudioMusic is an imported bed.
+	UsageRoleAudioMusic = "audio_music"
+	// UsageRoleAudioEffect is a sound effect.
+	UsageRoleAudioEffect = "audio_effect"
+)
+
+// AudioRoleForUsage maps a persisted `usage_role` into the mixer's vocabulary.
+//
+// It is total: every input has an answer, because the export cannot refuse a row it has already
+// decided to compose — a role it did not recognise would otherwise drop a clip and produce a film
+// that is quietly missing a line. An unrecognised value is DIALOGUE, which is the identity element
+// and the meaning every pre-WP-27 row carries.
+func AudioRoleForUsage(usageRole string) AudioRole {
+	switch strings.TrimSpace(strings.ToLower(usageRole)) {
+	case UsageRoleAudioMusic:
+		return AudioRoleMusic
+	case UsageRoleAudioEffect:
+		return AudioRoleEffect
+	default:
+		// Covers UsageRoleAudioDialogue, the legacy bare `audio`, the schema default `reference`, and
+		// anything a later package might write. See the block comment above for why this is the safe
+		// direction rather than a silent guess.
+		return AudioRoleDialogue
+	}
+}
+
+// UsageRoleForAudio is the inverse, for the command that attaches an audio version.
+//
+// The inverse is written here beside the forward map so the two cannot drift: a round trip is asserted
+// in the tests, and a change to one that forgot the other would fail it.
+func UsageRoleForAudio(role AudioRole) string {
+	switch role {
+	case AudioRoleMusic:
+		return UsageRoleAudioMusic
+	case AudioRoleEffect:
+		return UsageRoleAudioEffect
+	default:
+		return UsageRoleAudioDialogue
+	}
+}
+
 // DefaultGainFor is the mixer's starting level for a role, in ffmpeg's volume units.
 //
 // # Why music defaults below dialogue

@@ -8,6 +8,7 @@ import (
 
 	appmedia "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/media"
 	domainmedia "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/media"
+	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/platform/id"
 )
 
 // MediaBinding is the Wails surface for the video, audio and timeline sections.
@@ -42,6 +43,13 @@ type MediaBinding struct {
 	subs      *appmedia.SubtitleService
 	timeline  *appmedia.TimelineService
 	documents *appmedia.DocumentService
+	// voices is FR-080's 多角色声线映射 (WP-27). It is optional like the others: a build without the
+	// drama store composes the binding without it, and the queries answer empty while the commands
+	// refuse.
+	voices *appmedia.VoiceMappingService
+	// ids mints identifiers for the commands whose payload needs one. It is the media binding's own
+	// generator rather than a shared one, the same shape the upload bindings use.
+	ids *id.Generator
 	// saveFile is the dialog plus the copy, injected so a test can exercise the write without a
 	// window. A nil one leaves SaveFile failing closed with a reason.
 	saveFile func(ctx context.Context, suggestedName string, write func(io.Writer) error) (string, error)
@@ -50,7 +58,7 @@ type MediaBinding struct {
 // AttachMedia supplies the media services and the save path.
 func AttachMedia(binding *MediaBinding, ctx context.Context, exports *appmedia.ExportService,
 	subs *appmedia.SubtitleService, timeline *appmedia.TimelineService,
-	documents *appmedia.DocumentService,
+	documents *appmedia.DocumentService, voices *appmedia.VoiceMappingService,
 	saveFile func(ctx context.Context, suggestedName string, write func(io.Writer) error) (string, error)) {
 	if binding == nil {
 		return
@@ -61,6 +69,10 @@ func AttachMedia(binding *MediaBinding, ctx context.Context, exports *appmedia.E
 	binding.subs = subs
 	binding.timeline = timeline
 	binding.documents = documents
+	binding.voices = voices
+	if binding.ids == nil {
+		binding.ids = id.NewGenerator()
+	}
 	binding.saveFile = saveFile
 	binding.mu.Unlock()
 }

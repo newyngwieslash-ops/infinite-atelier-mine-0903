@@ -66,3 +66,4 @@
 | 0025 | MONOFORM deep integration: the snapshot that was being dropped | Accepted |
 | 0026 | Local ONNX embeddings, and the model that cannot read the corpus | Accepted |
 | 0027 | The asynchronous video adapter, the protocol shape it assumes, and two defects a boundary test found | Accepted |
+| 0028 | Multi-character voice casting, effect suggestions, and two rules no code could reach | Accepted |

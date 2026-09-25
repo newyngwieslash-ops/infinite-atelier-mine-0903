@@ -715,6 +715,28 @@ export namespace desktop {
 	        this.createdAt = source["createdAt"];
 	    }
 	}
+	export class AssignVoiceRequest {
+	    projectId: string;
+	    characterEntityId: string;
+	    providerConfigId?: string;
+	    model?: string;
+	    voice: string;
+	    expectedRevision?: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new AssignVoiceRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.projectId = source["projectId"];
+	        this.characterEntityId = source["characterEntityId"];
+	        this.providerConfigId = source["providerConfigId"];
+	        this.model = source["model"];
+	        this.voice = source["voice"];
+	        this.expectedRevision = source["expectedRevision"];
+	    }
+	}
 	export class AttachFileRequest {
 	    versionId: string;
 	    fileHash: string;
@@ -1157,6 +1179,32 @@ export namespace desktop {
 	        this.revision = source["revision"];
 	    }
 	}
+	export class CharacterVoiceDTO {
+	    id: string;
+	    projectId: string;
+	    characterEntityId: string;
+	    characterName?: string;
+	    providerConfigId?: string;
+	    model?: string;
+	    voice: string;
+	    revision: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new CharacterVoiceDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.projectId = source["projectId"];
+	        this.characterEntityId = source["characterEntityId"];
+	        this.characterName = source["characterName"];
+	        this.providerConfigId = source["providerConfigId"];
+	        this.model = source["model"];
+	        this.voice = source["voice"];
+	        this.revision = source["revision"];
+	    }
+	}
 	export class CheckStoryboardGateRequest {
 	    episodeId: string;
 	    storyboardVersionId?: string;
@@ -1185,6 +1233,20 @@ export namespace desktop {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.artifactType = source["artifactType"];
 	        this.artifactId = source["artifactId"];
+	    }
+	}
+	export class ClearVoiceRequest {
+	    projectId: string;
+	    characterEntityId: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ClearVoiceRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.projectId = source["projectId"];
+	        this.characterEntityId = source["characterEntityId"];
 	    }
 	}
 	export class CollectBatchResultsRequest {
@@ -2171,6 +2233,28 @@ export namespace desktop {
 		    }
 		    return a;
 		}
+	}
+	export class EffectSuggestionDTO {
+	    shotId: string;
+	    ordinal: number;
+	    intent: string;
+	    effect: string;
+	    matched: string;
+	    score: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new EffectSuggestionDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.shotId = source["shotId"];
+	        this.ordinal = source["ordinal"];
+	        this.intent = source["intent"];
+	        this.effect = source["effect"];
+	        this.matched = source["matched"];
+	        this.score = source["score"];
+	    }
 	}
 	export class EpisodeDTO {
 	    id: string;
@@ -4074,6 +4158,26 @@ export namespace desktop {
 	        this.resolvedBy = source["resolvedBy"];
 	    }
 	}
+	export class ResolveVoiceRequest {
+	    projectId: string;
+	    characterEntityId?: string;
+	    projectVoice?: string;
+	    projectModel?: string;
+	    projectProvider?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ResolveVoiceRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.projectId = source["projectId"];
+	        this.characterEntityId = source["characterEntityId"];
+	        this.projectVoice = source["projectVoice"];
+	        this.projectModel = source["projectModel"];
+	        this.projectProvider = source["projectProvider"];
+	    }
+	}
 	export class RestoreResult {
 	    manifestVersion: number;
 	    projects: number;
@@ -4841,6 +4945,22 @@ export namespace desktop {
 	        this.createdAt = source["createdAt"];
 	        this.updatedAt = source["updatedAt"];
 	        this.revision = source["revision"];
+	    }
+	}
+	export class ShotEffectInputDTO {
+	    shotId: string;
+	    ordinal: number;
+	    audioIntent?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ShotEffectInputDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.shotId = source["shotId"];
+	        this.ordinal = source["ordinal"];
+	        this.audioIntent = source["audioIntent"];
 	    }
 	}
 	
@@ -6045,6 +6165,26 @@ export namespace desktop {
 		}
 	}
 	
+	export class VoiceChoiceDTO {
+	    providerConfigId?: string;
+	    model?: string;
+	    voice?: string;
+	    source: string;
+	    isSet: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new VoiceChoiceDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.providerConfigId = source["providerConfigId"];
+	        this.model = source["model"];
+	        this.voice = source["voice"];
+	        this.source = source["source"];
+	        this.isSet = source["isSet"];
+	    }
+	}
 	export class WaiveStaleMarkRequest {
 	    artifactType: string;
 	    artifactId: string;

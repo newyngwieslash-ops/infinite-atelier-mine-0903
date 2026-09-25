@@ -56,14 +56,16 @@ func wp05Migrations(t testing.TB) fstest.MapFS {
 		"000023_job_types.sql":                 {Data: wp05SQL(t, "000023_job_types.sql")},
 		"000024_finding_category.sql":          {Data: wp05SQL(t, "000024_finding_category.sql")},
 		"000025_summary_ladder.sql":            {Data: wp05SQL(t, "000025_summary_ladder.sql")},
+		"000026_character_voices.sql":          {Data: wp05SQL(t, "000026_character_voices.sql")},
 	}
 }
 
 // wp05HeadVersion is the user_version the shared migration set reaches.
 //
 // The helper keeps its wp05 name because every test calls it by that name and
-// the set is the same set; only its head moves as migrations are added. It is 25
-// since WP-18 added memory_items.summary_level: WP-16 took it to 24 with review_issues.category,
+// the set is the same set; only its head moves as migrations are added. It is 26
+// since WP-27 added character_voices: WP-18 took it to 25 with memory_items.summary_level,
+// WP-16 to 24 with review_issues.category,
 // WP-14 to 22 with the per-provider concurrency column, WP-16's FR-150 job types to 23, and
 // WP-12 to 21 with the three covering indexes the scale benchmark found missing.
 //
@@ -73,7 +75,7 @@ func wp05Migrations(t testing.TB) fstest.MapFS {
 // this package's first index migration came to be measured against a database that did not
 // contain it — the plan test failed and the timing test showed no change, which is what
 // caught it.
-const wp05HeadVersion = 25
+const wp05HeadVersion = 26
 
 // applyMigrationFileSplits runs one migration file the way the runner does:
 // splitSQL on the raw text, then execute each fragment in order. It returns the

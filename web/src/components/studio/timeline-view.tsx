@@ -28,7 +28,8 @@ import {
     submitExportForReview,
     submitSubtitleTrackForReview,
 } from "@/services/desktop/media";
-import { ensureStoryboard, isDramaBindingsAvailable, listScriptVersions, listStoryboardVersions } from "@/services/desktop/drama";
+import { ensureStoryboard, getScriptStructure, isDramaBindingsAvailable, listScriptVersions, listStoryboardVersions } from "@/services/desktop/drama";
+import { isVoiceSurfaceAvailable, suggestShotEffects } from "@/services/desktop/voices";
 import type { desktop } from "@/wailsjs/go/models";
 
 /**
@@ -217,6 +218,15 @@ export function TimelineSection({ episodes, activeEpisodeId, onSelectEpisode, on
     const [subtitleMode, setSubtitleMode] = useState<string>("");
     const [drafts, setDrafts] = useState<CueDraft[]>([]);
     const [loading, setLoading] = useState(false);
+    /**
+     * The effect each shot's own `audio_intent` suggests, keyed by shot id.
+     *
+     * It is a MAP rather than a column on the row because the suggestion is a PROJECTION: it is a pure
+     * function of the script, it is not stored, and writing it into the timeline's rows would make it
+     * look like a fact about the board. A shot with no match is absent from the map, which renders as
+     * nothing rather than as "no effect" — the two are different claims.
+     */
+    const [effectSuggestions, setEffectSuggestions] = useState<Record<string, desktop.EffectSuggestionDTO>>({});
     const [busy, setBusy] = useState("");
     const [error, setError] = useState("");
     const [notice, setNotice] = useState("");
@@ -877,6 +887,47 @@ export function TimelineSection({ episodes, activeEpisodeId, onSelectEpisode, on
 
     const shots = timeline?.shots ?? [];
 
+    /**
+     * The effect suggestions, read from the script version the timeline names.
+     *
+     * `audioIntent` lives on the SCRIPT's shots, and the timeline's own rows carry `shotId` — so the
+     * two are joined on that identifier rather than on the ordinal, which a board may reorder. The
+     * read is best-effort and its failure is silent: a suggestion is a convenience, and a project whose
+     * script cannot be read still has a timeline, a subtitle editor and an export.
+     */
+    useEffect(() => {
+        const scriptVersionId = timeline?.scriptVersionId ?? "";
+        if (!scriptVersionId || !isVoiceSurfaceAvailable()) {
+            setEffectSuggestions({});
+            return;
+        }
+        let cancelled = false;
+        void getScriptStructure(scriptVersionId)
+            .then(async (structure) => {
+                // Every shot of every scene, flattened in script order — the suggestion re-sorts by
+                // ordinal itself, so the order here is only about not losing a row.
+                const inputs: desktop.ShotEffectInputDTO[] = [];
+                for (const scene of structure.scenes) {
+                    for (const shot of scene.shots) {
+                        inputs.push({ shotId: shot.shotId, ordinal: shot.ordinal, audioIntent: shot.audioIntent ?? "" });
+                    }
+                }
+                const suggestions = await suggestShotEffects(inputs);
+                if (cancelled) return;
+                const byShot: Record<string, desktop.EffectSuggestionDTO> = {};
+                for (const suggestion of suggestions) {
+                    byShot[suggestion.shotId] = suggestion;
+                }
+                setEffectSuggestions(byShot);
+            })
+            .catch(() => {
+                if (!cancelled) setEffectSuggestions({});
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [timeline?.scriptVersionId, timeline?.boardVersionId]);
+
     if (episodes.length === 0) {
         return <Empty description={t("studio.timeline.selectEpisode")} />;
     }
@@ -959,6 +1010,28 @@ export function TimelineSection({ episodes, activeEpisodeId, onSelectEpisode, on
                                     render: (_value, row) => (row.hasAudio ? <Tag color="green">{t("studio.timeline.audioApproved")}</Tag> : <Tag color="orange">{t("studio.timeline.audioMissing")}</Tag>),
                                 },
                                 { title: t("studio.timeline.cueCountLabel"), dataIndex: "cueCount", key: "cueCount", width: 110 },
+                                {
+                                    // THE SUGGESTION, WITH ITS EVIDENCE. The matched term is shown beside
+                                    // the effect because that is what makes it checkable: a user reading
+                                    // "rain ← 雨" can see immediately whether this application understood
+                                    // the shot, and a wrong suggestion becomes a phrase to add rather than
+                                    // a mystery. A suggestion with no matched term is not rendered at all.
+                                    title: t("studio.timeline.effectLabel"),
+                                    key: "effect",
+                                    width: 190,
+                                    render: (_value, row) => {
+                                        const suggestion = effectSuggestions[row.shotId];
+                                        if (!suggestion) {
+                                            return <Typography.Text type="secondary">{t("studio.timeline.effectNone")}</Typography.Text>;
+                                        }
+                                        return (
+                                            <Space size="small" data-testid={`studio-timeline-effect-${row.shotId}`}>
+                                                <Tag color="blue">{t(`studio.effect.${suggestion.effect}`, { defaultValue: suggestion.effect })}</Tag>
+                                                <Typography.Text type="secondary">← {suggestion.matched}</Typography.Text>
+                                            </Space>
+                                        );
+                                    },
+                                },
                             ]}
                         />
                         <Typography.Paragraph className="mt-2 text-xs text-stone-500" data-testid="studio-timeline-total">

@@ -451,32 +451,79 @@ func (s *ExportService) Export(ctx context.Context, request ExportRequest) (Expo
 // means "the third input is a line" stays true as a project grows, which is what makes an error
 // message about input 3 actionable. A music bed is last because it is the one clip whose placement
 // does not depend on a shot.
+// buildMix stages every approved audio version and lays them out over the film.
+//
+// # The order the clips are added in, and why it is not the order they are read in
+//
+// BEDS FIRST, THEN EFFECTS, THEN DIALOGUE. The mix is `amix`, which is symmetric — the order does not
+// change the sound — and it DOES change two things a reader depends on:
+//
+//   - ffmpeg numbers the inputs by the order they are given, and a failure names one of them. A stable
+//     order makes that number map back to a clip, which is what `Label` is for.
+//   - the `AudioMix` a caller inspects should read the way a mixer's channels do, with the bed at the
+//     bottom. It is the order the plan (ADR-0024) described and the order a person expects.
+//
+// # The defect this function used to carry
+//
+// Every clip was passed `AudioRoleDialogue` as a HARDCODED ARGUMENT, and the `music` slice was
+// initialized empty and never appended to. The consequence was that `DefaultGainFor(AudioRoleMusic)`
+// — a documented 0.35, reasoned about at length in `audio.go` — was a rule no code could reach: an
+// imported music bed would have mixed at unity and buried the dialogue it was supposed to sit under.
+// The role now comes from the row's `usage_role`, so the rule is reachable and the defect is
+// unrepresentable: there is no argument left to get wrong.
 func (s *ExportService) buildMix(ctx context.Context, scratch string, timeline Timeline) (AudioMix, []domainmedia.ManifestReference, error) {
-	dialogue := make([]AudioClip, 0, len(timeline.Shots))
+	// Three lists in mix order, each sized from the whole timeline because a shot may contribute any
+	// number of clips of any role.
 	music := make([]AudioClip, 0, 1)
+	effects := make([]AudioClip, 0, len(timeline.Shots))
+	dialogue := make([]AudioClip, 0, len(timeline.Shots))
 	references := make([]domainmedia.ManifestReference, 0)
 	for _, shot := range timeline.Shots {
-		for index, versionID := range shot.AudioVersionIDs {
-			clip, reference, err := s.audioClipFor(ctx, scratch, versionID, AudioRoleDialogue, shot.StartMS,
-				"shot "+itoa(shot.Ordinal)+" line "+itoa(index+1))
+		for index, audio := range shot.AudioClips {
+			// The label names the role as well as the position, because a failure that said "shot 3
+			// line 2" for a music bed would send a reader looking for a line of dialogue.
+			label := "shot " + itoa(shot.Ordinal) + " " + string(audio.Role) + " " + itoa(index+1)
+			clip, reference, err := s.audioClipFor(ctx, scratch, audio.VersionID, audio.Role, shot.StartMS, label)
 			if err != nil {
 				return AudioMix{}, nil, err
 			}
-			dialogue = append(dialogue, clip)
 			references = append(references, reference)
+			switch audio.Role {
+			case AudioRoleMusic:
+				music = append(music, clip)
+			case AudioRoleEffect:
+				effects = append(effects, clip)
+			default:
+				dialogue = append(dialogue, clip)
+			}
 		}
 	}
 	// The mix is bounded, and the bound is checked HERE rather than left to the engine: a refusal
 	// that names the count is actionable, while an ffmpeg argument-limit failure says nothing about
 	// what the user should remove.
-	if len(dialogue)+len(music) > MaxAudioClips() {
+	total := len(music) + len(effects) + len(dialogue)
+	if total > MaxAudioClips() {
 		return AudioMix{}, nil, LimitError(
-			"That episode's dialogue needs more audio clips than one composition mixes. Export a scene at a time.")
+			"That episode needs more audio clips than one composition mixes. Export a scene at a time.")
 	}
-	clips := make([]AudioClip, 0, len(dialogue)+len(music))
-	clips = append(clips, dialogue...)
+	clips := make([]AudioClip, 0, total)
 	clips = append(clips, music...)
-	return AudioMix{Clips: clips}, references, nil
+	clips = append(clips, effects...)
+	clips = append(clips, dialogue...)
+	// NORMALIZED HERE, and the omission was a second reason the music default was unreachable.
+	//
+	// `AudioMix.Normalized` resolves every clip's unstated gain to its role's default — 0.35 for music
+	// — and NOTHING CALLED IT. The function existed, was documented, and had a test of its own, while
+	// the only path that reaches the engine built its clips with a zero gain. The engine then formatted
+	// `volume=0`, so an imported bed would have been SILENT rather than merely too loud: a worse
+	// outcome than the one the missing role caused, and one that no test of `Normalized` could see
+	// because the defect was the absence of a call.
+	//
+	// The adapter formats the gain with `%g`, so a zero here is a literal `volume=0`. Normalizing at
+	// the point the mix is BUILT is what makes "unstated means the role's default" true of the value
+	// the engine receives, and `TestTheComposedRequestOrdersBedsBeforeEffectsBeforeDialogue` asserts the
+	// 0.35 in the request rather than in the struct this function returns.
+	return AudioMix{Clips: clips}.Normalized(), references, nil
 }
 
 // audioClipFor stages one approved audio version and builds its clip.

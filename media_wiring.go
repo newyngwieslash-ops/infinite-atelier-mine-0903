@@ -48,7 +48,10 @@ type mediaWiring struct {
 	// beside the MP4. It is composed here because it needs the same connection the other three do, and
 	// a second composition would be a second place to answer "which version is in force".
 	documents *appmedia.DocumentService
-	saveFile  func(ctx context.Context, suggestedName string, write func(io.Writer) error) (string, error)
+	// voices is FR-080's 多角色声线映射 (WP-27). It stores which voice renders which character, which
+	// travelled per submission before this package and was stored nowhere.
+	voices   *appmedia.VoiceMappingService
+	saveFile func(ctx context.Context, suggestedName string, write func(io.Writer) error) (string, error)
 }
 
 // composeMedia builds the media stack over a writable database and the project's file store.
@@ -98,9 +101,12 @@ func composeMedia(handle *database.Handle, script *appscript.Service, store *fil
 	documentService := appmedia.NewDocumentService(appmedia.DocumentOptions{
 		Repository: database.NewDocumentFactsReader(connection),
 	})
+	// The casting store shares the connection the three above use: it is one more table in the same
+	// schema, and a second handle would be a second answer to "what does this character sound like".
+	voiceService := appmedia.NewVoiceMappingService(database.NewVoiceRepository(connection))
 	return &mediaWiring{
 		engine: engine, subtitles: subtitleService, timeline: timelineService, exports: exportService,
-		documents: documentService,
+		documents: documentService, voices: voiceService,
 	}
 }
 
@@ -109,7 +115,7 @@ func (w *mediaWiring) attach(binding *desktop.MediaBinding, ctx context.Context)
 	if w == nil || binding == nil {
 		return
 	}
-	desktop.AttachMedia(binding, ctx, w.exports, w.subtitles, w.timeline, w.documents, w.saveFile)
+	desktop.AttachMedia(binding, ctx, w.exports, w.subtitles, w.timeline, w.documents, w.voices, w.saveFile)
 }
 
 // mediaClock is the application's time source, which every wiring here uses.

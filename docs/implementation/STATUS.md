@@ -58,6 +58,76 @@
 > now closed and **P1 to P4 are unchanged** — P1 opens with FR-100's explicit-stage-dependency
 > ruling, which is a product decision rather than a code task.
 
+# 0ze. WP-27: voice casting and effect suggestions, and two rules no code could reach (2026-09-25)
+
+WP-27 finishes **P3 item 23**'s two remaining halves, which WP-20 recorded as 「still open and named」:
+多角色声线映射 and 音效建议.
+
+## What was missing, and the third thing neither sentence said
+
+The voice travelled per TTS submission (`audioJobInput.Voice` → `AudioRequest.Voice` → the provider) and
+**nothing read it back**, so "character X speaks with voice Y" was not a fact in this application: a
+user retyped it for every line, and the audio section's own note said the voice came from the project's
+configuration — which means a project with two characters had ONE voice for both.
+
+`AudioRoleEffect` existed and mixed, and nothing suggested an effect. The input for a suggestion had
+been there since WP-08: `shots.audio_intent` is authored by the script agent, stored in migration
+000008, and read back into the domain — and **no code ever read its content**.
+
+And the reconnaissance found a third defect that neither open item mentions:
+
+**`AudioMix.Normalized()` HAD NO CALLER.** The method existed, was documented, and had a test of its
+own, while the only path reaching the engine built its clips with a zero gain — which the adapter
+formats as `volume=0`. So an imported music bed would have been **SILENT**, not merely too loud, and
+`DefaultGainFor`'s every value — including the 0.35 reasoned about at length in `audio.go` — was a rule
+no code could reach. A test of `Normalized` could not see this, because the defect was the absence of a
+call.
+
+## What was built
+
+**A casting table** (migration 000026): `character_voices`, keyed on the character entity with a UNIQUE
+index on (project, character) and a foreign key ON DELETE CASCADE. A mapping is a SET, so a settings row
+could not hold it; a JSON column would make it unqueryable and unconstrainable.
+
+**A three-level resolution, in the domain**: `ResolveVoiceChoice` — the character's cast, then the
+project's configuration, then nothing. An incomplete mapping (a voice with no channel) INHERITS the
+missing half rather than resolving to nothing, and the `Source` of the answer travels so a user can see
+which level decided — the three are indistinguishable by sound alone.
+
+**A lexicon-based suggestion**: `SuggestEffects` reads each shot's `audio_intent` and returns at most one
+effect per shot WITH THE TERM THAT MATCHED. The evidence field is the point: a suggestion a user cannot
+check is one they cannot trust, and a matched term makes a wrong suggestion a phrase to add rather than
+a mystery. A suggestion is NOT stored — it is a projection, and accepting one creates the fact.
+
+**A role that reaches the mix**: `BoardRow.AudioVersionIDs []string` became
+`AudioClips []AudioVersionRef{VersionID, Role}`, so a mix that forgot which clip is music is
+unrepresentable rather than merely wrong. The mapping is total, and an unrecognised role — including the
+legacy bare `audio` and the schema's `reference` default — maps to DIALOGUE, because every pre-WP-27 row
+was speech and treating one as anything else would change what an existing project exports.
+
+## Verification
+
+| Command | Result |
+|---|---|
+| `go test ./...` | **PASS** |
+| `go vet ./...` | **PASS** |
+| mutation set, 26 mutations over five files | **26/26 killed on the first run**, all files restored byte-exact |
+| `web` `npm run typecheck` / `npm test` | **PASS**, 122 tests (6 new) |
+| `sh scripts/verify.sh` | **PASS**, exit 0 (692 files scanned; 25 Playwright; all fixture, SBOM and security checks; Wails production build skipped — the pinned CLI is not installed on this host) |
+
+The acceptance walk (`voice_effects_wp27_test.go`) drives the path a desktop command drives — two
+characters, two casts, the resolutions, a shot's intent, a suggestion, its acceptance as an
+`audio_effect` usage, and the mix that carries it at the effect gain. It was verified to be
+non-vacuous: making every character resolve to the project default makes it fail with
+`walk-char-a resolves to "echo", want "alloy"`.
+
+## What this does NOT close
+
+- **背景音乐导入's UI control**: `AudioRoleMusic` is reachable through the mix and a user still cannot
+  point at a music file. STATUS section 0y named it; item 23 does not list it among the two.
+- **音效 GENERATION**: FR-080 says 「音效建议与生成适配」. The 建议 and the path that accepts one are
+  delivered; a real effect provider is adapter work of WP-26's shape and is not in scope.
+
 # 0zd. WP-26: the real async video adapter, and two defects a boundary test found (2026-09-25)
 
 WP-26 delivers **P3 item 21**'s provider half: `VideoPortFor` resolved the mock for `mock_media` and

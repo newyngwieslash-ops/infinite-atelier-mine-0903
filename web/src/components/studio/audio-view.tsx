@@ -7,6 +7,13 @@ import { useTranslation } from "react-i18next";
 import { listJobs, submitAudioJob } from "@/services/desktop/jobs";
 import { getScriptStructure, isDramaBindingsAvailable, listScriptVersions, listStoryEntities } from "@/services/desktop/drama";
 import { isMediaBindingsAvailable, readTimeline } from "@/services/desktop/media";
+import {
+    assignCharacterVoice,
+    clearCharacterVoice,
+    isVoiceSurfaceAvailable,
+    listCharacterVoices,
+    resolveCharacterVoice,
+} from "@/services/desktop/voices";
 import { channelIdForModel, decodeModelSelection } from "@/services/desktop/model-selection";
 import { useEffectiveConfig } from "@/stores/use-config-store";
 import type { desktop } from "@/wailsjs/go/models";
@@ -14,10 +21,15 @@ import type { desktop } from "@/wailsjs/go/models";
 /**
  * AudioSection is WP-11's audio surface: which shots have speech, and where a line's TTS is missing.
  *
- * # The two reads this section picks from, and the one that does not exist
+ * # The reads this section picks from, and the one that arrived later
  *
- * The per-line STATE FR-080 asks for — "TTS Voice/Dialogue mapping" — is not reachable from this
- * build's binding, and the section says so rather than guessing. What IS reachable is the script:
+ * The per-line STATE FR-080 asks for — "TTS Voice/Dialogue mapping" — WAS not reachable from this
+ * build's binding, and the section said so rather than guessing; **WP-27 closed it**. Which voice a
+ * character speaks with is now a stored fact (`internal/infrastructure/database/character_voices.go`)
+ * and `ResolveCharacterVoice` answers it with its PROVENANCE, so this section shows whether a line's
+ * voice came from the character's own cast or from the project's settings — the two are
+ * indistinguishable by sound alone. What remains true of this comment is the rest of it: what IS
+ * reachable is the script:
  *
  *  - `ListScriptVersions(episodeId)` returns the episode's script versions, newest first. It is the
  *    read that was missing, and an earlier version of this comment overstated the gap. The SCRIPT
@@ -120,6 +132,25 @@ export function AudioSection({ projectId, episodes, activeEpisodeId, onSelectEpi
     const [entities, setEntities] = useState<desktop.StoryEntityDTO[]>([]);
     const [text, setText] = useState("");
     const [submitting, setSubmitting] = useState(false);
+    /**
+     * The project's casting decisions, and the draft the casting form holds.
+     *
+     * The draft is separate from the list because the form is a form: a user typing a voice name has
+     * not decided yet, and writing through on every keystroke would make the mapping table a log of
+     * half-typed words.
+     */
+    const [voices, setVoices] = useState<desktop.CharacterVoiceDTO[]>([]);
+    const [castCharacterId, setCastCharacterId] = useState("");
+    const [castVoice, setCastVoice] = useState("");
+    const [casting, setCasting] = useState(false);
+    /**
+     * The resolved voice for the picked line, and its PROVENANCE.
+     *
+     * The source is carried rather than inferred from which of the two inputs matched, because the
+     * resolution has three levels and the levels are invisible without it: a user who hears the
+     * project's default on a character they cast needs to see that the cast is not what decided.
+     */
+    const [lineVoice, setLineVoice] = useState<desktop.VoiceChoiceDTO | null>(null);
 
     const activeEpisode = useMemo(() => episodes.find((episode) => episode.id === activeEpisodeId) || null, [episodes, activeEpisodeId]);
 
@@ -135,6 +166,13 @@ export function AudioSection({ projectId, episodes, activeEpisodeId, onSelectEpi
      * binding.
      */
     const scriptBindingsAvailable = isDramaBindingsAvailable();
+    /**
+     * The casting surface is a FOURTH availability question, and it is asked separately for the same
+     * reason as the third: a build with the media and drama surfaces but without the drama STORE
+     * answers empty for the voice list and refuses an assignment, and reporting that as "no cast"
+     * would be a claim about the project drawn from an absent table.
+     */
+    const voiceSurfaceAvailable = isVoiceSurfaceAvailable();
 
     const reload = useCallback(async () => {
         if (!activeEpisodeId) {
@@ -208,6 +246,29 @@ export function AudioSection({ projectId, episodes, activeEpisodeId, onSelectEpi
             cancelled = true;
         };
     }, [projectId, scriptBindingsAvailable]);
+
+    /**
+     * The project's casting decisions, read on the same best-effort terms as the entities.
+     *
+     * A failure here leaves the list empty rather than failing the section: the shot table, the
+     * version picker and the submit button all work without a cast, and a user who cannot read the
+     * mapping has lost a convenience rather than the ability to render a line.
+     */
+    const reloadVoices = useCallback(async () => {
+        if (!projectId || !voiceSurfaceAvailable) {
+            setVoices([]);
+            return;
+        }
+        try {
+            setVoices(await listCharacterVoices(projectId));
+        } catch {
+            setVoices([]);
+        }
+    }, [projectId, voiceSurfaceAvailable]);
+
+    useEffect(() => {
+        void reloadVoices();
+    }, [reloadVoices]);
 
     /**
      * loadStructure reads the picked version's lines.
@@ -291,6 +352,76 @@ export function AudioSection({ projectId, episodes, activeEpisodeId, onSelectEpi
     const chosenLine = useMemo(() => spokenLines.find((line) => line.lineId === lineId) ?? null, [spokenLines, lineId]);
 
     /**
+     * The picked line's voice, read whenever the line or the cast changes.
+     *
+     * It is a READ rather than the submit path's own resolution, so the caption below the picker and
+     * the request the button sends cannot disagree — the defect shape a second implementation of the
+     * same rule would produce.
+     */
+    useEffect(() => {
+        const characterId = chosenLine?.characterEntityId ?? "";
+        if (!projectId || !lineId || !chosenLine) {
+            setLineVoice(null);
+            return;
+        }
+        let cancelled = false;
+        void resolveCharacterVoice({
+            projectId,
+            characterEntityId: characterId,
+            projectVoice: config.audioVoice ?? "",
+            projectModel: config.audioModel ?? "",
+        })
+            .then((resolved) => {
+                if (!cancelled) setLineVoice(resolved);
+            })
+            .catch(() => {
+                if (!cancelled) setLineVoice(null);
+            });
+        return () => {
+            cancelled = true;
+        };
+        // `voices` is a dependency because casting a character changes the answer for that character's
+        // line, and the caption must follow the cast rather than the configuration it replaced.
+    }, [projectId, lineId, chosenLine, config.audioVoice, config.audioModel, voices]);
+
+    /** castVoice assigns the drafted voice to the picked character. */
+    const castCharacter = async () => {
+        if (!castCharacterId || castVoice.trim() === "") {
+            return;
+        }
+        setCasting(true);
+        try {
+            // The revision the panel is showing is sent, so a second tab that saved first wins and this
+            // one is told to reload rather than silently overwriting it.
+            const existing = voices.find((voice) => voice.characterEntityId === castCharacterId);
+            await assignCharacterVoice({
+                projectId,
+                characterEntityId: castCharacterId,
+                voice: castVoice.trim(),
+                expectedRevision: existing?.revision ?? 0,
+            } as never);
+            message.success(t("studio.audio.castSaved"));
+            setCastVoice("");
+            await reloadVoices();
+        } catch (failure) {
+            message.error(failure instanceof Error ? failure.message : t("studio.audio.castFailed"));
+        } finally {
+            setCasting(false);
+        }
+    };
+
+    /** removeCast clears a character's casting decision. */
+    const removeCast = async (characterEntityId: string) => {
+        try {
+            await clearCharacterVoice({ projectId, characterEntityId } as never);
+            await reloadVoices();
+        } catch (failure) {
+            message.error(failure instanceof Error ? failure.message : t("studio.audio.castFailed"));
+        }
+    };
+
+
+    /**
      * submit sends one line's TTS request.
      *
      * The voice, format and speed come from the project's own audio configuration — the same
@@ -319,14 +450,27 @@ export function AudioSection({ projectId, episodes, activeEpisodeId, onSelectEpi
         }
         setSubmitting(true);
         try {
+            // THE VOICE IS RESOLVED, not taken from the settings wholesale. The character's own cast
+            // wins when there is one, the project's configuration settles it otherwise, and an unset
+            // choice sends NO voice field at all so the provider applies its own default — which is
+            // the honest outcome for a project that has stated nothing. Sending `config.audioVoice`
+            // directly, as this did before casting existed, is what made every character in a project
+            // sound the same.
+            const resolved = await resolveCharacterVoice({
+                projectId,
+                characterEntityId: chosenLine?.characterEntityId ?? "",
+                projectVoice: config.audioVoice ?? "",
+                projectModel: decoded.model,
+                projectProvider: channelId,
+            });
             const job = await submitAudioJob({
                 projectId,
                 episodeId: activeEpisode.id,
                 dialogueLineId: lineId.trim(),
-                providerId: channelId,
-                model: decoded.model,
+                providerId: resolved.providerConfigId || channelId,
+                model: resolved.model || decoded.model,
                 text: text.trim(),
-                voice: config.audioVoice || undefined,
+                voice: resolved.isSet ? resolved.voice : undefined,
                 format: config.audioFormat || undefined,
                 speed: config.audioSpeed || undefined,
             } as never);
@@ -525,11 +669,90 @@ export function AudioSection({ projectId, episodes, activeEpisodeId, onSelectEpi
                     <span className="mb-1 block text-sm">{t("studio.audio.textLabel")}</span>
                     <Input.TextArea rows={3} value={text} maxLength={2000} data-testid="studio-audio-text" placeholder={t("studio.audio.textPlaceholder")} onChange={(event) => setText(event.target.value)} />
                 </label>
-                {/* The reference frames and the voice are not offered as controls here: the voice
-                    comes from the project's audio settings, which is the one place this build
-                    configures it, and a second voice picker would be a second answer to "which
-                    voice does this render in". */}
-                <Typography.Paragraph className="mt-3 text-xs text-stone-500">{t("studio.audio.voiceNote", { voice: config.audioVoice || "—", format: config.audioFormat || "—" })}</Typography.Paragraph>
+                {/* WHICH VOICE THIS LINE RENDERS IN, and where it came from.
+                    The three sources are indistinguishable by sound alone, so the caption names the
+                    one that decided: a user who hears the project's default on a character they cast
+                    would otherwise have no way to see that the cast is not what applied. */}
+                {lineId && chosenLine ? (
+                    <Typography.Paragraph className="mt-3 text-xs text-stone-500" data-testid="studio-audio-voice-source">
+                        {lineVoice?.isSet
+                            ? t(
+                                  lineVoice.source === "character"
+                                      ? "studio.audio.voiceFromCharacter"
+                                      : "studio.audio.voiceFromProject",
+                                  { voice: lineVoice.voice, format: config.audioFormat || "—" },
+                              )
+                            : t("studio.audio.voiceUnset", { format: config.audioFormat || "—" })}
+                    </Typography.Paragraph>
+                ) : (
+                    <Typography.Paragraph className="mt-3 text-xs text-stone-500">{t("studio.audio.voiceNote", { voice: config.audioVoice || "—", format: config.audioFormat || "—" })}</Typography.Paragraph>
+                )}
+            </section>
+
+            <section>
+                <h2 className="mb-3 text-lg font-medium">{t("studio.audio.castTitle")}</h2>
+                {/* The casting table is the answer to "who sounds like what", which before this
+                    section did not exist: the voice travelled per submission and was stored nowhere,
+                    so a project with two characters had one voice for both. */}
+                {voices.length === 0 ? (
+                    <Empty description={t("studio.audio.noCast")} />
+                ) : (
+                    <Table<desktop.CharacterVoiceDTO>
+                        rowKey="characterEntityId"
+                        size="small"
+                        pagination={false}
+                        dataSource={voices}
+                        data-testid="studio-audio-cast-table"
+                        columns={[
+                            {
+                                title: t("studio.audio.castCharacter"),
+                                dataIndex: "characterEntityId",
+                                key: "character",
+                                render: (value: string, row) => characterName(value, entities) || row.characterName || value,
+                            },
+                            { title: t("studio.audio.castVoice"), dataIndex: "voice", key: "voice" },
+                            {
+                                title: t("studio.audio.castModel"),
+                                key: "model",
+                                render: (_value, row) => row.model || t("studio.audio.castInherited"),
+                            },
+                            {
+                                title: "",
+                                key: "actions",
+                                render: (_value, row) => (
+                                    <Button size="small" data-testid={`studio-audio-cast-clear-${row.characterEntityId}`} onClick={() => void removeCast(row.characterEntityId)}>
+                                        {t("studio.audio.castClear")}
+                                    </Button>
+                                ),
+                            },
+                        ]}
+                    />
+                )}
+                {/* The form is always offered, so a project with no cast yet has a way to start rather
+                    than only a list that says it is empty. */}
+                <Space wrap className="mt-3">
+                    <Select
+                        className="min-w-48"
+                        value={castCharacterId || undefined}
+                        placeholder={t("studio.audio.castCharacterPlaceholder")}
+                        data-testid="studio-audio-cast-character"
+                        onChange={(value: string) => setCastCharacterId(value)}
+                        options={entities
+                            .filter((entity) => entity.type === "character")
+                            .map((entity) => ({ value: entity.id, label: entity.canonicalName || entity.id }))}
+                    />
+                    <Input
+                        className="min-w-40"
+                        value={castVoice}
+                        placeholder={t("studio.audio.castVoicePlaceholder")}
+                        data-testid="studio-audio-cast-voice"
+                        onChange={(event) => setCastVoice(event.target.value)}
+                    />
+                    <Button type="primary" loading={casting} disabled={!castCharacterId || castVoice.trim() === ""} data-testid="studio-audio-cast-save" onClick={() => void castCharacter()}>
+                        {t("studio.audio.castSave")}
+                    </Button>
+                </Space>
+                <Typography.Paragraph className="mt-2 text-xs text-stone-500">{t("studio.audio.castNote")}</Typography.Paragraph>
             </section>
 
             <section>

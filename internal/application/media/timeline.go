@@ -47,11 +47,11 @@ type TimelineShot struct {
 	PanelVersionID string
 	// HasAudio reports whether any audio version is approved for a line in this shot's scene.
 	HasAudio bool
-	// AudioVersionIDs are the approved audio versions for that scene's lines, which is what the
-	// export composes. The timeline carries them so the export does not have to re-read the board:
-	// two reads of the same join could disagree, and the export's whole job is to record what it
-	// actually used.
-	AudioVersionIDs []string
+	// AudioClips are the approved audio versions for that scene's lines WITH THEIR ROLES, which is
+	// what the export composes. The timeline carries them so the export does not have to re-read the
+	// board: two reads of the same join could disagree, and the export's whole job is to record what
+	// it actually used. See `BoardRow.AudioClips` for why the role travels rather than being assumed.
+	AudioClips []AudioVersionRef
 	// StartMS is where this shot begins in the film, which is the sum of the durations before it.
 	// It is what places a dialogue clip: a line's audio belongs at its shot's start, and without
 	// this the export would have to recompute the running total — a second implementation of the
@@ -133,8 +133,8 @@ type BoardRow struct {
 	// timeline reports for COMPLETENESS — "is this shot's scene voiced" — and it is a boolean because
 	// a reader of a timeline wants a yes or no rather than a list of files.
 	AudioApproved bool
-	// AudioVersionIDs are the approved audio versions for the lines of this row's scene, in a stable
-	// order.
+	// AudioClips are the approved audio versions for the lines of this row's scene, WITH THE ROLE each
+	// one was attached as.
 	//
 	// IT EXISTS BECAUSE THE EXPORT NEEDS THE FILES, and the comment above used to claim the export
 	// "reads the actual files through the same join" — a join that did not exist. The consequence was
@@ -143,9 +143,24 @@ type BoardRow struct {
 	// `TimelineShot.HasAudio` reported that the episode had audio. The acceptance walk recorded the
 	// silence as a known limit; this field is what closes it.
 	//
+	// THE ROLE TRAVELS WITH THE ID because it decides the mix. It used to be a `[]string` and the
+	// export hardcoded `AudioRoleDialogue` for every entry — so an imported music bed and a generated
+	// whisper were both mixed as dialogue, and `DefaultGainFor(AudioRoleMusic)`'s 0.35 was a rule no
+	// code could ever reach. Carrying the role makes that unreachable state unrepresentable: a caller
+	// cannot compile a mix that forgot which clip is music.
+	//
 	// The ids are versions rather than paths because the store's bytes are content-addressed and the
 	// export materialises them into its own scratch directory — the same path the picture takes.
-	AudioVersionIDs []string
+	AudioClips []AudioVersionRef
+}
+
+// AudioVersionRef is one approved audio version and the role it was attached as.
+type AudioVersionRef struct {
+	VersionID string
+	// Role is the role the version's `asset_usages.usage_role` named, mapped into the mixer's
+	// vocabulary. An unrecognised or absent role maps to dialogue, which is what every row written
+	// before the roles existed meant.
+	Role AudioRole
 }
 
 // TimelineOptions configures the service.
@@ -242,7 +257,7 @@ func (s *TimelineService) Read(ctx context.Context, request TimelineRequest) (Ti
 			MediaKind:       row.MediaKind,
 			PanelVersionID:  row.PanelVersionID,
 			HasAudio:        row.AudioApproved,
-			AudioVersionIDs: row.AudioVersionIDs,
+			AudioClips:      row.AudioClips,
 			// The shot starts where everything before it ended, which is the same running total the
 			// cue placement below uses — computed once, here, so the two cannot disagree.
 			StartMS: position,

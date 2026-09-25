@@ -78,13 +78,21 @@ func (r *ExportRepository) CurrentBoardVersion(ctx context.Context, episodeID st
 // four approved report as eight shots, which is a timeline that lost half the episode. The caller
 // counts the nulls instead, and that count is what refuses an export.
 //
-// The audio column is the approved audio versions whose lines fall in the row's scene, GROUPED into
-// a string rather than counted.
+// # The audio is a SECOND query, and why the grouping had to go
 //
-// It used to be a COUNT, and the count was thrown away into a boolean by the scanner — so the export
-// could not know WHICH versions to compose even though the query had found them. The consequence was
-// a silent film: `ExportService` built its request with no audio at all. `group_concat` keeps the ids
-// in one column so the read stays one query, and the caller splits them.
+// The audio column used to be `group_concat(au.asset_version_id, ',')` — the approved audio versions
+// whose lines fall in the row's scene, encoded into one string. It was a COUNT before that, and the
+// count was thrown away into a boolean by the scanner, which is how the export came to compose a
+// SILENT FILM: the query had found the versions and the caller could not know which.
+//
+// `group_concat` closed that gap and immediately hit its own limit, because a version id is not the
+// whole fact: WP-27 needs the ROLE a version was attached as, so a music bed mixes at 0.35 instead of
+// unity. Two facts per version cannot be packed into one comma-separated column without inventing a
+// second separator, escaping ids against it and hoping the aggregate's order is stable — three
+// fragile things where a column already exists.
+//
+// So the audio is read as ROWS in its own query, keyed by shot. It is still two queries for a whole
+// board rather than one per shot, which is the property the original comment was protecting.
 func (r *ExportRepository) BoardFacts(ctx context.Context, storyboardVersionID string) ([]appmedia.BoardRow, error) {
 	conn := r.conn()
 	if conn == nil {
@@ -95,12 +103,7 @@ func (r *ExportRepository) BoardFacts(ctx context.Context, storyboardVersionID s
 			COALESCE(p.id, '') AS panel_id,
 			COALESCE(p.approved_image_asset_version_id, '') AS approved_version_id,
 			COALESCE(a.asset_type, '') AS media_kind,
-			COALESCE(f.file_hash, '') AS media_hash,
-			COALESCE((SELECT group_concat(au.asset_version_id, ',') FROM asset_usages au
-				JOIN assets aa ON aa.id = (SELECT asset_id FROM asset_versions WHERE id = au.asset_version_id)
-				WHERE au.consumer_type = 'shot' AND au.consumer_id = i.shot_id
-				  AND aa.asset_type = 'audio'
-				  AND au.asset_version_id = aa.current_approved_version_id), '') AS audio_versions
+			COALESCE(f.file_hash, '') AS media_hash
 		FROM storyboard_items i
 		LEFT JOIN storyboard_panel_versions p
 			ON p.storyboard_item_id = i.id AND p.status = 'approved'
@@ -116,24 +119,75 @@ func (r *ExportRepository) BoardFacts(ctx context.Context, storyboardVersionID s
 	facts := []appmedia.BoardRow{}
 	for rows.Next() {
 		var row appmedia.BoardRow
-		var audioVersions string
 		if err := rows.Scan(&row.ItemID, &row.ShotID, &row.Ordinal, &row.DurationSecs,
-			&row.PanelVersionID, &row.ApprovedVersionID, &row.MediaKind, &row.MediaHash,
-			&audioVersions); err != nil {
+			&row.PanelVersionID, &row.ApprovedVersionID, &row.MediaKind, &row.MediaHash); err != nil {
 			return nil, media.StorageError("The storyboard rows could not be read.", err)
-		}
-		row.AudioApproved = audioVersions != ""
-		// The ids come back comma-separated and EMPTY for a row with no audio, which is the ordinary
-		// state of a board whose lines have not been voiced yet.
-		if audioVersions != "" {
-			row.AudioVersionIDs = strings.Split(audioVersions, ",")
 		}
 		facts = append(facts, row)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, media.StorageError("The storyboard rows could not be read.", err)
 	}
+	if err := r.attachAudioClips(ctx, storyboardVersionID, facts); err != nil {
+		return nil, err
+	}
 	return facts, nil
+}
+
+// attachAudioClips fills every row's approved audio, with the role each version was attached as.
+//
+// # Why one query for the board rather than one per row
+//
+// The join is `asset_usages` filtered to the shots of THIS board, so the whole board's audio arrives
+// in one result. A query inside the loop above would be the per-row shape the timeline exists to
+// avoid.
+//
+// # Why the ordering is explicit
+//
+// A row's lines are mixed in the order this returns them, and a dialogue clip laid over a bed must
+// arrive after it for the engine's argument numbering to be stable — which is what makes a failure
+// name a clip a reader can find. `ORDER BY` names the columns rather than relying on the join's
+// output order, which SQLite does not promise.
+func (r *ExportRepository) attachAudioClips(ctx context.Context, storyboardVersionID string, facts []appmedia.BoardRow) error {
+	conn := r.conn()
+	if conn == nil {
+		return media.StorageError("The storyboard store is unavailable.", nil)
+	}
+	if len(facts) == 0 {
+		return nil
+	}
+	rows, err := conn.QueryContext(ctx, `SELECT i.shot_id, au.asset_version_id, au.usage_role
+		FROM storyboard_items i
+		JOIN asset_usages au ON au.consumer_type = 'shot' AND au.consumer_id = i.shot_id
+		JOIN assets aa ON aa.id = (SELECT asset_id FROM asset_versions WHERE id = au.asset_version_id)
+		WHERE i.storyboard_version_id = ?
+		  AND aa.asset_type = 'audio'
+		  AND au.asset_version_id = aa.current_approved_version_id
+		ORDER BY i.ordinal, au.usage_role, au.asset_version_id`, storyboardVersionID)
+	if err != nil {
+		return media.StorageError("The approved audio for the board could not be read.", err)
+	}
+	defer rows.Close()
+	byShot := map[string][]appmedia.AudioVersionRef{}
+	for rows.Next() {
+		var shotID, versionID, usageRole string
+		if err := rows.Scan(&shotID, &versionID, &usageRole); err != nil {
+			return media.StorageError("The approved audio for the board could not be read.", err)
+		}
+		byShot[shotID] = append(byShot[shotID], appmedia.AudioVersionRef{
+			VersionID: versionID,
+			Role:      appmedia.AudioRoleForUsage(usageRole),
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return media.StorageError("The approved audio for the board could not be read.", err)
+	}
+	for index := range facts {
+		clips := byShot[facts[index].ShotID]
+		facts[index].AudioClips = clips
+		facts[index].AudioApproved = len(clips) > 0
+	}
+	return nil
 }
 
 // AudioFileFor returns the primary file's hash for one asset version.

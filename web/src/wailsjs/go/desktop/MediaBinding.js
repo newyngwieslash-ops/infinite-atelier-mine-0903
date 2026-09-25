@@ -10,12 +10,24 @@ export function ApproveSubtitleTrack(arg1) {
   return window['go']['desktop']['MediaBinding']['ApproveSubtitleTrack'](arg1);
 }
 
+export function AssignCharacterVoice(arg1) {
+  return window['go']['desktop']['MediaBinding']['AssignCharacterVoice'](arg1);
+}
+
+export function ClearCharacterVoice(arg1) {
+  return window['go']['desktop']['MediaBinding']['ClearCharacterVoice'](arg1);
+}
+
 export function DraftSubtitles(arg1) {
   return window['go']['desktop']['MediaBinding']['DraftSubtitles'](arg1);
 }
 
 export function EditSubtitleCues(arg1, arg2) {
   return window['go']['desktop']['MediaBinding']['EditSubtitleCues'](arg1, arg2);
+}
+
+export function EffectVocabulary() {
+  return window['go']['desktop']['MediaBinding']['EffectVocabulary']();
 }
 
 export function ExportManifestDocument(arg1) {
@@ -32,6 +44,10 @@ export function ExportShotList(arg1) {
 
 export function ExportSubtitles(arg1) {
   return window['go']['desktop']['MediaBinding']['ExportSubtitles'](arg1);
+}
+
+export function ListCharacterVoices(arg1) {
+  return window['go']['desktop']['MediaBinding']['ListCharacterVoices'](arg1);
 }
 
 export function ListExports(arg1) {
@@ -58,6 +74,10 @@ export function ReadTimeline(arg1) {
   return window['go']['desktop']['MediaBinding']['ReadTimeline'](arg1);
 }
 
+export function ResolveCharacterVoice(arg1) {
+  return window['go']['desktop']['MediaBinding']['ResolveCharacterVoice'](arg1);
+}
+
 export function RunExport(arg1) {
   return window['go']['desktop']['MediaBinding']['RunExport'](arg1);
 }
@@ -76,4 +96,8 @@ export function SubmitExportForReview(arg1) {
 
 export function SubmitSubtitleTrackForReview(arg1) {
   return window['go']['desktop']['MediaBinding']['SubmitSubtitleTrackForReview'](arg1);
+}
+
+export function SuggestShotEffects(arg1) {
+  return window['go']['desktop']['MediaBinding']['SuggestShotEffects'](arg1);
 }
