@@ -115,8 +115,15 @@ type MemoryDTO struct {
 	EmbeddingVersion string `json:"embeddingVersion,omitempty"`
 	EmbeddedAt       string `json:"embeddedAt,omitempty"`
 	Summarized       bool   `json:"summarized"`
-	Locked           bool   `json:"locked"`
-	SourceType       string `json:"sourceType,omitempty"`
+	// SummaryLevel is which rung a SUMMARY row sits on: 1 messages, 2 episode, 3 project. Zero for
+	// every other type.
+	//
+	// It is exposed because the ladder is now three rungs deep and a user looking at a list of
+	// summaries cannot otherwise tell which one answers which question: the type is `summary` at
+	// every rung, and only the scope narrows it.
+	SummaryLevel int    `json:"summaryLevel,omitempty"`
+	Locked       bool   `json:"locked"`
+	SourceType   string `json:"sourceType,omitempty"`
 	// SourceID is the agent_messages row an episodic memory came from, which is what AC-MEM-004's
 	// "UI 可跳原始消息" follows.
 	SourceID  string `json:"sourceId,omitempty"`
@@ -144,6 +151,7 @@ func toMemoryDTO(item memory.MemoryItem) MemoryDTO {
 		EmbeddingVersion: item.EmbeddingVersion,
 		EmbeddedAt:       rfc3339OrEmpty(item.EmbeddedAt),
 		Summarized:       item.Summarized,
+		SummaryLevel:     item.SummaryLevel,
 		Locked:           item.Locked,
 		SourceType:       string(item.SourceType),
 		SourceID:         item.SourceID,
@@ -604,7 +612,14 @@ type SummarizeMemoryRequest struct {
 	ProjectID string `json:"projectId"`
 	EpisodeID string `json:"episodeId,omitempty"`
 	AgentKey  string `json:"agentKey,omitempty"`
-	// Level is 1 for a summary of messages and 2 for a summary of summaries. Zero means level one.
+	// Level is which rung to condense: 1 messages, 2 episode summaries, 3 the project rung. Zero
+	// means level one, the rung a caller who did not think about it means.
+	//
+	// The rung ALSO decides which fields the request should carry. A level-one summary belongs to one
+	// conversation, so it wants EpisodeId and AgentKey; the project rung ignores both and condenses
+	// the project. The binding passes what it is given and the service widens by rung, so a caller
+	// that sends an episode with level 3 gets a project summary rather than a refusal — the episode
+	// is a fact about where the user is standing, not an instruction.
 	Level int `json:"level,omitempty"`
 	// Embed also embeds the summary, so it becomes searchable by meaning. False still writes the
 	// summary; it simply has no vector until a rebuild.

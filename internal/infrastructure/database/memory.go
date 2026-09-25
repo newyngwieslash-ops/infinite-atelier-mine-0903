@@ -74,7 +74,7 @@ func (r *MemoryRepository) withinTx(ctx context.Context, fn func(repo *MemoryRep
 const memoryItemSelectColumns = `SELECT id, scope_key, scope_tenant, scope_workspace,
 	scope_project, scope_episode, scope_agent_key, scope_session, memory_type, role,
 	agent_key, content, importance, confidence, embedding_blob, embedding_model,
-	embedding_version, embedded_at, summarized, locked, source_type, source_id,
+	embedding_version, embedded_at, summarized, summary_level, locked, source_type, source_id,
 	deleted_at, created_at, updated_at, revision FROM memory_items`
 
 // CreateItem stores one memory.
@@ -90,13 +90,13 @@ func (r *MemoryRepository) CreateItem(ctx context.Context, item memory.MemoryIte
 		(id, scope_key, scope_tenant, scope_workspace, scope_project, scope_episode,
 		 scope_agent_key, scope_session, memory_type, role, agent_key, content, importance,
 		 confidence, embedding_blob, embedding_model, embedding_version, embedded_at,
-		 summarized, locked, source_type, source_id, deleted_at, created_at, updated_at, revision)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 summarized, summary_level, locked, source_type, source_id, deleted_at, created_at, updated_at, revision)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		item.ID, item.Scope.Key(), item.Scope.Tenant, item.Scope.Workspace, item.Scope.Project,
 		item.Scope.Episode, item.Scope.AgentKey, item.Scope.Session, string(item.Type),
 		string(item.Role), item.AgentKey, item.Content, item.Importance, item.Confidence,
 		nullableBytes(item.EmbeddingBlob), item.EmbeddingModel, item.EmbeddingVersion,
-		formatTime(item.EmbeddedAt), boolInt(item.Summarized), boolInt(item.Locked),
+		formatTime(item.EmbeddedAt), boolInt(item.Summarized), item.SummaryLevel, boolInt(item.Locked),
 		string(item.SourceType), item.SourceID, formatTime(item.DeletedAt),
 		formatTime(item.CreatedAt), formatTime(item.UpdatedAt), item.Revision)
 	if err != nil {
@@ -452,14 +452,15 @@ func (r *MemoryRepository) CreateSummaryWithSources(ctx context.Context, summary
 			(id, scope_key, scope_tenant, scope_workspace, scope_project, scope_episode,
 			 scope_agent_key, scope_session, memory_type, role, agent_key, content, importance,
 			 confidence, embedding_blob, embedding_model, embedding_version, embedded_at,
-			 summarized, locked, source_type, source_id, deleted_at, created_at, updated_at, revision)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 summarized, summary_level, locked, source_type, source_id, deleted_at, created_at, updated_at, revision)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			summary.ID, summary.Scope.Key(), summary.Scope.Tenant, summary.Scope.Workspace,
 			summary.Scope.Project, summary.Scope.Episode, summary.Scope.AgentKey,
 			summary.Scope.Session, string(summary.Type), string(summary.Role), summary.AgentKey,
 			summary.Content, summary.Importance, summary.Confidence,
 			nullableBytes(summary.EmbeddingBlob), summary.EmbeddingModel, summary.EmbeddingVersion,
-			formatTime(summary.EmbeddedAt), boolInt(summary.Summarized), boolInt(summary.Locked),
+			formatTime(summary.EmbeddedAt), boolInt(summary.Summarized), summary.SummaryLevel,
+			boolInt(summary.Locked),
 			string(summary.SourceType), summary.SourceID, formatTime(summary.DeletedAt),
 			formatTime(summary.CreatedAt), formatTime(summary.UpdatedAt), summary.Revision); err != nil {
 			if isUniqueViolation(err) {
@@ -539,19 +540,28 @@ func (r *MemoryRepository) SummariesOf(ctx context.Context, sourceMemoryID strin
 	return scanMemoryItems(rows)
 }
 
-// UnsummarisedItems returns the memories a summary window may cover, oldest first.
+// UnsummarisedItemsForLevel returns the window a summary at one rung may cover, oldest first.
 //
-// Two predicates, and BOTH matter:
+// # The three predicates, and why each is load-bearing
 //
 //   - `summarized = 0`, which is what migration 000019's column is for: a window that selected
 //     by position would re-summarise the same turns every time it ran, and a window that
 //     selected by time would skip a burst of activity it happened to miss.
-//   - `memory_type = ?`, which the integration test forced. The first version read every type,
-//     so a LEVEL-ONE summary — which covers messages — found its own row (and its siblings)
-//     among its sources: the second summarise run produced a summary OF the first summary, and
-//     the window never emptied. The type is the caller's because the two levels of PRD FR-120's
-//     ladder read different rows.
-func (r *MemoryRepository) UnsummarisedItems(ctx context.Context, scope memory.Scope, memoryType memory.MemoryType, limit int) ([]memory.MemoryItem, error) {
+//   - `memory_type = ?`, derived from the RUNG: a message-rung window is EPISODIC rows and
+//     every window above it is SUMMARY rows. The first version of this read took the type from
+//     the caller and read every type for a level-one window, so a summary found its own row
+//     among its sources and condensed itself. The type is therefore not the caller's to choose.
+//   - `summary_level = ?`, the rung BELOW, which is WP-18's addition. Before it, "uncondensed
+//     summaries in this scope" identified no rung: with three rungs a project window would
+//     accept an episode window's summary, and once two such rows were uncondensed it would
+//     condense them together — a summary of a summary of a summary, which is the same self-
+//     condensing defect one rung up. The rung is a column now, so the window names it.
+//
+// The scope is the rung's own, which the caller widens: a message rung stays in its
+// conversation, an episode rung drops the agent and session, a project rung drops the episode
+// too. `scopeClauses` skips the parts a scope leaves empty, so widening is what makes a
+// project-level window match project-level rows.
+func (r *MemoryRepository) UnsummarisedItemsForLevel(ctx context.Context, scope memory.Scope, level int, limit int) ([]memory.MemoryItem, error) {
 	conn := r.conn()
 	if conn == nil {
 		return nil, memory.StorageError("The memory store is unavailable.", nil)
@@ -559,15 +569,22 @@ func (r *MemoryRepository) UnsummarisedItems(ctx context.Context, scope memory.S
 	if err := scope.Validate(); err != nil {
 		return nil, err
 	}
-	if !memory.IsValidMemoryType(memoryType) {
-		return nil, memory.InvalidError("The memory type is not recognised.")
+	if !memory.IsValidSummaryLevel(level) || level == 0 {
+		return nil, memory.InvalidError("The summary level is not recognised.")
 	}
 	if limit <= 0 {
 		limit = appmemory.MaxSummaryWindow
 	}
+	// The rung below is what a rung covers. Rung one covers MESSAGES, so its window is the
+	// episodic rows and there is no rung below it to name.
 	clauses, arguments := scopeClauses(scope)
-	clauses = append(clauses, "memory_type = ?", "summarized = 0", "deleted_at = ''")
-	arguments = append(arguments, string(memoryType), limit)
+	if level == memory.SummaryLevelMessage {
+		clauses = append(clauses, "memory_type = ?", "summarized = 0", "deleted_at = ''")
+		arguments = append(arguments, string(memory.TypeEpisodic), limit)
+	} else {
+		clauses = append(clauses, "memory_type = ?", "summary_level = ?", "summarized = 0", "deleted_at = ''")
+		arguments = append(arguments, string(memory.TypeSummary), level-1, limit)
+	}
 	rows, err := conn.QueryContext(ctx, memoryItemSelectColumns+
 		` WHERE `+strings.Join(clauses, " AND ")+` ORDER BY created_at ASC, id ASC LIMIT ?`, arguments...)
 	if err != nil {
@@ -680,8 +697,8 @@ func scanMemoryItem(row rowScanner) (memory.MemoryItem, error) {
 		&item.Scope.Project, &item.Scope.Episode, &item.Scope.AgentKey, &item.Scope.Session,
 		&memoryType, &role, &item.AgentKey, &item.Content, &item.Importance, &item.Confidence,
 		&embeddingBlob, &item.EmbeddingModel, &item.EmbeddingVersion, &embeddedAt,
-		&summarized, &locked, &sourceType, &item.SourceID, &deletedAt, &createdAt, &updatedAt,
-		&item.Revision)
+		&summarized, &item.SummaryLevel, &locked, &sourceType, &item.SourceID, &deletedAt,
+		&createdAt, &updatedAt, &item.Revision)
 	if err != nil {
 		return memory.MemoryItem{}, err
 	}

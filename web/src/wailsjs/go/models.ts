@@ -3127,6 +3127,7 @@ export namespace desktop {
 	    embeddingVersion?: string;
 	    embeddedAt?: string;
 	    summarized: boolean;
+	    summaryLevel?: number;
 	    locked: boolean;
 	    sourceType?: string;
 	    sourceId?: string;
@@ -3156,6 +3157,7 @@ export namespace desktop {
 	        this.embeddingVersion = source["embeddingVersion"];
 	        this.embeddedAt = source["embeddedAt"];
 	        this.summarized = source["summarized"];
+	        this.summaryLevel = source["summaryLevel"];
 	        this.locked = source["locked"];
 	        this.sourceType = source["sourceType"];
 	        this.sourceId = source["sourceId"];

@@ -62,11 +62,24 @@ type Repository interface {
 	CreateSummaryWithSources(ctx context.Context, summary memory.MemoryItem, sources []memory.SummarySource, markSummarized bool) error
 	ListSummarySources(ctx context.Context, summaryID string) ([]memory.SummarySource, error)
 	SummariesOf(ctx context.Context, sourceMemoryID string) ([]memory.MemoryItem, error)
-	// UnsummarisedItems returns the window a summary at this LEVEL would cover. The type is a
-	// parameter rather than a filter applied after the read, because the two levels read
-	// different rows and reading the wrong ones is how a summary came to condense itself: a
-	// level-one summary covers MESSAGES, so a summary row must not be among its sources.
-	UnsummarisedItems(ctx context.Context, scope memory.Scope, memoryType memory.MemoryType, limit int) ([]memory.MemoryItem, error)
+	// UnsummarisedItemsForLevel returns the window a summary at one RUNG would cover: the
+	// uncondensed items of the rung below it, in that rung's scope.
+	//
+	// # Why the rung is the parameter and the type is derived from it
+	//
+	// With two rungs, `memory_type` was the discriminator — level one read EPISODIC rows and
+	// level two read SUMMARY rows — so a type parameter was enough and `UnsummarisedItems`
+	// took one. A third rung breaks that: levels two and three BOTH read summaries, so the
+	// type cannot say which rung a window is for. The rung can, and it is the fact the caller
+	// actually knows.
+	//
+	// The type is still what narrows the READ, because it is what the index is on: a level-one
+	// window is episodic rows, and a window above it is summary rows AT THE RUNG BELOW. The
+	// second predicate is `summary_level = level-1` rather than `type = summary` alone, and
+	// that is the fix for the defect three rungs expose — without it a project rung returns
+	// whatever uncondensed summary it finds, including its own earlier output once a sibling
+	// arrives to satisfy the floor.
+	UnsummarisedItemsForLevel(ctx context.Context, scope memory.Scope, level int, limit int) ([]memory.MemoryItem, error)
 	AddEntityLinks(ctx context.Context, links []memory.EntityLink) error
 	ListEntityLinks(ctx context.Context, memoryID string) ([]memory.EntityLink, error)
 	SetSummarized(ctx context.Context, ids []string, at time.Time) error

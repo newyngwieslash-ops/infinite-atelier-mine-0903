@@ -56,6 +56,11 @@ export function MemoryCenterSection({ projectId }: MemoryCenterSectionProps) {
     const [typeFilter, setTypeFilter] = useState<string[]>([]);
     const [includeDeleted, setIncludeDeleted] = useState(false);
     const [busy, setBusy] = useState("");
+    // The rung a summarise run should condense (WP-18). It defaults to the MESSAGE rung, which is
+    // what a user who has not thought about the ladder means, and the picker exists because the
+    // ladder is now three rungs deep: the same button used to always condense messages, so the two
+    // rungs above it could only be reached from a test.
+    const [summaryLevel, setSummaryLevel] = useState<number>(1);
     const [selected, setSelected] = useState<desktop.MemoryDTO | null>(null);
     const [sources, setSources] = useState<desktop.MemorySummarySourceDTO[] | null>(null);
     const [links, setLinks] = useState<desktop.MemoryEntityLinkDTO[]>([]);
@@ -257,7 +262,17 @@ export function MemoryCenterSection({ projectId }: MemoryCenterSectionProps) {
     const condense = async () => {
         setBusy("summarize");
         try {
-            const result = await summarizeMemory({ projectId, embed: true } as never);
+            // The PROJECT only, which is what this section has: its props carry no episode and no
+            // agent, because the memory centre is a project-level view rather than a conversation
+            // one. The service widens by rung from whatever scope it is given, so a project scope
+            // with level 1 condenses the project's messages, level 2 its episode summaries, and
+            // level 3 folds those into the project rung. Inventing an episode id here would be this
+            // component claiming to know where the user is standing, which it does not.
+            const result = await summarizeMemory({
+                projectId,
+                level: summaryLevel,
+                embed: true,
+            } as never);
             setNotice(result.created ? t("studio.memory.summarised") : t("studio.memory.nothingToSummarise"));
             await load();
         } catch (error) {
@@ -273,7 +288,20 @@ export function MemoryCenterSection({ projectId }: MemoryCenterSectionProps) {
             dataIndex: "type",
             key: "type",
             width: 120,
-            render: (value: string) => <Tag>{t(`studio.memory.type.${value}`, { defaultValue: value })}</Tag>,
+            render: (value: string, row) => (
+                <>
+                    <Tag>{t(`studio.memory.type.${value}`, { defaultValue: value })}</Tag>
+                    {/* WHICH RUNG a summary is at. The type is `summary` at every rung above the
+                        first, so without this a reader looking at two summaries cannot tell an
+                        episode's condensation from the project's — and the two answer different
+                        questions. */}
+                    {row.type === "summary" && row.summaryLevel ? (
+                        <Tag data-memory-level={row.summaryLevel} color="blue">
+                            {t(`studio.memory.levelShort.${row.summaryLevel}`, { defaultValue: `L${row.summaryLevel}` })}
+                        </Tag>
+                    ) : null}
+                </>
+            ),
         },
         {
             title: t("studio.memory.contentLabel"),
@@ -395,6 +423,22 @@ export function MemoryCenterSection({ projectId }: MemoryCenterSectionProps) {
                         >
                             {t("studio.memory.includeDeleted")}
                         </Button>
+                        {/* WHICH RUNG. The label names the three levels of FR-120's ladder in the
+                            user's terms — messages, episodes, the whole project — rather than as
+                            "level 1/2/3", because the numbers say nothing about what gets condensed
+                            and a user picking one is choosing a question to answer. */}
+                        <Select
+                            size="small"
+                            className="w-40"
+                            value={summaryLevel}
+                            data-testid="memory-summary-level"
+                            onChange={(value: number) => setSummaryLevel(value)}
+                            options={[
+                                { value: 1, label: t("studio.memory.level.messages") },
+                                { value: 2, label: t("studio.memory.level.episode") },
+                                { value: 3, label: t("studio.memory.level.project") },
+                            ]}
+                        />
                         <Button size="small" loading={busy === "summarize"} data-testid="memory-summarize" onClick={() => void condense()}>
                             {t("studio.memory.summarise")}
                         </Button>

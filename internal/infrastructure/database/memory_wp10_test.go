@@ -35,6 +35,10 @@ type wp10MemoryHarness struct {
 	service *appmemory.Service
 	db      *sql.DB
 	agents  *AgentRepository
+	// embedder is the double the service was built with, kept so a test can change what it returns
+	// after construction: a scenario that needs the same vector for everything it writes can only
+	// say so through the object the service already holds.
+	embedder appmemory.Embedder
 	// scope is where this harness's memories live. It is a FIELD rather than derived per call
 	// because a memory and the summary that covers it must be written in the SAME scope: the
 	// first version of this harness wrote memories with a blank episode and asked for a summary of
@@ -106,7 +110,7 @@ func newWP10MemoryHarness(t *testing.T, embedder appmemory.Embedder) *wp10Memory
 		IDs:      &wp10IDs{},
 	})
 	return &wp10MemoryHarness{
-		service: service, db: db, agents: agents,
+		service: service, db: db, agents: agents, embedder: embedder,
 		scope: appmemory.ScopeFor("project-1", "episode-1", "script.decision"),
 		ctx:   context.Background(), now: now,
 	}

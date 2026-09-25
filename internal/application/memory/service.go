@@ -764,7 +764,28 @@ func (s *Service) DeepRecall(ctx context.Context, request DeepRecallRequest) (De
 		threshold = DefaultThreshold
 	}
 
-	scored, err := s.scoredCandidates(ctx, request.Scope.EpisodeOnly(), result.Query, threshold, map[string]bool{})
+	// THE CALLER'S OWN EPISODE FIRST, then the project's rung, which is a separate search for a
+	// reason worth stating.
+	//
+	// `scopeClauses` filters on the parts a scope NAMES, so a search carrying an episode id
+	// matches only rows with that episode. A project-level summary is stored with an EMPTY
+	// episode, so the first search cannot see it — and the version before WP-18 passed
+	// `EpisodeOnly()` to be sure of the opposite, which made the project rung unreachable from
+	// every question. A rung written and never findable is the "interface with no real path"
+	// shape this repository keeps finding.
+	//
+	// The widening is done as TWO searches and an explicit FILTER rather than by searching the
+	// project scope alone, because searching wide is how an agent's own memories leak into
+	// another's context: a project-wide search matches every episode and every agent key. So the
+	// second search runs project-wide, and `inRecallScope` then keeps only what the caller may
+	// see — the caller's own rows, and the rows that belong to the project itself.
+	scored, err := s.scoredCandidates(ctx, request.Scope, result.Query, threshold, map[string]bool{})
+	if err == nil && request.Scope.Episode != "" {
+		projectWide, projectErr := s.scoredCandidates(ctx, request.Scope.ProjectOnly(), result.Query, threshold, map[string]bool{})
+		if projectErr == nil {
+			scored = mergeScored(scored, keepInRecallScope(projectWide, request.Scope))
+		}
+	}
 	if err != nil {
 		return result, err
 	}
@@ -826,6 +847,62 @@ func (s *Service) DeepRecall(ctx context.Context, request DeepRecallRequest) (De
 		}
 	}
 	return result, nil
+}
+
+// keepInRecallScope filters a project-wide search down to what one caller may see.
+//
+// The rule, stated so it can be argued with: a caller sees (a) rows in its OWN scope — its episode
+// and its agent key — and (b) rows that belong to the PROJECT rather than to any conversation,
+// which are exactly the ones with an empty episode and an empty agent key. Nothing else. Another
+// episode's summaries and another agent's summaries are both excluded, which is what keeps a
+// widened SEARCH from becoming a widened ANSWER.
+//
+// It exists as a filter rather than as a scope because the two requirements pull against each
+// other: the search has to be wide enough to find a project-level row, and the answer has to be
+// narrow enough not to reach across episodes. Doing both in one predicate would need a scope
+// vocabulary for "this episode or the project", which is a shape the store does not have and which
+// one caller does not justify inventing.
+func keepInRecallScope(candidates []ScoredMemory, scope Scope) []ScoredMemory {
+	kept := make([]ScoredMemory, 0, len(candidates))
+	for _, candidate := range candidates {
+		item := candidate.Item.Scope
+		if item.Project != scope.Project {
+			continue
+		}
+		// A project-level row belongs to the project itself.
+		if item.Episode == "" && item.AgentKey == "" {
+			kept = append(kept, candidate)
+			continue
+		}
+		// Everything else has to match the caller's own episode AND agent. Both are compared
+		// because either alone leaks: the episode alone admits another agent's turn in the same
+		// conversation, and the agent alone admits the same agent's work in another episode.
+		if item.Episode == scope.Episode && item.AgentKey == scope.AgentKey {
+			kept = append(kept, candidate)
+		}
+	}
+	return kept
+}
+
+// mergeScored combines two scored lists, keeping the better similarity for a row present in both.
+//
+// Better rather than first: the two searches score the same row identically — same vector, same
+// fusion weights — so a difference here would mean one of them read a different row, and keeping
+// the higher score is the choice that cannot make a relevant row look less relevant than it is.
+func mergeScored(first, second []ScoredMemory) []ScoredMemory {
+	merged := make([]ScoredMemory, 0, len(first)+len(second))
+	seen := map[string]int{}
+	for _, candidate := range append(append([]ScoredMemory{}, first...), second...) {
+		if index, ok := seen[candidate.Item.ID]; ok {
+			if candidate.Similarity > merged[index].Similarity {
+				merged[index] = candidate
+			}
+			continue
+		}
+		seen[candidate.Item.ID] = len(merged)
+		merged = append(merged, candidate)
+	}
+	return merged
 }
 
 // rerankSummaries reorders summaries using how much of the query their text accounts for.

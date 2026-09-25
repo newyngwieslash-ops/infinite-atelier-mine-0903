@@ -51,8 +51,8 @@ func TestWP10GuardEmptyProjectIsRefusedByTheStore(t *testing.T) {
 		t.Fatal("VectorCandidates accepted an empty project")
 	}
 	// A scope with no project is refused by the DOMAIN, which is the guard the store delegates to.
-	if _, err := repository.UnsummarisedItems(ctx, memory.Scope{}, memory.TypeEpisodic, 10); err == nil {
-		t.Fatal("UnsummarisedItems accepted a scope with no project")
+	if _, err := repository.UnsummarisedItemsForLevel(ctx, memory.Scope{}, memory.SummaryLevelMessage, 10); err == nil {
+		t.Fatal("UnsummarisedItemsForLevel accepted a scope with no project")
 	}
 	// And a valid project is accepted, so the refusals above are not a read that never works.
 	items, err := repository.ListItems(ctx, MemoryListFilter{ProjectID: "project-1"})
@@ -109,10 +109,13 @@ func TestWP10GuardASearchNeedsAModelAndVersion(t *testing.T) {
 	if _, err := repository.VectorCandidates(ctx, scope, "m", "v1", 10); err != nil {
 		t.Fatalf("a complete search was refused: %v", err)
 	}
-	// An unknown memory type is refused by the window read, so a caller cannot ask for a type the
-	// schema's CHECK would reject.
-	if _, err := repository.UnsummarisedItems(ctx, scope, "daydream", 10); err == nil {
-		t.Fatal("UnsummarisedItems accepted an unknown memory type")
+	// An unknown RUNG is refused by the window read, so a caller cannot ask for a level the schema's
+	// CHECK would reject. The predicate changed with WP-18: the type stopped discriminating the
+	// rungs at three of them, so the rung is what the read validates.
+	for _, level := range []int{0, 4, -1} {
+		if _, err := repository.UnsummarisedItemsForLevel(ctx, scope, level, 10); err == nil {
+			t.Fatalf("UnsummarisedItemsForLevel accepted the level %d", level)
+		}
 	}
 }
 
@@ -175,9 +178,9 @@ func TestWP10GuardTheSecondaryReadsAreProjectScoped(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	window, err := repository.UnsummarisedItems(ctx,
+	window, err := repository.UnsummarisedItemsForLevel(ctx,
 		memory.Scope{Tenant: "local", Project: "project-1", Episode: "episode-1", AgentKey: "script.decision"},
-		memory.TypeEpisodic, 10)
+		memory.SummaryLevelMessage, 10)
 	if err != nil {
 		t.Fatal(err)
 	}

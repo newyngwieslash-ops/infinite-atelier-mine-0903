@@ -1831,6 +1831,19 @@ export default {
             typeFilter: "Filter by kind",
             includeDeleted: "Show deleted",
             summarise: "Condense now",
+            // FR-120's ladder is message -> episode/session -> project, so the picker names WHAT gets
+            // condensed rather than "level 1/2/3": the numbers say nothing about the result, and a
+            // user choosing one is really choosing which question to answer.
+            level: {
+                messages: "Condense messages",
+                episode: "Condense into an episode",
+                project: "Condense into the project",
+            },
+            levelShort: {
+                "1": "messages",
+                "2": "episode",
+                "3": "project",
+            },
             rebuild: "Rebuild embeddings",
             loading: "Reading the memories…",
             empty: "Nothing is remembered for this project yet.",

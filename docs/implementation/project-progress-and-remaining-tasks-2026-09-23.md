@@ -123,7 +123,7 @@
 19. MONOFORM 深度双向集成
 20. ~~完整资产一致性检查（全部规则集的确定性半边 + Safety/Cost）~~ **DONE — WP-16, 2026-09-25 (STATUS §0u, ADR-0020).** The ASSET ruleset's two missing clauses (派生关系, 文件存在和类型) are rules over the versions a board cites; Safety and Cost each have an emitter; the classification reaches `review_issues.category` and the quality centre. **The file rule's first version was WRONG and two existing tests proved it** — it reported every cited version with no file, which is the asset-bible state rather than a fault; it now anchors on `generation_job_id`. The original text follows. 完整资产一致性检查（全部规则集的确定性半边 + Safety/Cost）
 21. 视频首尾帧与批量镜头生成（对接真实视频 Provider）
-22. 层级摘要与记忆中心 UI、召回评测集
+22. ~~层级摘要与记忆中心 UI、召回评测集~~ **DONE — WP-18, 2026-09-25 (STATUS §0w, ADR-0022).** The ladder has its third rung (FR-120: message → episode/session → project), and the middle rung had NO test of any kind until this package — all six `Level:` usages in the repository were `Level: 1`. Building it found that **the second rung never marked its children, so a second run condensed the same rows again**, printing a summary with the previous one nested inside it; and that three rungs break the accident that made two work, because levels two and three both read summaries. §18.2's 「Memory 跨项目泄露率」 and 「Deep Recall 命中率」 exist now as pure functions over the canary fixture. The original text follows. 层级摘要与记忆中心 UI、召回评测集
 23. 更完整时间线、音效建议、BGM 导入、简单混音、多角色声线映射
 24. PDF 导入
 25. Windows 稳定安装与升级（=上面 P2 的产品化表述）

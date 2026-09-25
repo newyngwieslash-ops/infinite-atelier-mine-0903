@@ -27,13 +27,26 @@ import (
 //     embedding provider configured can still summarise, because nothing leaves the
 //     process.
 //
-// # The two levels
+// # The three rungs
 //
-// Level one summarises MESSAGES (episodic memories) and is scoped to the conversation that
-// produced them. Level two summarises SUMMARIES and is scoped to the episode — the middle
-// of FR-120's ladder. There is no third level in this build: a project-level summary would
-// need a trigger the specification does not give, and inventing one would mean choosing
-// when a project is "done".
+// FR-120's ladder is message -> episode/session -> project, and each rung is a summary of the
+// rung below it in that rung's scope:
+//
+//  1. MESSAGES (episodic memories), scoped to the conversation that produced them;
+//  2. LEVEL-ONE SUMMARIES, scoped to the episode (the agent and session cleared);
+//  3. EPISODE SUMMARIES, scoped to the project (the episode cleared too).
+//
+// # Why the third rung has no trigger problem
+//
+// The comment that stood here said a project-level summary "would need a trigger the
+// specification does not give, and inventing one would mean choosing when a project is
+// done". That was wrong about what the rung IS. A project summary is not a verdict on a
+// finished project; it is the same operation as the other two — condense the uncondensed
+// rung below you, in your own scope — and it needs no notion of completion. The floor is
+// what keeps it from firing pointlessly: two children, exactly as level two requires, so a
+// project with one episode summary produces nothing and a project with three produces one
+// summary that a later run folds the fourth into. That is a rolling summarisation, not a
+// completion event.
 const (
 	// SummaryRulesetVersion names the recipe, and it is stored on every summary row.
 	//
@@ -47,13 +60,16 @@ const (
 	// reader can tell which level a summary is without consulting its links.
 	SummaryLevel1Separator = "Earlier in this conversation:"
 	SummaryLevel2Separator = "Earlier in this episode:"
+	// SummaryLevel3Separator heads the project rung's text.
+	SummaryLevel3Separator = "Earlier in this project:"
 )
 
 // SummarizeRequest asks for a summary of one scope's unsummarised memories.
 type SummarizeRequest struct {
 	Scope Scope
-	// Level is 1 for a summary of messages and 2 for a summary of level-one summaries.
-	// Zero means level one.
+	// Level is which rung to condense: 1 for messages, 2 for level-one summaries, 3 for the
+	// project rung over episode summaries. Zero means level one, because that is the rung a
+	// caller who did not think about it means.
 	Level int
 	// Window bounds how many memories the summary covers. Zero uses
 	// DefaultSummaryWindow; the ceiling is MaxSummaryWindow.
@@ -82,8 +98,10 @@ func (s *Service) Summarize(ctx context.Context, request SummarizeRequest) (memo
 	if level == 0 {
 		level = 1
 	}
-	if level != 1 && level != 2 {
-		return memory.MemoryItem{}, false, memory.InvalidError("A summary is either of messages or of summaries.")
+	if !memory.IsValidSummaryLevel(level) || level == 0 {
+		// Refused rather than clamped: a caller that asked for a fourth rung has made a mistake,
+		// and answering it with a third-rung summary would hide that.
+		return memory.MemoryItem{}, false, memory.InvalidError("A summary is of messages, of episode summaries, or of a project's episodes.")
 	}
 	window := request.Window
 	if window <= 0 {
@@ -93,12 +111,19 @@ func (s *Service) Summarize(ctx context.Context, request SummarizeRequest) (memo
 		window = MaxSummaryWindow
 	}
 
-	// The window's SOURCE scope is what decides the summary's scope, and the two differ by
-	// level: a level-one summary covers one agent's conversation and belongs to it, while a
-	// level-two summary covers an episode's summaries and belongs to the episode.
+	// The scope a rung reads AND writes is its own, and each rung widens by one step: a
+	// message-rung summary belongs to the conversation, an episode-rung one to the episode
+	// (agent and session cleared), a project-rung one to the project (episode cleared too).
+	//
+	// Reading and writing the same scope is what makes a rung's window match its own rows. A
+	// rung that read wider than it wrote would find a sibling's children and fold another
+	// episode's summary into this one's.
 	readScope := request.Scope
-	if level == 2 {
+	switch level {
+	case memory.SummaryLevelEpisode:
 		readScope = request.Scope.EpisodeOnly()
+	case memory.SummaryLevelProject:
+		readScope = request.Scope.ProjectOnly()
 	}
 	sources, err := s.summarySources(ctx, level, readScope, window)
 	if err != nil {
@@ -107,9 +132,14 @@ func (s *Service) Summarize(ctx context.Context, request SummarizeRequest) (memo
 	if len(sources) == 0 {
 		return memory.MemoryItem{}, false, nil
 	}
-	// Level two needs at least two children: a summary of one summary is a copy with an
-	// extra hop, and it would make the ladder longer without making it shorter.
-	if level == 2 && len(sources) < 2 {
+	// EVERY rung above the first needs at least two children: a summary of one summary is a
+	// copy with an extra hop, and it would make the ladder longer without making it shorter.
+	//
+	// The floor does double duty on the project rung. It is the reason a project with one
+	// episode produces no summary, and it is ALSO what kept the pre-WP-18 code from condensing
+	// a stray pair — which was luck rather than design, and is why the window now names its
+	// rung instead of relying on the floor.
+	if level != memory.SummaryLevelMessage && len(sources) < 2 {
 		return memory.MemoryItem{}, false, nil
 	}
 
@@ -119,8 +149,11 @@ func (s *Service) Summarize(ctx context.Context, request SummarizeRequest) (memo
 	}
 	now := s.now()
 	summaryScope := request.Scope
-	if level == 2 {
+	switch level {
+	case memory.SummaryLevelEpisode:
 		summaryScope = request.Scope.EpisodeOnly()
+	case memory.SummaryLevelProject:
+		summaryScope = request.Scope.ProjectOnly()
 	}
 	summary := memory.MemoryItem{
 		ID:         summaryID,
@@ -132,6 +165,10 @@ func (s *Service) Summarize(ctx context.Context, request SummarizeRequest) (memo
 		// a condensation of one confident and one shaky memory is neither certain nor
 		// worthless, and reporting the maximum would overstate it.
 		Confidence: summaryConfidence(sources),
+		// The rung is stated on the row rather than derived later: with three rungs the TYPE
+		// cannot discriminate them, and a window that had to infer the level from the links
+		// would be a recursive query whose answer changes as the ladder grows.
+		SummaryLevel: level,
 		// No source columns, because a summary cites MANY memories and the pair holds one. Its
 		// provenance is the source table below, and the row's AgentKey names whose run produced it
 		// so "role/agent/time 保留" (AC-MEM-004) is answerable without walking the links.
@@ -149,16 +186,30 @@ func (s *Service) Summarize(ctx context.Context, request SummarizeRequest) (memo
 			CreatedAt:      now,
 		})
 	}
-	// A level-two summary does NOT mark its children summarised: they are summaries
-	// themselves and are still the right answer to a level-one question. What level two
-	// adds is a shorter path for a question about the episode.
-	if err := s.items.CreateSummaryWithSources(ctx, summary, links, level == 1); err != nil {
+	// EVERY RUNG MARKS ITS SOURCES, and the flag means "a parent covers this" rather
+	// than "a level-one summary covers this".
+	//
+	// The first version passed `level == 1`, with the reasoning that a level-two summary
+	// should not mark its children because they are summaries themselves and remain the
+	// right answer to a level-one question. The reasoning was right about RECALL and wrong
+	// about the WRITE WINDOW: `UnsummarisedItems` is what chooses a summary's sources, and
+	// it selects on `summarized = 0`. So a level-two run left its children unmarked, the
+	// next run read the same rows, and a second, near-identical summary of the same episode
+	// appeared — with the first summary nested inside it as a source. WP-18's
+	// `TestASecondLevelTwoRunDoesNotRecondenseTheSameChildren` failed on exactly that, and
+	// the printed text was the proof: a summary of a summary of the same two messages.
+	//
+	// Nothing is lost on the recall side, which is the part the original comment was
+	// protecting: the semantic channel reads `VectorCandidates`, which filters on the
+	// embedding columns and NOT on `summarized`, so a condensed summary is still searched
+	// and still returned. The flag only ever filtered the summarise window.
+	if err := s.items.CreateSummaryWithSources(ctx, summary, links, true); err != nil {
 		return memory.MemoryItem{}, false, err
 	}
 	// The hierarchy edge, so a reader can walk from the child to its parent rather than
 	// only from the parent down. It is section 14.3's entity link used for the relation
 	// section 14.2's table cannot express.
-	if level == 2 {
+	if level != memory.SummaryLevelMessage {
 		entityLinks := make([]memory.EntityLink, 0, len(sources))
 		for _, source := range sources {
 			entityLinks = append(entityLinks, memory.EntityLink{
@@ -189,24 +240,26 @@ func (s *Service) Summarize(ctx context.Context, request SummarizeRequest) (memo
 
 // summarySources reads what a summary at this level would cover.
 func (s *Service) summarySources(ctx context.Context, level int, scope Scope, window int) ([]memory.MemoryItem, error) {
-	if level == 1 {
-		// Unsummarised EPISODIC memories, which is what "the messages since the last summary" is on
-		// the memory side. The transcript is not read here: a summary has to cite memory rows,
-		// because those are what the source table's foreign key points at and what survives the run
-		// that produced them.
-		//
-		// THE TYPE IS THE LEVEL'S, and asking for the right one is not an optimisation. The first
-		// version asked for every type and filtered level two in Go, which meant level ONE read the
-		// summary rows too: the second summarise run condensed the first summary into a new one, the
-		// `summarized` flag never cleared the window, and the run after that would have condensed
-		// that. The integration test caught it as "a second summarise produced a second summary of
-		// the same turns".
-		return s.items.UnsummarisedItems(ctx, scope, memory.TypeEpisodic, window)
+	// The window is always "the uncondensed rows of the rung below, in this rung's scope", and
+	// the STORE decides which rows those are — the rung, not the caller, names the type and the
+	// level predicate. Two defects in this function's history are why the read is shaped this way
+	// and both are worth keeping:
+	//
+	//   - The first version asked for every type and filtered level two in Go, so a LEVEL-ONE
+	//     window read summary rows too: the second run condensed the first summary into a new one
+	//     and the `summarized` flag never cleared the window. The type became a parameter.
+	//   - The second version passed `type = summary` for every rung above the first, which was
+	//     correct for two rungs and wrong for three: a project window would accept an episode
+	//     window's uncondensed summary, and with one sibling to satisfy the floor it condensed
+	//     its own predecessor. The rung became a parameter.
+	//
+	// Level one's own window is bounded by `window`; every rung above it uses MaxSummaryParents,
+	// because "how many children one summary covers" bounds the condensing rather than being a
+	// property of one rung.
+	if level == memory.SummaryLevelMessage {
+		return s.items.UnsummarisedItemsForLevel(ctx, scope, level, window)
 	}
-	// Level two: the summaries of this episode that are not yet condensed into a parent. The same
-	// `summarized` flag is reused at this level, so a summary is read once by whichever parent
-	// covers it.
-	return s.items.UnsummarisedItems(ctx, scope, memory.TypeSummary, MaxSummaryParents)
+	return s.items.UnsummarisedItemsForLevel(ctx, scope, level, MaxSummaryParents)
 }
 
 // renderSummary builds the summary's text from its sources.
@@ -221,8 +274,11 @@ func (s *Service) summarySources(ctx context.Context, level int, scope Scope, wi
 // ellipsis, so a reader knows the summary is not the whole of that source.
 func renderSummary(level int, sources []memory.MemoryItem, now time.Time) string {
 	separator := SummaryLevel1Separator
-	if level == 2 {
+	switch level {
+	case memory.SummaryLevelEpisode:
 		separator = SummaryLevel2Separator
+	case memory.SummaryLevelProject:
+		separator = SummaryLevel3Separator
 	}
 	lines := []string{separator}
 	for _, source := range sources {

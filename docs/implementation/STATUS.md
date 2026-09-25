@@ -2,8 +2,8 @@
 
 > Last updated: 2026-09-25
 > Product: Infinite Atelier Core + Drama Production Pack
-> Current work package: **WP-17 — P3 item 18, the event graph drawing**
-> Status: **COMPLETE (section 0v). 13 mutations, 13/13 killed; the full gate passes.**
+> Current work package: **WP-18 — P3 item 22, the summary ladder and the recall metrics**
+> Status: **COMPLETE (section 0w). 11 mutations, 11/11 killed; the full gate passes.**
 > **WP-16 remains COMPLETE (section 0u)** — the complete asset ruleset, two categories that had no
 > emitter, and the classification reaching the UI. **WP-15 remains COMPLETE for its scope**: P1's ten
 > items are all closed (section 0s), so the acceptance contract has no outstanding clause it can
@@ -46,6 +46,100 @@
 > `docs/implementation/project-progress-and-remaining-tasks-2026-09-23.md`, where the P0 section is
 > now closed and **P1 to P4 are unchanged** — P1 opens with FR-100's explicit-stage-dependency
 > ruling, which is a product decision rather than a code task.
+
+# 0w. WP-18: the ladder's third rung, a defect it exposed, and the recall metrics (2026-09-25)
+
+WP-18 works **P3 item 22** (层级摘要和记忆中心). ADR-0022 carries the reasoning; this section records
+what changed and what building it found.
+
+## What the reconnaissance established, and what each finding became
+
+- **THE THIRD RUNG WAS DECLARED AND UNREACHABLE.** `Scope.ProjectOnly()`'s own comment says it is "how
+  a PROJECT-level summary is scoped" and it had ZERO production callers; the level constants' comment
+  said "There is no third level in this build". FR-120's necessary rules name the ladder explicitly
+  (message → episode/session → project), so the rung is now built, and the comment that argued against
+  it is corrected where it stood: a project summary is not a verdict on a finished project, it is the
+  same operation as the other two with the floor that keeps it from firing pointlessly.
+- **THE SECOND RUNG HAD NEVER RUN.** Every `Level:` in the repository was `Level: 1` — six
+  occurrences across two files. The middle rung had no test of any kind, which is why the defect below
+  survived four packages.
+- **THE SECOND RUNG DID NOT MARK ITS CHILDREN, contradicting the comment two functions above it.**
+  `CreateSummaryWithSources` was called with `markSummarized = level == 1` while `UnsummarisedItems`
+  selects on `summarized = 0`. **A second level-two run condensed the same children again** — the test
+  written before the fix printed a summary with the previous summary NESTED INSIDE IT as a source.
+- **NEITHER RECALL METRIC EXISTED.** §18.2 names 「Memory 跨项目泄露率」 and 「Deep Recall 命中率」, and
+  the repository had a well-formed fixture plus one hand-asserting test, with nothing that turned an
+  observation into a number.
+
+## The defect three rungs exposed
+
+With two rungs, `memory_type` distinguished them by accident: level one read episodic rows, level two
+read summary rows. **A third rung breaks the coincidence** — levels two and three both read summaries
+— so "the uncondensed summaries in this scope" identified no rung. The consequence was concrete: once
+a project summary existed and another episode summary arrived, the project window held the PREVIOUS
+PROJECT SUMMARY plus the new child, two rows satisfied the floor, and the run condensed its own
+earlier output as if the two were siblings.
+
+**It was observed rather than reasoned about.** `TestTheProjectRungDoesNotCondenseItsOwnOutput` was
+written before the fix, and its failure message showed a project summary containing a child project
+summary. Migration 000025 adds `memory_items.summary_level` — a column rather than a recursive
+derivation, because rung 4 would otherwise mean "whatever the query happened to match" — and the
+window now names the rung below it.
+
+## What was built
+
+- `migrations/000025_summary_ladder.sql`: the `summary_level` column with its CHECK, a backfill that
+  derives the rung for existing rows, and the index the ladder's reads use.
+- `internal/domain/memory`: `SummaryLevel`, the three named rungs, `IsValidSummaryLevel`, and a
+  `Validate` rule that a summary must state a level and a non-summary must not.
+- `internal/application/memory/summary.go`: three rungs, each reading and writing its own scope
+  (message → episode → project), with the separator, the row's level, and the hierarchy edge for every
+  rung above the first.
+- `internal/infrastructure/database/memory.go`: `UnsummarisedItemsForLevel`, which derives the type
+  from the rung and adds `summary_level = level - 1`.
+- `internal/application/memory/eval.go` (new): §18.2's two metrics as pure functions over values.
+- The memory centre offers a rung picker and shows each summary's rung, because the section had been
+  sending `{ projectId, embed: true }` — always level one — so the rungs above it were reachable only
+  from a test.
+
+## Reachability, and the leak it could have opened
+
+A project-level summary has an EMPTY episode, so an episode-scoped search cannot see it — and the code
+before WP-18 forced `EpisodeOnly()`, which made the project rung unreachable from every question.
+`DeepRecall` now searches the caller's scope AND, when an episode was named, the project, and passes
+the second search's results through `keepInRecallScope`. That filter keeps only rows in the caller's
+own scope and rows belonging to the PROJECT itself (empty episode and empty agent). **Searching wide
+and answering narrowly is the point**: searching wide is how a memory leaks, and the filter is where
+the leak is stopped.
+
+## Verification
+
+| command | result |
+|---|---|
+| `go test ./... -count=1` | **PASS** - 57 packages ok, 0 failed |
+| `npm test` / `npm run typecheck` | **PASS** - 113 tests, 0 failures; typecheck clean |
+| `sh scripts/verify.sh` | **PASS**, exit 0 (25 Playwright, security scans over 662 files, all fixture checks, SBOM, Wails production build) |
+| mutations | **11, 11/11 killed**, each restored byte-identically |
+
+**THREE MUTATIONS SURVIVED THE FIRST RUN AND EACH WAS A REAL GAP**, recorded because the pattern is
+the point:
+
+1. **The leak filter could keep every candidate.** The test that prompted the fix asserted only that
+   the project rung WAS found, never that its neighbours were NOT — and the end-to-end scenario
+   filtered the foreign rows by threshold before the filter was consulted, so the property was
+   protected by ACCIDENT. A direct test of the filter now asserts all five cases.
+2. **The level guard could accept anything.** The store refuses the same input, so a test asserting
+   only "an error came back" could not tell the two layers apart — and without the command's guard the
+   caller gets `created=false` from a bad request rather than a refusal. The test now asserts WHICH
+   layer refuses, by its message.
+3. **The merge could keep the first score instead of the better one.** Nothing exercised a row present
+   in both searches, so a row's reported relevance could have depended on call order.
+
+## STILL OPEN, named
+
+**P3's remaining six items**: 17 (local ONNX embeddings), 19 (MONOFORM deep integration), 21 (real
+video providers — needs paid-provider authorisation), 23 (fuller timeline with effects and mixing),
+24 (PDF import), 25 (stable Windows install/upgrade — needs `makensis`).
 
 # 0v. WP-17: the event graph draws events, and an assertion that had checked nothing since WP-06 (2026-09-25)
 

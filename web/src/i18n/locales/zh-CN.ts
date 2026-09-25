@@ -1821,6 +1821,18 @@ export default {
             typeFilter: "按类型筛选",
             includeDeleted: "显示已删除",
             summarise: "立即压缩",
+            // FR-120 的梯子是 message → episode/session → project，所以选择器用「压缩什么」来命名，
+            // 而不是「第 1/2/3 级」——数字不说明会被压缩的是什么，而选它的人其实是在选要回答什么。
+            level: {
+                messages: "压缩消息",
+                episode: "压成本集摘要",
+                project: "压成项目摘要",
+            },
+            levelShort: {
+                "1": "消息级",
+                "2": "集级",
+                "3": "项目级",
+            },
             rebuild: "重建向量",
             loading: "正在读取记忆…",
             empty: "该项目还没有记住任何内容。",

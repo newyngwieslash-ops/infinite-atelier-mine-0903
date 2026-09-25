@@ -236,6 +236,17 @@ type MemoryItem struct {
 	// Summarized marks an item that a summary already covers, which is what keeps the
 	// summary window from growing without bound.
 	Summarized bool
+	// SummaryLevel is which rung of FR-120's ladder a SUMMARY row sits on: 1 for a summary of
+	// messages, 2 for a summary of level-one summaries, 3 for the project rung. Zero means
+	// "not a summary", which is what every other type carries.
+	//
+	// It is a field rather than something derived from the type, and the reason is that the
+	// TYPE stopped discriminating at three rungs: level two and level three both read
+	// SUMMARY rows, so "the uncondensed summaries in this scope" would return a level-two
+	// summary to a level-three window whenever one was uncondensed. With two rungs that
+	// could not happen, and the accident is recorded in ADR-0022 rather than left as a
+	// property later readers would have to rediscover.
+	SummaryLevel int
 	// Locked is the user's pin. Section 14.5: only the user may change or delete it.
 	Locked     bool
 	SourceType SourceType
@@ -246,6 +257,40 @@ type MemoryItem struct {
 	CreatedAt time.Time
 	UpdatedAt time.Time
 	Revision  int
+}
+
+// The summary ladder's rungs (PRD FR-120: message → episode/session → project).
+//
+// They are named constants rather than bare integers because three different call sites have to
+// agree about them: the summarise command, the window that chooses a rung's sources, and the UI that
+// lets a user pick one. A magic 3 in any of those is a rung that can drift.
+const (
+	// SummaryLevelMessage condenses EPISODIC memories, in one agent's conversation scope.
+	SummaryLevelMessage = 1
+	// SummaryLevelEpisode condenses level-one summaries, in one episode's scope.
+	SummaryLevelEpisode = 2
+	// SummaryLevelProject condenses episode summaries, in the project's scope.
+	SummaryLevelProject = 3
+)
+
+// SummaryLevels lists the ladder's rungs in order.
+var SummaryLevels = []int{SummaryLevelMessage, SummaryLevelEpisode, SummaryLevelProject}
+
+// IsValidSummaryLevel reports whether a level may be persisted.
+//
+// Zero is accepted because it is what every non-summary row carries, and the caller that needs to
+// refuse a missing level says so itself — the two facts are different and this predicate answers
+// only the first.
+func IsValidSummaryLevel(value int) bool {
+	if value == 0 {
+		return true
+	}
+	for _, candidate := range SummaryLevels {
+		if candidate == value {
+			return true
+		}
+	}
+	return false
 }
 
 // MaxContentLength bounds one memory's text.
@@ -272,6 +317,16 @@ func (m MemoryItem) Validate() error {
 	}
 	if !IsValidSourceType(m.SourceType) {
 		return InvalidError("The memory source type is not recognised.")
+	}
+	// The level and the type have to agree, and the rule is stated in both directions: a
+	// summary with no level would be invisible to every window, and a non-summary with one
+	// would let an episodic row be mistaken for a rung.
+	if m.Type == TypeSummary {
+		if !IsValidSummaryLevel(m.SummaryLevel) || m.SummaryLevel == 0 {
+			return InvalidError("A summary must state which level of the ladder it is.")
+		}
+	} else if m.SummaryLevel != 0 {
+		return InvalidError("Only a summary carries a summary level.")
 	}
 	if m.Importance < 0 || m.Importance > 1 {
 		return InvalidError("A memory's importance is a weight between zero and one.")
