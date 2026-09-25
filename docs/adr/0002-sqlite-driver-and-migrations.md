@@ -98,6 +98,35 @@ Driver-specific build flags, dynamic extension loading, and user-supplied extens
 - A post-close third-party Python SQLite connection reported `foreign_keys=0`, which is that new connection's SQLite default rather than the managed application connection's configuration. The application's own driver contract tests verify `foreign_keys=1` on managed connections and a missing-parent rejection.
 - The final host command `go test -race ./... -count=1` remains an environment failure: the host `C:\MinGW\bin\gcc.exe` invokes a 32-bit GCC and cannot compile amd64 CGO (`cc1.exe: sorry, unimplemented: 64-bit mode not compiled in`). No second driver was introduced to evade it.
 
+### UPDATE (WP-15, 2026-09-24): the race command RUNS, and this ADR's `Accepted` evidence now exists
+
+**The environment limitation above was real and its conclusion was wrong.** This host DOES have a
+64-bit C compiler — `/c/msys64/mingw64/bin/gcc.exe`, GCC 12.2.0 from MSYS2 — and pointing `CC` at it
+compiles the race runtime without complaint:
+
+```bash
+GOTOOLCHAIN=go1.25.0 GOSUMDB=sum.golang.org CC=/c/msys64/mingw64/bin/gcc.exe \
+  CGO_ENABLED=1 go test -race ./... -count=1
+```
+
+**Result: 55 packages pass under the race detector, with ZERO `WARNING: DATA RACE` reports**,
+including the driver, the job scheduler and its worker pool, the workflow transitions and the stage
+pipeline. Two tests fail and neither is a race: `TestWP12CanvasMoveAtTheContractCeiling` measures
+7339 ms against a 6000 ms bound, and `TestWP12RecordReadsDoNotQueryPerRow` exceeds the package
+timeout — both are PERFORMANCE assertions whose bounds were calibrated without the detector, which
+slows every operation by roughly an order of magnitude. A second, focused run over the packages that
+actually carry concurrency (`application/jobs`, `application/stagepipeline`,
+`application/workflow`, `infrastructure/database`) **exited 0**.
+
+The earlier attempt with the same compiler also failed, and that is the part worth recording: it was
+a **stale `runtime/cgo` object in `GOCACHE`** built by the wrong compiler, and every later attempt
+reused it and failed identically — which is what made "this host cannot do race builds" look
+confirmed twice. A five-line cgo probe outside the package graph settled it.
+
+**This ADR's "CRUD/transactions, WAL/foreign keys/busy handling, race-aware concurrency" evidence
+requirement is therefore MET for Windows/amd64.** The migration, packaging and snapshot requirements
+were already met.
+
 ### Remaining acceptance gates before Accepted
 
 1. Obtain `go test -race` evidence on a supported native compiler/toolchain.
