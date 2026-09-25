@@ -129,8 +129,26 @@ func TestJobTypesAndCapabilities(t *testing.T) {
 			t.Errorf("IsValidJobType(%q) = false", jobType)
 		}
 	}
-	if IsValidJobType("thumbnail") {
-		t.Error("unimplemented job type accepted")
+	// WP-15 WIDENED THE VOCABULARY, and this assertion changed with it rather than being deleted.
+	// The four types PRD FR-150 names and this build did not have — thumbnail, import, export,
+	// migration — are now legal values, because migration 000023 rebuilt `generation_jobs` to accept
+	// them. What has NOT changed is what this build can RUN: none of the four has a capability, and the
+	// runner refuses a type with no adapter.
+	for _, added := range []JobType{JobTypeThumbnail, JobTypeImport, JobTypeExport, JobTypeMigration} {
+		if !IsValidJobType(added) {
+			t.Errorf("the added job type %q is not accepted", added)
+		}
+		// The empty capability is the deliberate half: it is what makes the runner's `unsupported`
+		// refusal the honest answer for a type the schema accepts.
+		if got := added.Capability(); got != "" {
+			t.Errorf("the added job type %q claims the capability %q, and no adapter serves it yet", added, got)
+		}
+	}
+	// A type OUTSIDE the vocabulary is still refused, so the widening did not remove the rule.
+	for _, invented := range []string{"teleportation", "", "Image_Generation"} {
+		if IsValidJobType(JobType(invented)) {
+			t.Errorf("the invented job type %q was accepted", invented)
+		}
 	}
 	if got := JobTypeImageGeneration.Capability(); got != "image" {
 		t.Errorf("image capability = %q", got)

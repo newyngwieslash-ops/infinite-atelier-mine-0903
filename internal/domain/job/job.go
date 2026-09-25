@@ -141,6 +141,24 @@ const (
 	JobTypeVideoGeneration JobType = "video_generation"
 	JobTypeAudioGeneration JobType = "audio_generation"
 	JobTypeAssetDownload   JobType = "asset_download"
+	// THE FOUR PRD FR-150 NAMES AND THIS BUILD DID NOT HAVE, added by WP-15.
+	//
+	// They are in the vocabulary so the SCHEMA accepts them — migration 000023 rebuilt
+	// `generation_jobs` to widen its CHECK, because SQLite cannot alter a constraint in place. Being
+	// in the vocabulary is NOT the same as being runnable: `Capability` answers the empty string for
+	// all four, and the runner refuses a type with no adapter with `CategoryUnsupported`. The split is
+	// deliberate — the domain and the schema state which vocabulary is legal, and the runner states
+	// what this build can execute — so a job of one of these types is a row the database accepts and
+	// the runner refuses with an honest error, rather than a constraint violation that looks like
+	// corrupt data.
+	//
+	// Thumbnail is DERIVED preview work; import is a document transfer that must not block the UI;
+	// export is a composition the media stack already runs inside a command; migration is a legacy
+	// import's data movement.
+	JobTypeThumbnail JobType = "thumbnail"
+	JobTypeImport    JobType = "import"
+	JobTypeExport    JobType = "export"
+	JobTypeMigration JobType = "migration"
 )
 
 // AllJobTypes lists every accepted job type.
@@ -148,6 +166,7 @@ func AllJobTypes() []JobType {
 	return []JobType{
 		JobTypeImageGeneration, JobTypeImageEdit, JobTypeVideoGeneration,
 		JobTypeAudioGeneration, JobTypeAssetDownload,
+		JobTypeThumbnail, JobTypeImport, JobTypeExport, JobTypeMigration,
 	}
 }
 
@@ -170,6 +189,11 @@ func (t JobType) Capability() string {
 		return "video"
 	case JobTypeAudioGeneration:
 		return "audio"
+	case JobTypeThumbnail, JobTypeImport, JobTypeExport, JobTypeMigration:
+		// No provider capability: these are local or engine work rather than a model call, so the
+		// provider. The runner refuses them until an adapter exists, which is the honest answer while
+		// they are vocabulary rather than features.
+		return ""
 	default:
 		return ""
 	}

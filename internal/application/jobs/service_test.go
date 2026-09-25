@@ -562,8 +562,24 @@ func TestSubmitIsIdempotent(t *testing.T) {
 
 func TestSubmitRejectsUnknownJobType(t *testing.T) {
 	service, _, _, _ := newTestService(t, &scriptedRunner{})
-	if _, _, err := service.Submit(context.Background(), submitRequest(job.JobType("thumbnail"), `{}`)); err == nil {
-		t.Fatal("unknown job type accepted")
+	// A type OUTSIDE the vocabulary is refused at submit, which is the schema's rule.
+	if _, _, err := service.Submit(context.Background(), submitRequest(job.JobType("teleportation"), `{}`)); err == nil {
+		t.Fatal("an invented job type was accepted")
+	}
+	// THE FOUR TYPES WP-15 ADDED ARE ACCEPTED HERE, and that is the deliberate split the migration
+	// names: the vocabulary is what the schema permits, and the RUNNER is what this build can execute.
+	// A submit of one of them succeeds and a run of it fails with `unsupported` — which is an honest
+	// error rather than a constraint violation that reads like corrupt data. This test asserts the
+	// first half; the runner's own test asserts the second.
+	for _, added := range []job.JobType{
+		job.JobTypeThumbnail, job.JobTypeImport, job.JobTypeExport, job.JobTypeMigration,
+	} {
+		request := submitRequest(added, `{}`)
+		// The idempotency key is derived from the scope, so each type needs its own.
+		request.Scope = string(added)
+		if _, _, err := service.Submit(context.Background(), request); err != nil {
+			t.Fatalf("the added job type %q was refused at submit: %v", added, err)
+		}
 	}
 }
 

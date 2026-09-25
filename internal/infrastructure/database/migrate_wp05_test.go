@@ -53,6 +53,7 @@ func wp05Migrations(t testing.TB) fstest.MapFS {
 		"000020_media.sql":                       {Data: wp05SQL(t, "000020_media.sql")},
 		"000021_scale_indexes.sql":               {Data: wp05SQL(t, "000021_scale_indexes.sql")},
 		"000022_provider_concurrency.sql":      {Data: wp05SQL(t, "000022_provider_concurrency.sql")},
+		"000023_job_types.sql":                 {Data: wp05SQL(t, "000023_job_types.sql")},
 	}
 }
 
@@ -69,7 +70,7 @@ func wp05Migrations(t testing.TB) fstest.MapFS {
 // this package's first index migration came to be measured against a database that did not
 // contain it — the plan test failed and the timing test showed no change, which is what
 // caught it.
-const wp05HeadVersion = 22
+const wp05HeadVersion = 23
 
 // applyMigrationFileSplits runs one migration file the way the runner does:
 // splitSQL on the raw text, then execute each fragment in order. It returns the
