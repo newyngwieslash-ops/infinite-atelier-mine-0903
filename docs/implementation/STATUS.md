@@ -2,11 +2,16 @@
 
 > Last updated: 2026-09-25
 > Product: Infinite Atelier Core + Drama Production Pack
-> Current work package: **WP-21 — P3 item 19, MONOFORM deep integration**
-> Status: **COMPLETE (section 0z). 10 mutations, 10/10 killed; the full gate passes.**
-> **Three P3 items remain**: 17 (local ONNX embeddings) can be done here; 21 (real video providers)
-> needs a paid-provider authorisation and 25 (stable Windows install) needs `makensis`. ROADMAP
-> section 6 names each with what it requires.
+> Current work package: **WP-23 — P3 item 17, local ONNX embeddings**
+> Status: **COMPLETE (section 0za). Everything that can be built on this host has been; the full
+> gate passes under both cgo and no-cgo builds.**
+> **P3 is now as complete as this host allows.** Items 18, 19, 20, 22, 23, 24 and 17 are delivered
+> across STATUS sections 0u to 0za. Two items CANNOT be finished here and are named rather than
+> implied: **21** (real video providers) needs a paid-provider authorisation, and **25** (stable
+> Windows install and upgrade) needs `makensis`, which is not installed and not available from the
+> package managers present. Item 23 is PARTIAL: the mix is real, and 多角色声线映射 and the effect
+> suggestion are named as open. Item 17's MULTILINGUAL half needs a model file this host cannot
+> reach.
 > **WP-16 remains COMPLETE (section 0u)** — the complete asset ruleset, two categories that had no
 > emitter, and the classification reaching the UI. **WP-15 remains COMPLETE for its scope**: P1's ten
 > items are all closed (section 0s), so the acceptance contract has no outstanding clause it can
@@ -49,6 +54,93 @@
 > `docs/implementation/project-progress-and-remaining-tasks-2026-09-23.md`, where the P0 section is
 > now closed and **P1 to P4 are unchanged** — P1 opens with FR-100's explicit-stage-dependency
 > ruling, which is a product decision rather than a code task.
+
+# 0za. WP-23: local ONNX embeddings, with the model limit measured (2026-09-25)
+
+WP-23 works **P3 item 17** (本地多语言 ONNX Embedding). ADR-0026 carries the reasoning; this section
+records what changed and what the probing found.
+
+## The reconnaissance, and the three times it changed the plan
+
+Every piece was probed before it was written, and the probes are the reason this package's shape is
+what it is:
+
+- **THE RUNTIME IS NOT INTERCHANGEABLE ACROSS BUILDS.** The official ORT 1.20.1 release FAILS to load on
+  this host — win32 error 126 — while the Python wheel's build of the SAME VERSION loads fine. The
+  cause was found in the PE import table rather than guessed at: the official build imports
+  `api-ms-win-core-path-l1-1-0.dll`, which this host does not have; the wheel's build does not. A
+  "missing VC++ runtime" explanation would have been wrong.
+- **THE BINDING VERSION MUST PAIR WITH THE RUNTIME.** `yalue/onnxruntime_go` v1.20.0 requests ORT API
+  22, v1.19 and v1.18 request 21, and **v1.17.0 requests 20** — which is what the loadable runtime
+  provides. v1.17 is pinned for that reason and THIRD_PARTY_NOTICES says so.
+- **INFERENCE WAS PROVEN BEFORE THE ADAPTER WAS WRITTEN**: three int64 inputs → `last_hidden_state
+  [1,5,384]` → attention-masked mean pooling → a unit vector, and then REAL SEMANTIC SIGNAL —
+  `cat~kitten` 0.6169, `cat~dog` 0.5572, `cat~stock` 0.0882.
+
+## The model limit, measured rather than glossed
+
+The model this host can reach is `all-MiniLM-L6-v2`, and **it is English-only**: 11 of the canary
+corpus's 27 Chinese characters are in its vocabulary, and the ban line
+「女主不能穿红色，这是全剧的禁令。」 tokenises to **ten `[UNK]` pieces out of sixteen**.
+
+**Item 17's name is 「本地多语言 ONNX Embedding」, so this package does NOT claim to deliver the
+multilingual half.** What it delivers is a real, verified local embedder plus the seam a multilingual
+model plugs into (`Tokenizer` is an interface). What is missing is a MODEL FILE, not a mechanism.
+
+## Three defects found while building it, each recorded where it bit
+
+1. **`InitializeEnvironment` is NOT idempotent** — a second call fails with "already been initialized",
+   so the per-instance flag meant the SECOND embedder in one process reported "the runtime could not be
+   loaded" when the truth was "it is already loaded". The guard moved to package level, and "already
+   initialized" is treated as SUCCESS: the postcondition a caller wants is that the environment is up.
+2. **`tokenizer.modelPath` was declared and never set**, producing `Load model from  failed` — an error
+   naming no file. It was a field nobody assigned.
+3. **`GetData()` returns the tensor's LIVE backing array**, so pooling in place mutated the buffer the
+   next call read and every text came back identical — which the probe hit as four sentences with
+   cosine 1.0000, reading as "the model has no signal" when it was a reader bug.
+
+## The probe's own defect, which is the one worth keeping
+
+`vocab.txt` ships with **CRLF** endings, and splitting on `\n` alone left a carriage return on every
+word — so EVERY lookup missed, every word became `[UNK]`, and four different sentences embedded
+identically. `TestACRLFVocabularyLoads` asserts both endings now, because that failure is
+indistinguishable from a model problem until somebody reads the bytes.
+
+## CGO is handled rather than assumed
+
+The binding is cgo, so `CGO_ENABLED=0` excluded every file of the package and the BUILD failed with a
+message about build constraints rather than about a feature. A build-tagged fallback
+(`embedder_nocgo.go`, the shape `secretstore` already uses) makes that configuration COMPILE with an
+embedder that reports itself unavailable — the same fail-soft answer the cgo build gives for a missing
+library. **Both builds are tested**, and `go test ./...` passes under both.
+
+## FR-120's local-first rule is now enforced
+
+`projectEmbedder` tries the local embedder **BEFORE** any provider, in both `Available` and `Embed`, so
+a project whose text can be embedded on this machine never reaches the network. The comment above that
+struct had recorded the deferral in as many words — "nothing registered it, and no project could name
+it" — and this package is what registers it.
+
+## Verification
+
+| command | result |
+|---|---|
+| `go test ./... -count=1` (CGO_ENABLED=1) | **PASS** - 57 packages ok, 0 failed |
+| `go test ./... -count=1` (CGO_ENABLED=0) | **PASS** - the same, with local embedding compiled out |
+| `sh scripts/verify.sh` | **PASS**, exit 0 (25 Playwright, security scans over 677 files, all fixture checks, SBOM, Wails production build) |
+| ONNX tests | **10, 10/10 pass** against the real model, including the two inference tests |
+
+## STILL OPEN, named rather than implied
+
+- **A multilingual model.** The adapter accepts one; the file is what is missing, and HuggingFace is
+  unreachable from this host (measured). A model would drop in beside the configuration.
+- **The settings UI for the model path.** Configuration is environment variables (`IA_ONNX_MODEL`,
+  `IA_ONNX_VOCAB`, `IA_ONNX_RUNTIME`) — the plumbing works and the panel is not built. A configured but
+  unusable model leaves a reason in `LocalEmbedderStatus()` for that panel to show.
+- **sqlite-vec** stays open: item 17's parenthetical says "optional", and the 500-candidate window is
+  still the recall bound the scale tests pin.
+- **P3's remaining two items cannot be finished on this host**: 21 (real video providers — needs a
+  paid-provider authorisation) and 25 (stable Windows install — needs `makensis`).
 
 # 0z. WP-21: the previs snapshot, and the thumbnail that was narrowed away (2026-09-25)
 

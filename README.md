@@ -439,6 +439,22 @@ shotId 和 camera**——缩略图**在最后一步被一个类型签名窄掉�
 `shots` 没有相机列。变异 **10 个全杀**。推理与代价记在
 `docs/adr/0025-monoform-snapshot-and-the-dropped-thumbnail.md`，结果记在 STATUS §0z。
 
+## WP-23 范围：本地 ONNX Embedding（P3 第 17 项）
+
+**这个包交付的是「本地 ONNX Embedding」，不是「本地多语言 ONNX Embedding」**，而两者的差别是一个模型文件，不是一套机制。理由是被**测出来**的，不是推断的：
+
+- **官方 ONNX Runtime release 在本机加载失败**（win32 error 126），而 Python wheel 里**同一个版本**的构建能加载。原因写在 PE 导入表里而不是猜测里：官方构建导入 `api-ms-win-core-path-l1-1-0.dll`，本机没有；wheel 的构建不导入它。「缺 VC++ 运行时」这种解释会是错的。
+- **绑定版本必须与运行时配对**：`yalue/onnxruntime_go` v1.20.0 要 ORT API 22、v1.19/v1.18 要 21、**v1.17.0 要 20**——正是那个能加载的运行时提供的。所以 v1.17 是**为配对而钉的**，`THIRD_PARTY_NOTICES` 写明了原因。
+- **推理在写适配器之前就被跑通了**：三个 int64 输入 → `last_hidden_state [1,5,384]` → attention-mask 加权平均池化 → 单位向量，并且**有真实语义信号**：`cat~kitten` 0.6169 / `cat~dog` 0.5572 / `cat~stock` 0.0882。
+- **模型限界是量出来的**：本机能拿到的 `all-MiniLM-L6-v2` **只懂英文**——canary 语料 27 个汉字里**只有 11 个**在词表里，禁令句「女主不能穿红色，这是全剧的禁令。」分词后 **16 片里有 10 片是 `[UNK]`**。PRD 那一项的名字叫「多语言」，**所以本包不宣称交付了多语言那一半**。
+
+**做出来的**：真适配器（真推理、真池化、真信号）；`Tokenizer` 是**接口**，多语言模型接进来只需换实现；**FR-120 的「本地优先」被写进代码**——`projectEmbedder` 在 `Available` 与 `Embed` 里都**先试本地**，所以文本能在本机嵌入的项目**永远不会上网**；`CGO_ENABLED=0` 也能**编译**（build-tagged 回退，与 `secretstore` 同一形状），两种构建都有测试；运行时**不随仓库分发**，缺失时**降级并给诊断**而不是让召回失败。
+
+**建它的时候发现的四个缺陷**（每个都写在它咬人的地方）：环境初始化**不幂等**（第二次调用报 "already been initialized"，于是同进程第二个 embedder 谎报「运行时加载失败」）；`tokenizer.modelPath` **声明了却从未赋值**（报出 `Load model from  failed`——一个不指名任何文件的错误）；`GetData()` 返回张量的**实时底层数组**（就地池化会改掉下一次调用的缓冲区）；以及**探针自己的缺陷**——`vocab.txt` 是 CRLF，按 `
+` 切分给每个词留了 ``，于是**每次查表都失败、四段文本嵌入完全相同**，而这现象与「模型没信号」无法区分。
+
+推理与代价记在 `docs/adr/0026-local-onnx-embeddings.md`，结果记在 STATUS §0za。
+
 ## 使用说明
 
 1. 打开右上角配置，添加渠道的 API 地址与模型。
