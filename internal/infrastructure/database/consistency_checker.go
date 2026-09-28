@@ -89,6 +89,19 @@ func (c *StoryboardConsistencyChecker) WithFinalRuleset(reader appconsistency.Fi
 	return c
 }
 
+// WithContentAnalyzer returns the same checker with RP-07.2's content
+// analyzer attached to the final ruleset. It is a separate method for the
+// same reason WithFinalRuleset is: the analyzer is an OPTIONAL capability a
+// build without ffmpeg does not carry, and the report states its absence
+// rather than the rules going quiet.
+func (c *StoryboardConsistencyChecker) WithContentAnalyzer(analyzer appconsistency.ContentAnalyzer) *StoryboardConsistencyChecker {
+	if c == nil || c.final == nil {
+		return c
+	}
+	c.final.AttachContentAnalyzer(analyzer)
+	return c
+}
+
 // WithJobFailures returns the same checker with the safety rule's job read attached.
 //
 // A separate method for the reason the other two are: this read is over the JOB table, which has

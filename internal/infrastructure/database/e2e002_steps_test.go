@@ -8,20 +8,20 @@ import (
 	"time"
 
 	appassets "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/assets"
-	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/platform/id"
 	appfiles "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/files"
 	appjobs "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/jobs"
 	appmedia "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/media"
 	appproduction "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/productionpipeline"
 	appscriptpipeline "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/scriptpipeline"
-	appstoryboard "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/storyboard"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/stagepipeline"
+	appstoryboard "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/storyboard"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/asset"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/provider"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/versioning"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/workflow"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/infrastructure/filestore"
 	infraproviders "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/infrastructure/providers"
+	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/platform/id"
 )
 
 // e2e002_steps_test.go holds the AC-E2E-002 walk's chain steps.
@@ -525,7 +525,9 @@ func (w *e2e002Walk) waitForBatchJobs(t *testing.T, jobIDs []string, within time
 // stops a real configuration selecting a mock is worth more than a fixture's convenience, so the
 // adapter is supplied through the runner's own port — the same reasoning and the same shape as the
 // root package's `batchAdapterSource`.
-type e2e002AdapterSource struct{ images *infraproviders.MockImageAdapter }
+type e2e002AdapterSource struct {
+	images *infraproviders.MockImageAdapter
+}
 
 func (s e2e002AdapterSource) ImagePortFor(context.Context, string) (appjobs.ImagePort, error) {
 	if s.images == nil {

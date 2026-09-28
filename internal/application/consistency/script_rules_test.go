@@ -74,10 +74,10 @@ func findingsWithRule(findings []consistency.Finding, rule string) []consistency
 // TestTheScriptDurationRuleFiresOutsideTheTolerance is the temporal rule's two directions.
 func TestTheScriptDurationRuleFiresOutsideTheTolerance(t *testing.T) {
 	cases := []struct {
-		name                     string
-		versionSeconds, scenes   int
-		wantFinding              bool
-		why                      string
+		name                   string
+		versionSeconds, scenes int
+		wantFinding            bool
+		why                    string
 	}{
 		{"an exact match is silent", 300, 300, false, "nothing is wrong"},
 		{"a match within the tolerance is silent", 320, 300, false,

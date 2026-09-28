@@ -4,7 +4,7 @@ import type { ColumnsType } from "antd/es/table";
 import { Layers, Play, RefreshCw } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
-import { isVideoBatchAvailable, listJobs, submitVideoBatch, submitVideoJob } from "@/services/desktop/jobs";
+import { getVideoCapabilities, isVideoBatchAvailable, listJobs, submitVideoBatch, submitVideoJob } from "@/services/desktop/jobs";
 import {
     approvePanelImage,
     collectVideoJobResults,
@@ -73,6 +73,18 @@ export function VideoSection({ projectId, episodes, activeEpisodeId, onSelectEpi
     const [selectedShotId, setSelectedShotId] = useState("");
     const [prompt, setPrompt] = useState("");
     const [seconds, setSeconds] = useState<number>(4);
+    /**
+     * RP-03.1: the request controls are CAPABILITY-DRIVEN. The allowed
+     * seconds and sizes arrive from the backend (the same enums its commands
+     * validate), the UI renders them as choices, and switching the model
+     * keeps the current value only while it stays legal — otherwise the
+     * request would silently change a billed parameter. The size starts at
+     * "provider default" (empty), the honest state for a build whose project
+     * aspect the user has not matched yet.
+     */
+    const [allowedSeconds, setAllowedSeconds] = useState<number[]>([4, 8, 12]);
+    const [allowedSizes, setAllowedSizes] = useState<string[]>([]);
+    const [size, setSize] = useState<string>("");
     const [submitting, setSubmitting] = useState(false);
     /**
      * The frames the user chose for the NEXT submission, and the bytes once they are loaded.
@@ -300,6 +312,31 @@ export function VideoSection({ projectId, episodes, activeEpisodeId, onSelectEpi
         void reload();
     }, [reload]);
 
+    // RP-03.1: the capability read, once per mount. A read failure leaves the
+    // documented defaults in place and the submit still validates honestly —
+    // the backend refuses what it refuses regardless of what this list says.
+    useEffect(() => {
+        let cancelled = false;
+        void getVideoCapabilities()
+            .then((capability) => {
+                if (cancelled) return;
+                if (capability.allowedSeconds.length > 0) setAllowedSeconds(capability.allowedSeconds);
+                setAllowedSizes(capability.allowedSizes);
+            })
+            .catch(() => undefined);
+        return () => {
+            cancelled = true;
+        };
+    }, []);
+
+    // A model switch that makes the current seconds value illegal must SHOW
+    // the change rather than silently billing a different duration.
+    useEffect(() => {
+        if (!allowedSeconds.includes(seconds)) {
+            setSeconds(allowedSeconds[0] ?? 4);
+        }
+    }, [allowedSeconds, seconds]);
+
     /**
      * refreshJobs re-reads only the job list.
      *
@@ -432,6 +469,7 @@ export function VideoSection({ projectId, episodes, activeEpisodeId, onSelectEpi
                 model: decoded.model,
                 prompt: prompt.trim(),
                 seconds,
+                size: size || undefined,
                 // The fields are OMITTED when a frame was not chosen, because `omitempty` on the Go side
                 // means an empty string never travels — so a caller that sent `firstFrame: ""` would be
                 // sending the same request as one that sent nothing, and the comment would claim a
@@ -529,6 +567,7 @@ export function VideoSection({ projectId, episodes, activeEpisodeId, onSelectEpi
                 // shots, and the core's own default says what the request is rather than sending none.
                 prompt: prompt.trim() || undefined,
                 seconds,
+                size: size || undefined,
                 shotIds: shotIDs,
             } as never);
             setBatchResult(result);
@@ -824,7 +863,34 @@ export function VideoSection({ projectId, episodes, activeEpisodeId, onSelectEpi
                     </label>
                     <label>
                         <span className="mb-1 block text-sm">{t("studio.video.secondsLabel")}</span>
-                        <InputNumber min={1} max={60} value={seconds} data-testid="studio-video-seconds" onChange={(value) => setSeconds(typeof value === "number" ? value : 4)} />
+                        {/* RP-03.1: CHOICES from the backend's own capability, not a
+                            free numeric field whose values the core would refuse
+                            after the user picked them. */}
+                        <Select
+                            className="w-28"
+                            value={seconds}
+                            data-testid="studio-video-seconds"
+                            onChange={(value: number) => setSeconds(value)}
+                            options={allowedSeconds.map((value) => ({ value, label: `${value}s` }))}
+                        />
+                    </label>
+                    <label>
+                        <span className="mb-1 block text-sm">{t("studio.video.sizeLabel")}</span>
+                        {/* RP-03.1 / O02: the size control. The empty option is the
+                            provider's default — the honest state when the project's
+                            aspect does not match a supported resolution, and the
+                            choice a user makes consciously rather than a silent
+                            fallback. */}
+                        <Select
+                            className="w-40"
+                            value={size}
+                            data-testid="studio-video-size"
+                            onChange={(value: string) => setSize(value)}
+                            options={[
+                                { value: "", label: t("studio.video.sizeDefault") },
+                                ...allowedSizes.map((value) => ({ value, label: value })),
+                            ]}
+                        />
                     </label>
                     <Button type="primary" icon={<Play className="size-4" />} loading={submitting} disabled={!selectedShot} data-testid="studio-video-submit" onClick={() => void submit()}>
                         {t("studio.video.submit")}

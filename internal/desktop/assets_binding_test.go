@@ -671,3 +671,215 @@ func TestAssetsBindingListAssetsRequestFieldNames(t *testing.T) {
 		}
 	}
 }
+
+// TestRP01UsageDTOContainsIDAndParams is RP-01.1's regression: the audio track
+// editor finds its row by the usage's OWN id (`u.id`), and two usages of the
+// SAME asset version (e.g. one dialogue and one effect track on one shot) are
+// indistinguishable without it. The DTO therefore carries `id` on every return
+// path — AddUsage, ListUsages, ListUsagesOfConsumer and the approval impact —
+// and the params document rides with it. The assertion reads the SERVICE's
+// real return through the binding and then serialises the DTO, so a field the
+// generated binding would not carry fails here rather than in the UI.
+func TestRP01UsageDTOContainsIDAndParams(t *testing.T) {
+	binding, store := attachAssetsFixture()
+
+	created, err := binding.CreateAsset(CreateAssetRequest{ProjectID: "p1", Type: "audio", Name: "line A"})
+	if err != nil {
+		t.Fatalf("CreateAsset: %v", err)
+	}
+	versions, err := binding.ListVersions(created.ID)
+	if err != nil {
+		t.Fatalf("ListVersions: %v", err)
+	}
+	// An approval needs a committed file, so the fixture attaches one the way
+	// the round-trip test does.
+	if _, err := binding.AttachFile(AttachFileRequest{VersionID: versions[0].ID, FileHash: strings.Repeat("a", 64)}); err != nil {
+		t.Fatalf("AttachFile: %v", err)
+	}
+	version, err := binding.ApproveVersion(ApproveVersionRequest{VersionID: versions[0].ID, ImpactAcknowledged: true})
+	if err != nil {
+		t.Fatalf("ApproveVersion: %v", err)
+	}
+
+	// Two usages of the SAME version on one shot: only `id` tells them apart.
+	first, err := binding.AddUsage(AddUsageRequest{
+		AssetVersionID: version.ID, ConsumerType: "shot", ConsumerID: "shot-1", UsageRole: "audio_dialogue",
+	})
+	if err != nil {
+		t.Fatalf("AddUsage first: %v", err)
+	}
+	second, err := binding.AddUsage(AddUsageRequest{
+		AssetVersionID: version.ID, ConsumerType: "shot", ConsumerID: "shot-1", UsageRole: "audio_effect",
+	})
+	if err != nil {
+		t.Fatalf("AddUsage second: %v", err)
+	}
+	if first.ID == "" || second.ID == "" {
+		t.Fatalf("AddUsage returned usages without ids: %q / %q", first.ID, second.ID)
+	}
+	if first.ID == second.ID {
+		t.Fatalf("two usages of one version share the id %q", first.ID)
+	}
+
+	// The editor writes params through the existing narrow command so the read
+	// below carries a stored document.
+	if err := binding.SetUsageParams(SetUsageParamsRequest{
+		UsageID: first.ID, OffsetMS: intPtr(1200), Volume: floatPtr(0.5),
+	}); err != nil {
+		t.Fatalf("SetUsageParams: %v", err)
+	}
+
+	// Every list path that reaches the editor must carry the id and the doc.
+	listed, err := binding.ListUsages(version.ID)
+	if err != nil {
+		t.Fatalf("ListUsages: %v", err)
+	}
+	byID := map[string]AssetUsageDTO{}
+	for _, usage := range listed {
+		if usage.ID == "" {
+			t.Fatalf("ListUsages returned a usage without an id: %+v", usage)
+		}
+		byID[usage.ID] = usage
+	}
+	firstListed, ok := byID[first.ID]
+	if !ok {
+		t.Fatalf("ListUsages lost the first usage %q", first.ID)
+	}
+	if firstListed.Params == "" {
+		t.Fatalf("ListUsages dropped the params document of %q", first.ID)
+	}
+
+	// The editor's own read: ListUsagesOfConsumer.
+	consumed, err := binding.ListUsagesOfConsumer("shot", "shot-1")
+	if err != nil {
+		t.Fatalf("ListUsagesOfConsumer: %v", err)
+	}
+	var match *AssetUsageDTO
+	for i := range consumed {
+		if consumed[i].ID == "" {
+			t.Fatalf("ListUsagesOfConsumer returned a usage without an id: %+v", consumed[i])
+		}
+		if consumed[i].ID == first.ID {
+			match = &consumed[i]
+		}
+	}
+	if match == nil {
+		t.Fatalf("ListUsagesOfConsumer lost usage %q", first.ID)
+	}
+	if match.Params == "" || match.UsageRole != "audio_dialogue" {
+		t.Fatalf("ListUsagesOfConsumer row = %+v, want params and role preserved", *match)
+	}
+
+	// The approval impact path is covered by TestRP01ApprovalImpactCarriesUsageIDs
+	// below: approving THIS version replaces nothing yet (it IS the approved one),
+	// so its impact is intentionally empty here.
+
+	// The JSON the Wails binding serialises must carry the lowerCamel keys the
+	// frontend reads, including an empty-params row still naming its id.
+	encoded, err := json.Marshal(second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded["id"] != second.ID {
+		t.Fatalf("serialised DTO carries id=%v, want %q", decoded["id"], second.ID)
+	}
+	assertCamelTag(t, AssetUsageDTO{}, "id")
+	assertCamelTag(t, AssetUsageDTO{}, "params")
+
+	// The in-memory double and the service both keep the id on the domain
+	// record, so the defect this test pins is the DTO's, and the store really
+	// holds two distinct rows.
+	if len(store.usages) != 2 {
+		t.Fatalf("store holds %d usages, want 2", len(store.usages))
+	}
+}
+
+func intPtr(v int) *int           { return &v }
+func floatPtr(v float64) *float64 { return &v }
+
+// The store double gains the editor's narrow write, so the RP-01.1 test can
+// store a document the read paths carry back. It mirrors the real repository's
+// contract: replace the document, error on an unknown row.
+func (s *assetStore) UpdateUsageParams(_ context.Context, usageID, paramsJSON string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.usages {
+		if s.usages[i].ID == usageID {
+			s.usages[i].Params = paramsJSON
+			return nil
+		}
+	}
+	return asset.NotFoundError()
+}
+
+// ListUsagesOfConsumer mirrors the real repository's editor read (T05): every
+// usage row of one consumer, in creation order.
+func (s *assetStore) ListUsagesOfConsumer(_ context.Context, consumerType asset.ConsumerType, consumerID string) ([]asset.Usage, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var usages []asset.Usage
+	for _, usage := range s.usages {
+		if usage.ConsumerType == consumerType && usage.ConsumerID == consumerID {
+			usages = append(usages, usage)
+		}
+	}
+	return usages, nil
+}
+
+// The RP-01.1 fixture adds a SECOND version, approves it, and reads the impact
+// of the FIRST version being replaced — the impact lists the second version's
+// consumers, which is the path the approval dialog reads.
+func TestRP01ApprovalImpactCarriesUsageIDs(t *testing.T) {
+	binding, _ := attachAssetsFixture()
+
+	created, err := binding.CreateAsset(CreateAssetRequest{ProjectID: "p1", Type: "audio", Name: "line A"})
+	if err != nil {
+		t.Fatalf("CreateAsset: %v", err)
+	}
+	versions, err := binding.ListVersions(created.ID)
+	if err != nil {
+		t.Fatalf("ListVersions: %v", err)
+	}
+	hash := strings.Repeat("b", 64)
+	if _, err := binding.AttachFile(AttachFileRequest{VersionID: versions[0].ID, FileHash: hash}); err != nil {
+		t.Fatalf("AttachFile: %v", err)
+	}
+	if _, err := binding.ApproveVersion(ApproveVersionRequest{VersionID: versions[0].ID, ImpactAcknowledged: true}); err != nil {
+		t.Fatalf("ApproveVersion v1: %v", err)
+	}
+
+	// A usage hangs off the approved version; the impact of approving v2 lists it.
+	_, err = binding.AddUsage(AddUsageRequest{
+		AssetVersionID: versions[0].ID, ConsumerType: "shot", ConsumerID: "shot-9", UsageRole: "audio_dialogue",
+	})
+	if err != nil {
+		t.Fatalf("AddUsage: %v", err)
+	}
+
+	second, err := binding.AddVersion(AddVersionRequest{AssetID: created.ID})
+	if err != nil {
+		t.Fatalf("AddVersion: %v", err)
+	}
+	if _, err := binding.AttachFile(AttachFileRequest{VersionID: second.ID, FileHash: strings.Repeat("c", 64)}); err != nil {
+		t.Fatalf("AttachFile v2: %v", err)
+	}
+	impact, err := binding.GetApprovalImpact(second.ID)
+	if err != nil {
+		t.Fatalf("GetApprovalImpact: %v", err)
+	}
+	if impact.Replaces != versions[0].ID {
+		t.Fatalf("impact.Replaces = %q, want the approved v1", impact.Replaces)
+	}
+	if len(impact.Consumers) == 0 {
+		t.Fatalf("impact lists no consumers for the version being replaced")
+	}
+	for _, consumer := range impact.Consumers {
+		if consumer.ID == "" {
+			t.Fatalf("impact consumer lacks an id: %+v", consumer)
+		}
+	}
+}

@@ -69,6 +69,8 @@ type agentWiring struct {
 	// the runtime and the engine across a module boundary to reach a package that needs both.
 	pipeline   *appscriptpipeline.Service
 	production *appproductionpipeline.Service
+	// checker is RP-07.2 retention of the consistency checker.
+	checker *database.StoryboardConsistencyChecker
 }
 
 // agentDeps are what composeAgents needs from the other composition roots.
@@ -312,6 +314,7 @@ func composeAgents(deps agentDeps) *agentWiring {
 		engine:     engine,
 		pipeline:   pipeline,
 		production: production,
+		checker:    checker,
 	}
 }
 

@@ -725,3 +725,15 @@ PRD §16 把 v1.0 的范围写成产品计划而不是欠账，所以这九项**
 
 其余五项（MONOFORM 深度集成、层级摘要与记忆中心、更完整时间线、PDF 导入、本地 ONNX embedding
 之外的第三项）没有外部依赖，可按任意次序独立成包。
+
+---
+
+# 7. PRD Gap Closure 计划（RP-00～RP-12，2026-09-28 起）
+
+当前执行依据改为 `docs/plans/2026-09-28-prd-gap-closure-development-plan.md`：13 个工作包（RP-00～RP-12）、
+39 个任务，修复审计确认的功能断链并补齐 PRD 必需能力。范围对账与待决定事项记录在
+`docs/implementation/gap-closure-scope-decisions.md`；执行前基线记录在
+`docs/implementation/gap-closure-baseline-2026-09-28.md`。推荐顺序：RP-00 → RP-01 → RP-02 →
+RP-03 → RP-04 → RP-05/06/07 → RP-08/09 → RP-10 → RP-11 → RP-12。每次只执行一个包，遵守
+AGENTS §4；RP-08（音效供应商）、RP-11.2（付费冒烟）、RP-12（提交/签名/VM）在获得对应授权前
+保持 DECISION_REQUIRED/BLOCKED。

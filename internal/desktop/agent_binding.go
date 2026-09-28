@@ -41,11 +41,23 @@ type AgentBinding struct {
 
 // agentSkillManager is the management surface the binding needs from the
 // assembly, declared narrow here so the binding does not import the whole
-// assembly type's surface.
+// assembly type's surface. RP-06.2 adds the version-management surface: a
+// version history read, a derive command, and a rollback that switches the
+// active pointer — all optional, so a build without the management store
+// reports "unavailable" rather than pretending.
 type agentSkillManager interface {
 	SetAgentEnabled(agentKey string, enabled bool) error
 	AgentEnabled(agentKey string) bool
 	SkillDocument(agentKey string) (string, bool)
+}
+
+// agentSkillVersioner is the RP-06.2 version-management surface. It is a
+// SEPARATE interface from agentSkillManager so a build that only manages
+// enable/disable keeps compiling: the type assertion at the call site decides.
+type agentSkillVersioner interface {
+	SkillVersionsOf(ctx context.Context, agentKey string) ([]agent.SkillVersion, error)
+	CreateSkillVersion(ctx context.Context, agentKey, basedOnVersionID, newVersionLabel, document string) (agent.SkillVersion, error)
+	ActivateSkillVersion(ctx context.Context, agentKey, versionID string) error
 }
 
 // ListAgentRuns returns a project's runs newest first.
@@ -263,4 +275,85 @@ func AttachAgentRegistry(binding *AgentBinding, registry *agentruntime.Registry)
 	binding.mu.Lock()
 	binding.registry = registry
 	binding.mu.Unlock()
+}
+
+// --- RP-06.2: skill version management on the binding ---
+
+// ListSkillVersions returns one agent's skill version history, newest first,
+// with each version's hash and status. A build without the versioning store
+// is refused honestly: the UI shows "unavailable" rather than an empty
+// history that would read as "no versions".
+func (b *AgentBinding) ListSkillVersions(agentKey string) ([]agent.SkillVersion, error) {
+	b.mu.RLock()
+	assembly := b.assembly
+	b.mu.RUnlock()
+	if assembly == nil {
+		return nil, bindingUnavailable()
+	}
+	versioner, ok := assembly.(agentSkillVersioner)
+	if !ok || versioner == nil {
+		return nil, agent.InvalidError("Skill version management is not available in this build.")
+	}
+	b.mu.RLock()
+	ctx := b.ctx
+	b.mu.RUnlock()
+	return versioner.SkillVersionsOf(ctx, agentKey)
+}
+
+// CreateSkillVersionRequest derives one skill version from an existing one.
+type CreateSkillVersionRequest struct {
+	AgentKey string `json:"agentKey"`
+	// BasedOnVersionID is the version the edit starts from. The UI reads its
+	// document through AgentSkillDocument/ListSkillVersions and sends the
+	// edited text here.
+	BasedOnVersionID string `json:"basedOnVersionId"`
+	// NewVersionLabel is the derived version's label (semver-like, ≤60 chars,
+	// the skill_versions table's own check).
+	NewVersionLabel string `json:"newVersionLabel"`
+	// Document is the FULL edited document. It must carry every section 4.3
+	// heading the loader requires — a derived version meets the same bar a
+	// builtin pack does.
+	Document string `json:"document"`
+}
+
+// CreateSkillVersion stores a derived skill version under its own content
+// hash. It does NOT activate it: activation is the separate, explicit
+// rollback/switch command, so a user can review the derived version before
+// any run uses it.
+func (b *AgentBinding) CreateSkillVersion(request CreateSkillVersionRequest) (agent.SkillVersion, error) {
+	b.mu.RLock()
+	assembly := b.assembly
+	b.mu.RUnlock()
+	if assembly == nil {
+		return agent.SkillVersion{}, bindingUnavailable()
+	}
+	versioner, ok := assembly.(agentSkillVersioner)
+	if !ok || versioner == nil {
+		return agent.SkillVersion{}, agent.InvalidError("Skill version management is not available in this build.")
+	}
+	b.mu.RLock()
+	ctx := b.ctx
+	b.mu.RUnlock()
+	return versioner.CreateSkillVersion(ctx, request.AgentKey, request.BasedOnVersionID, request.NewVersionLabel, request.Document)
+}
+
+// ActivateSkillVersion switches an agent's active skill version — rollback is
+// a pointer switch to a historical version, never a rewrite of its content.
+// Runs already in flight keep the snapshot they took; the switch affects only
+// LATER snapshots.
+func (b *AgentBinding) ActivateSkillVersion(agentKey, versionID string) error {
+	b.mu.RLock()
+	assembly := b.assembly
+	b.mu.RUnlock()
+	if assembly == nil {
+		return bindingUnavailable()
+	}
+	versioner, ok := assembly.(agentSkillVersioner)
+	if !ok || versioner == nil {
+		return agent.InvalidError("Skill version management is not available in this build.")
+	}
+	b.mu.RLock()
+	ctx := b.ctx
+	b.mu.RUnlock()
+	return versioner.ActivateSkillVersion(ctx, agentKey, versionID)
 }

@@ -437,6 +437,27 @@ func (s *Service) readText(ctx context.Context, versionID string, startRune, end
 	return string(runes[startRune:endRune]), startRune, total, nil
 }
 
+// ReadStored returns a document version's ORIGINAL upload bytes (RP-04.2).
+//
+// The import JOB needs the document's content as the importer's own request
+// shape expects it — bytes — and the version row names the stored object the
+// bytes live in. The read goes through the same bounded DocumentStore the
+// import writes through, so an object that grew past the import ceiling is
+// refused rather than read into memory.
+func (s *Service) ReadStored(ctx context.Context, versionID string) ([]byte, error) {
+	if !s.Available() {
+		return nil, storageFailure()
+	}
+	version, err := s.story.GetSourceDocumentVersion(ctx, strings.TrimSpace(versionID))
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(version.PhysicalFileID) == "" {
+		return nil, importdomain.InvalidError("This version has no stored original to read.")
+	}
+	return s.ifs.Open(ctx, version.PhysicalFileID)
+}
+
 // ChapterText returns a whole chapter's text.
 //
 // It differs from ReadRange in exactly one way: it does not clamp to a page. The

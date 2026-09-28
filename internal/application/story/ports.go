@@ -42,6 +42,10 @@ type SourceDocumentRepository interface {
 	CreateSourceDocumentVersion(ctx context.Context, version storydomain.SourceDocumentVersion) error
 	// GetSourceDocumentVersion returns one version by id.
 	GetSourceDocumentVersion(ctx context.Context, id string) (storydomain.SourceDocumentVersion, error)
+	// ListSourceDocumentVersions returns a document's versions oldest first
+	// (RP-04.2). The import JOB reads the latest through this list to find
+	// the content it continues the document with.
+	ListSourceDocumentVersions(ctx context.Context, sourceDocumentID string) ([]storydomain.SourceDocumentVersion, error)
 	// MaxSourceDocumentVersionNumber reports the highest version number a
 	// document has, or zero when it has none.
 	MaxSourceDocumentVersionNumber(ctx context.Context, sourceDocumentID string) (int, error)

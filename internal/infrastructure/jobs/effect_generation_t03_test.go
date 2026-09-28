@@ -10,7 +10,7 @@ import (
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/job"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/provider"
 	infraproviders "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/infrastructure/providers"
-	)
+)
 
 // effect_generation_t03_test.go is the 2026-09-26 audit's T03 at the boundary
 // that matters: an EFFECT job carries a description to the effect capability,
@@ -134,7 +134,6 @@ func isUnsupportedFailure(err error) bool {
 	providerErr, ok := provider.AsProviderError(err)
 	return ok && providerErr.Category == provider.CategoryUnsupported
 }
-
 
 // readCommittedBytes opens the fake content store's object for one hash.
 func readCommittedBytes(t *testing.T, content *fakeContentStore, hash string) []byte {

@@ -139,6 +139,15 @@ type QueueSummaryDTO struct {
 }
 
 // ListJobs returns jobs matching the filter, newest first.
+// VideoCapabilities reports the video request values this build accepts
+// (RP-03.1): the seconds/size enums the vendor documents, as lists the UI
+// renders as choices. A capability read needs no runtime, so it answers even
+// on a binding whose job service is not attached — the values are the build's
+// vendor contract, not its state.
+func (b *JobsBinding) VideoCapabilities() VideoCapabilitiesDTO {
+	return VideoCapabilities()
+}
+
 func (b *JobsBinding) ListJobs(request ListJobsRequest) ([]JobDTO, error) {
 	service, ctx, err := b.requestService()
 	if err != nil {

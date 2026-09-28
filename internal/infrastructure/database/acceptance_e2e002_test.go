@@ -14,9 +14,9 @@ import (
 	appproduction "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/productionpipeline"
 	appscript "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/script"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/job"
+	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/infrastructure/filestore"
 	infrajobs "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/infrastructure/jobs"
 	infraproviders "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/infrastructure/providers"
-	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/infrastructure/filestore"
 )
 
 // acceptance_e2e002_test.go walks PRD section 19's AC-E2E-002 — 小说到分镜 — as ONE scenario.
@@ -192,12 +192,12 @@ func newE2E002Walk(t *testing.T) *e2e002Walk {
 		t.Fatalf("opening the file store: %v", err)
 	}
 	imports := appimporting.NewService(appimporting.Options{
-		Store:  e2e002DocumentStore{store: store, files: NewFileRepository(base.db)},
-		Story:  base.story,
+		Store: e2e002DocumentStore{store: store, files: NewFileRepository(base.db)},
+		Story: base.story,
 		Events: appevents.NewService(appevents.Options{
 			Repository: NewEventRepository(base.db), Clock: canaryClock{}, IDs: newTestIDGenerator(),
 		}),
-		Clock:  canaryClock{},
+		Clock: canaryClock{},
 	})
 
 	// The job stack. The image adapter is supplied through the runner's own `AdapterSource` port

@@ -212,7 +212,9 @@ func idGeneratorForTest() idGen { return idGen{} }
 
 type idGen struct{}
 
-func (idGen) New() (string, error) { return "test-id-" + time.Now().UTC().Format("150405.000000000"), nil }
+func (idGen) New() (string, error) {
+	return "test-id-" + time.Now().UTC().Format("150405.000000000"), nil
+}
 
 func scriptVersionApproved() scriptdomain.ScriptVersion {
 	return scriptdomain.ScriptVersion{
@@ -223,7 +225,6 @@ func scriptVersionApproved() scriptdomain.ScriptVersion {
 }
 
 var _ = event.Event{}
-
 
 func (f *storyboardFake) FindStoryboardItemByOrdinal(context.Context, string, int) (storyboard.StoryboardItem, bool, error) {
 	return storyboard.StoryboardItem{}, false, nil

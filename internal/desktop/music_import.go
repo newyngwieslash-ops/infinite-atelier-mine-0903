@@ -58,10 +58,10 @@ type MusicImporter interface {
 
 // MusicImportBinding carries a user's music file into the library.
 type MusicImportBinding struct {
-	mu      sync.Mutex
-	ctx     context.Context
+	mu       sync.Mutex
+	ctx      context.Context
 	importer MusicImporter
-	uploads map[string]*musicUpload
+	uploads  map[string]*musicUpload
 	// uploadIDs is the identifier source, injected so a test can name its uploads.
 	uploadIDs func() (string, error)
 	now       func() time.Time
@@ -107,7 +107,7 @@ type musicUpload struct {
 	// THE PLACEMENT DOES NOT DEPEND ON WHICH SHOT. `buildMix` starts a bed at zero wherever it was
 	// attached, because a bed runs from the top — so attaching to the episode's first shot is a
 	// statement about which mix carries the music, not about when it begins.
-	shotID string
+	shotID       string
 	declaredSize int
 	buffer       []byte
 	startedAt    time.Time
@@ -208,7 +208,7 @@ func (b *MusicImportBinding) BeginMusicImport(request BeginMusicImportRequest) (
 	}
 	b.uploads[uploadID] = &musicUpload{
 		displayName: displayName, projectID: projectID, declaredSize: request.TotalBytes,
-		shotID: strings.TrimSpace(request.ShotID),
+		shotID:    strings.TrimSpace(request.ShotID),
 		startedAt: b.now(),
 	}
 	return BeginMusicImportResult{UploadID: uploadID, ChunkBytes: musicChunkBytes}, nil

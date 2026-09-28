@@ -4,10 +4,10 @@ import (
 	"context"
 
 	appassets "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/assets"
-	appmedia "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/media"
 	appevents "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/events"
 	appextraction "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/extraction"
 	appimporting "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/importing"
+	appmedia "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/media"
 	appprojects "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/projects"
 	appscript "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/script"
 	appstaleness "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/staleness"

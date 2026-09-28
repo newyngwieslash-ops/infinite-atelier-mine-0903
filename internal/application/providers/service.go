@@ -207,15 +207,15 @@ type ConfigDTO struct {
 	// UNLIMITED (ADR-0018). The comment is on the wire shape as well as the domain type
 	// because the interface is where a user meets the reading: a field that showed 0 without
 	// saying what it means would read as "no work may run".
-	MaxConcurrency int    `json:"maxConcurrency"`
+	MaxConcurrency int `json:"maxConcurrency"`
 	// RateLimitPerMinute is the per-minute request ceiling, zero unlimited
 	// (T07) — the same zero-means-unlimited reading the concurrency field
 	// states.
-	RateLimitPerMinute int  `json:"rateLimitPerMinute"`
-	LocalApproved      bool `json:"localApproved"`
-	Enabled        bool   `json:"enabled"`
-	Revision       int64  `json:"revision"`
-	UpdatedAt      string `json:"updatedAt,omitempty"`
+	RateLimitPerMinute int    `json:"rateLimitPerMinute"`
+	LocalApproved      bool   `json:"localApproved"`
+	Enabled            bool   `json:"enabled"`
+	Revision           int64  `json:"revision"`
+	UpdatedAt          string `json:"updatedAt,omitempty"`
 }
 
 // Service is the application service orchestrating configs, secrets status,
@@ -269,9 +269,21 @@ func (s *Service) CreateOrUpdateConfig(ctx context.Context, input provider.Confi
 		return provider.Config{}, provider.NewConfigurationError()
 	}
 	// THE RATE LIMIT (T07) is validated the same way: out of range is a
-	// refusal, not a clamp.
-	if input.RateLimitPerMinute < 0 || input.RateLimitPerMinute > provider.RateLimitCeiling {
-		return provider.Config{}, provider.NewConfigurationError()
+	// refusal, not a clamp. RP-02.1: the validation runs on the stated value
+	// only — an input that did not state the field leaves the stored value
+	// standing below, so an ordinary settings-save (which has always carried
+	// the concurrency field but not always the rate one) cannot clear a limit
+	// the user configured.
+	if input.RateLimitPerMinuteSet {
+		if input.RateLimitPerMinute < 0 || input.RateLimitPerMinute > provider.RateLimitCeiling {
+			return provider.Config{}, provider.NewConfigurationError()
+		}
+	} else if input.RateLimitPerMinute != 0 {
+		// A value sent with the set-flag false is the legacy client shape;
+		// it still has to be in range, but it does not clear anything.
+		if input.RateLimitPerMinute < 0 || input.RateLimitPerMinute > provider.RateLimitCeiling {
+			return provider.Config{}, provider.NewConfigurationError()
+		}
 	}
 	existing, err := s.repository.GetConfig(ctx, input.ID)
 	if err != nil {
@@ -297,7 +309,11 @@ func (s *Service) CreateOrUpdateConfig(ctx context.Context, input provider.Confi
 	config.LocalApproved = input.LocalApprove
 	config.Enabled = input.Enabled
 	config.MaxConcurrency = input.MaxConcurrency
-	config.RateLimitPerMinute = input.RateLimitPerMinute
+	if input.RateLimitPerMinuteSet {
+		config.RateLimitPerMinute = input.RateLimitPerMinute
+	}
+	// (RP-02.1) an unset flag keeps config.RateLimitPerMinute — the existing
+	// row's value for updates, zero for a fresh config.
 	config.SecretRef = provider.SecretRefValue(config.ID)
 	config.UpdatedAt = now
 	if err := s.repository.SaveConfig(ctx, config); err != nil {

@@ -1,3 +1,53 @@
+export namespace agent {
+
+	export class SkillVersion {
+	    ID: string;
+	    SkillKey: string;
+	    Version: string;
+	    ContentHash: string;
+	    ManifestJSON: string;
+	    ContentFileID: string;
+	    Status: string;
+	    // Go type: time
+	    CreatedAt: any;
+
+	    static createFrom(source: any = {}) {
+	        return new SkillVersion(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.ID = source["ID"];
+	        this.SkillKey = source["SkillKey"];
+	        this.Version = source["Version"];
+	        this.ContentHash = source["ContentHash"];
+	        this.ManifestJSON = source["ManifestJSON"];
+	        this.ContentFileID = source["ContentFileID"];
+	        this.Status = source["Status"];
+	        this.CreatedAt = this.convertValues(source["CreatedAt"], null);
+	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+
+}
+
 export namespace agentruntime {
 
 	export class MessageView {
@@ -125,6 +175,22 @@ export namespace agentruntime {
 
 export namespace desktop {
 
+	export class ActivateManifestRequest {
+	    providerConfigId: string;
+	    versionId: string;
+	    expectedRevision: number;
+
+	    static createFrom(source: any = {}) {
+	        return new ActivateManifestRequest(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.providerConfigId = source["providerConfigId"];
+	        this.versionId = source["versionId"];
+	        this.expectedRevision = source["expectedRevision"];
+	    }
+	}
 	export class StrategyEventLinkDTO {
 	    storyEventId: string;
 	    treatment: string;
@@ -844,6 +910,20 @@ export namespace desktop {
 		    }
 		    return a;
 		}
+	}
+	export class AutoBackupSettings {
+	    intervalHours: number;
+	    retain: number;
+
+	    static createFrom(source: any = {}) {
+	        return new AutoBackupSettings(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.intervalHours = source["intervalHours"];
+	        this.retain = source["retain"];
+	    }
 	}
 	export class BackupPreview {
 	    manifestVersion: number;
@@ -1727,6 +1807,24 @@ export namespace desktop {
 	        this.actionDescription = source["actionDescription"];
 	        this.audioIntent = source["audioIntent"];
 	        this.continuityNotes = source["continuityNotes"];
+	    }
+	}
+	export class CreateSkillVersionRequest {
+	    agentKey: string;
+	    basedOnVersionId: string;
+	    newVersionLabel: string;
+	    document: string;
+
+	    static createFrom(source: any = {}) {
+	        return new CreateSkillVersionRequest(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.agentKey = source["agentKey"];
+	        this.basedOnVersionId = source["basedOnVersionId"];
+	        this.newVersionLabel = source["newVersionLabel"];
+	        this.document = source["document"];
 	    }
 	}
 	export class CreateSourceDocumentRequest {
@@ -3197,6 +3295,50 @@ export namespace desktop {
 	        this.field = source["field"];
 	    }
 	}
+	export class ManifestPreviewDTO {
+	    valid: boolean;
+	    errorMessage?: string;
+	    name?: string;
+	    capability?: string;
+	    submitPath?: string;
+	    headers?: string[];
+	    async: boolean;
+
+	    static createFrom(source: any = {}) {
+	        return new ManifestPreviewDTO(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.valid = source["valid"];
+	        this.errorMessage = source["errorMessage"];
+	        this.name = source["name"];
+	        this.capability = source["capability"];
+	        this.submitPath = source["submitPath"];
+	        this.headers = source["headers"];
+	        this.async = source["async"];
+	    }
+	}
+	export class ManifestVersionDTO {
+	    id: string;
+	    versionNumber: number;
+	    contentHash: string;
+	    createdAt: string;
+	    active: boolean;
+
+	    static createFrom(source: any = {}) {
+	        return new ManifestVersionDTO(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.versionNumber = source["versionNumber"];
+	        this.contentHash = source["contentHash"];
+	        this.createdAt = source["createdAt"];
+	        this.active = source["active"];
+	    }
+	}
 	export class ScriptStructureShotInput {
 	    shotNumber?: string;
 	    shotSize?: string;
@@ -4019,6 +4161,7 @@ export namespace desktop {
 	    baseUrl: string;
 	    maxConcurrency: number;
 	    rateLimitPerMinute: number;
+	    rateLimitPerMinuteSet: boolean;
 	    localApprove: boolean;
 	    enabled: boolean;
 
@@ -4034,6 +4177,7 @@ export namespace desktop {
 	        this.baseUrl = source["baseUrl"];
 	        this.maxConcurrency = source["maxConcurrency"];
 	        this.rateLimitPerMinute = source["rateLimitPerMinute"];
+	        this.rateLimitPerMinuteSet = source["rateLimitPerMinuteSet"];
 	        this.localApprove = source["localApprove"];
 	        this.enabled = source["enabled"];
 	    }
@@ -4673,6 +4817,20 @@ export namespace desktop {
 	        this.path = source["path"];
 	    }
 	}
+	export class SaveManifestRequest {
+	    providerConfigId: string;
+	    document: string;
+
+	    static createFrom(source: any = {}) {
+	        return new SaveManifestRequest(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.providerConfigId = source["providerConfigId"];
+	        this.document = source["document"];
+	    }
+	}
 	export class SaveScriptStructureRequest {
 	    scriptVersionId: string;
 	    projectId?: string;
@@ -4969,6 +5127,24 @@ export namespace desktop {
 	        this.changeReason = source["changeReason"];
 	        this.legacyMetadata = source["legacyMetadata"];
 	        this.createdAt = source["createdAt"];
+	    }
+	}
+	export class SetAssetLicenseRequest {
+	    assetId: string;
+	    license: string;
+	    licenseSource: string;
+	    allowsExportUse: string;
+
+	    static createFrom(source: any = {}) {
+	        return new SetAssetLicenseRequest(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.assetId = source["assetId"];
+	        this.license = source["license"];
+	        this.licenseSource = source["licenseSource"];
+	        this.allowsExportUse = source["allowsExportUse"];
 	    }
 	}
 	export class SetDialogueLineLockedRequest {
@@ -5704,6 +5880,26 @@ export namespace desktop {
 	        this.episodeId = source["episodeId"];
 	    }
 	}
+	export class SubmitExportJobRequest {
+	    projectId: string;
+	    episodeId: string;
+	    quality?: string;
+	    fps?: number;
+	    approvedBoardVersionId?: string;
+
+	    static createFrom(source: any = {}) {
+	        return new SubmitExportJobRequest(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.projectId = source["projectId"];
+	        this.episodeId = source["episodeId"];
+	        this.quality = source["quality"];
+	        this.fps = source["fps"];
+	        this.approvedBoardVersionId = source["approvedBoardVersionId"];
+	    }
+	}
 	export class SubmitGateDecisionRequest {
 	    workflowRunId: string;
 	    stageRunId?: string;
@@ -5770,6 +5966,38 @@ export namespace desktop {
 	        this.priority = source["priority"];
 	    }
 	}
+	export class SubmitImportJobRequest {
+	    projectId: string;
+	    documentId: string;
+
+	    static createFrom(source: any = {}) {
+	        return new SubmitImportJobRequest(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.projectId = source["projectId"];
+	        this.documentId = source["documentId"];
+	    }
+	}
+	export class SubmitMigrationJobRequest {
+	    projectId: string;
+	    snapshotHash: string;
+	    fingerprint?: string;
+	    importMode?: string;
+
+	    static createFrom(source: any = {}) {
+	        return new SubmitMigrationJobRequest(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.projectId = source["projectId"];
+	        this.snapshotHash = source["snapshotHash"];
+	        this.fingerprint = source["fingerprint"];
+	        this.importMode = source["importMode"];
+	    }
+	}
 	export class SubmitSubtitleTrackForReviewRequest {
 	    trackId: string;
 	    episodeId?: string;
@@ -5782,6 +6010,24 @@ export namespace desktop {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.trackId = source["trackId"];
 	        this.episodeId = source["episodeId"];
+	    }
+	}
+	export class SubmitThumbnailJobRequest {
+	    projectId: string;
+	    assetVersionId: string;
+	    maxWidthPixels?: number;
+	    maxHeightPixels?: number;
+
+	    static createFrom(source: any = {}) {
+	        return new SubmitThumbnailJobRequest(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.projectId = source["projectId"];
+	        this.assetVersionId = source["assetVersionId"];
+	        this.maxWidthPixels = source["maxWidthPixels"];
+	        this.maxHeightPixels = source["maxHeightPixels"];
 	    }
 	}
 	export class SubmitVideoBatchRequest {
@@ -6425,6 +6671,22 @@ export namespace desktop {
 		}
 	}
 
+	export class VideoCapabilitiesDTO {
+	    allowedSeconds: number[];
+	    allowedSizes: string[];
+	    defaultSeconds: number;
+
+	    static createFrom(source: any = {}) {
+	        return new VideoCapabilitiesDTO(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.allowedSeconds = source["allowedSeconds"];
+	        this.allowedSizes = source["allowedSizes"];
+	        this.defaultSeconds = source["defaultSeconds"];
+	    }
+	}
 
 	export class VoiceChoiceDTO {
 	    providerConfigId?: string;

@@ -42,14 +42,14 @@ import (
 type Section string
 
 const (
-	SectionApplication  Section = "application"
-	SectionProviders    Section = "providers"
-	SectionMigrations   Section = "migrations"
-	SectionFileStore    Section = "file_store"
-	SectionJobs         Section = "jobs"
-	SectionWorkflows    Section = "workflows"
-	SectionErrorCodes   Section = "error_codes"
-	SectionLogs         Section = "logs"
+	SectionApplication Section = "application"
+	SectionProviders   Section = "providers"
+	SectionMigrations  Section = "migrations"
+	SectionFileStore   Section = "file_store"
+	SectionJobs        Section = "jobs"
+	SectionWorkflows   Section = "workflows"
+	SectionErrorCodes  Section = "error_codes"
+	SectionLogs        Section = "logs"
 )
 
 // Sections lists every section a bundle can carry, in the order a manifest shows them.

@@ -6,11 +6,11 @@ import (
 	"fmt"
 	"strings"
 
-	asset "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/asset"
 	appimporting "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/importing"
+	appjobs "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/jobs"
 	applegacy "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/legacy"
 	appmedia "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/media"
-	appjobs "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/jobs"
+	asset "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/asset"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/job"
 )
 
@@ -97,22 +97,37 @@ type ImportJobRequest struct {
 	ProjectID string
 	// DocumentID is the stored source document the import reads.
 	DocumentID string
+	// Format and OriginalName travel from the input document (RP-04.1) for
+	// the importer's format decision and the audit trail. Format is the
+	// stored vocabulary (txt/markdown/docx/pdf); empty defers to the stored
+	// document's own.
+	Format       string
+	OriginalName string
 }
 
-// ImportJobResult reports the import's outcome.
+// ImportJobResult reports the import's outcome with REAL semantics (RP-04.1):
+// chapters are chapters and story entities are story entities — the old result
+// stored the chapter count in StoryEntities and a hardcoded 1 in Episodes,
+// which made every import claim a single episode regardless of what the split
+// produced.
 type ImportJobResult struct {
-	StoryEntities int
-	Episodes      int
+	Chapters      int `json:"chapters,omitempty"`
+	StoryEntities int `json:"storyEntities,omitempty"`
+	Episodes      int `json:"episodes,omitempty"`
 	// AlreadyImported marks the idempotent no-op a requeued run hits.
-	AlreadyImported bool
+	AlreadyImported bool   `json:"alreadyImported,omitempty"`
+	DocumentVersion string `json:"documentVersion,omitempty"`
 }
 
-// ExportJobRequest names the episode to compose.
+// ExportJobRequest names the episode to compose. RP-04.1: quality, FPS and
+// the pinned board version travel from the input instead of falling back to
+// hardcoded defaults the submitter could not choose.
 type ExportJobRequest struct {
-	ProjectID string
-	EpisodeID string
-	Quality   string
-	FPS       int
+	ProjectID              string
+	EpisodeID              string
+	Quality                string
+	FPS                    int
+	ApprovedBoardVersionID string
 }
 
 // ExportJobResult names the composed film.
@@ -121,11 +136,14 @@ type ExportJobResult struct {
 	Duration int
 }
 
-// MigrationJobRequest names the snapshot to import.
+// MigrationJobRequest names the snapshot to import. RP-04.1: the fingerprint
+// and import mode travel from the input document, and SnapshotID is the
+// MANAGED STORE HASH the job reads from — never an OS path.
 type MigrationJobRequest struct {
 	ProjectID   string
 	SnapshotID  string
 	Fingerprint string
+	ImportMode  string
 }
 
 // MigrationJobResult reports the migration's outcome.
@@ -133,7 +151,11 @@ type MigrationJobResult struct {
 	AlreadyImported bool
 }
 
-// localJobInput is the envelope every local input document carries.
+// localJobInput is the T06 envelope. It is retained only so the runner can
+// recognize and REFUSE it: a job queued by the old envelope has no version
+// field, so decodeVersioned rejects it and the job fails with invalid-input —
+// the honest answer, not a misread of half-understood bytes. New submissions
+// write the typed documents in local_input.go (RP-04.1).
 type localJobInput struct {
 	ProjectID string `json:"projectId"`
 	// Subject is the type's own identifier — an asset version, a document, an
@@ -162,16 +184,17 @@ func (r *Runner) runThumbnail(ctx context.Context, record job.Job) (appjobs.Outc
 		return appjobs.Outcome{}, job.FailedJobError(job.CategoryUnsupported,
 			"This build cannot run thumbnail jobs.")
 	}
-	var input localJobInput
-	if err := json.Unmarshal([]byte(record.InputJSON), &input); err != nil {
-		return appjobs.Outcome{}, job.FailedJobError(job.CategoryInvalidInput, "The job input is malformed.")
+	var input ThumbnailInput
+	if err := decodeVersioned(record.InputJSON, LocalInputVersion, &input); err != nil {
+		return appjobs.Outcome{}, job.FailedJobError(job.CategoryInvalidInput, "The job input is malformed: "+err.Error())
 	}
-	if strings.TrimSpace(input.Subject) == "" {
+	if strings.TrimSpace(input.AssetVersionID) == "" {
 		return appjobs.Outcome{}, job.FailedJobError(job.CategoryInvalidInput,
 			"A thumbnail job must name the media version it derives from.")
 	}
 	result, err := r.locals.Thumbnail(ctx, ThumbnailRequest{
-		ProjectID: input.ProjectID, AssetVersionID: input.Subject,
+		ProjectID: input.ProjectID, AssetVersionID: input.AssetVersionID,
+		MaxWidthPixels: input.MaxWidthPixels, MaxHeightPixels: input.MaxHeightPixels,
 	})
 	if err != nil {
 		return appjobs.Outcome{}, err
@@ -194,15 +217,15 @@ func (r *Runner) runImportJob(ctx context.Context, record job.Job) (appjobs.Outc
 		return appjobs.Outcome{}, job.FailedJobError(job.CategoryUnsupported,
 			"This build cannot run import jobs.")
 	}
-	var input localJobInput
-	if err := json.Unmarshal([]byte(record.InputJSON), &input); err != nil {
-		return appjobs.Outcome{}, job.FailedJobError(job.CategoryInvalidInput, "The job input is malformed.")
+	var input ImportInput
+	if err := decodeVersioned(record.InputJSON, LocalInputVersion, &input); err != nil {
+		return appjobs.Outcome{}, job.FailedJobError(job.CategoryInvalidInput, "The job input is malformed: "+err.Error())
 	}
-	if strings.TrimSpace(input.Subject) == "" {
+	if strings.TrimSpace(input.DocumentID) == "" {
 		return appjobs.Outcome{}, job.FailedJobError(job.CategoryInvalidInput,
 			"An import job must name the document it imports.")
 	}
-	result, err := r.locals.Import(ctx, ImportJobRequest{ProjectID: input.ProjectID, DocumentID: input.Subject})
+	result, err := r.locals.Import(ctx, ImportJobRequest{ProjectID: input.ProjectID, DocumentID: input.DocumentID, Format: input.Format, OriginalName: input.OriginalName})
 	if err != nil {
 		return appjobs.Outcome{}, err
 	}
@@ -219,15 +242,15 @@ func (r *Runner) runExportJob(ctx context.Context, record job.Job) (appjobs.Outc
 		return appjobs.Outcome{}, job.FailedJobError(job.CategoryUnsupported,
 			"This build cannot run export jobs.")
 	}
-	var input localJobInput
-	if err := json.Unmarshal([]byte(record.InputJSON), &input); err != nil {
-		return appjobs.Outcome{}, job.FailedJobError(job.CategoryInvalidInput, "The job input is malformed.")
+	var input ExportInput
+	if err := decodeVersioned(record.InputJSON, LocalInputVersion, &input); err != nil {
+		return appjobs.Outcome{}, job.FailedJobError(job.CategoryInvalidInput, "The job input is malformed: "+err.Error())
 	}
-	if strings.TrimSpace(input.Subject) == "" {
+	if strings.TrimSpace(input.EpisodeID) == "" {
 		return appjobs.Outcome{}, job.FailedJobError(job.CategoryInvalidInput,
 			"An export job must name the episode it composes.")
 	}
-	result, err := r.locals.Export(ctx, ExportJobRequest{ProjectID: input.ProjectID, EpisodeID: input.Subject})
+	result, err := r.locals.Export(ctx, ExportJobRequest{ProjectID: input.ProjectID, EpisodeID: input.EpisodeID, Quality: input.Quality, FPS: input.FPS, ApprovedBoardVersionID: input.ApprovedBoardVersionID})
 	if err != nil {
 		return appjobs.Outcome{}, err
 	}
@@ -244,15 +267,15 @@ func (r *Runner) runMigrationJob(ctx context.Context, record job.Job) (appjobs.O
 		return appjobs.Outcome{}, job.FailedJobError(job.CategoryUnsupported,
 			"This build cannot run migration jobs.")
 	}
-	var input localJobInput
-	if err := json.Unmarshal([]byte(record.InputJSON), &input); err != nil {
-		return appjobs.Outcome{}, job.FailedJobError(job.CategoryInvalidInput, "The job input is malformed.")
+	var input MigrationInput
+	if err := decodeVersioned(record.InputJSON, LocalInputVersion, &input); err != nil {
+		return appjobs.Outcome{}, job.FailedJobError(job.CategoryInvalidInput, "The job input is malformed: "+err.Error())
 	}
-	if strings.TrimSpace(input.Subject) == "" {
+	if strings.TrimSpace(input.SnapshotHash) == "" {
 		return appjobs.Outcome{}, job.FailedJobError(job.CategoryInvalidInput,
-			"A migration job must name the snapshot it imports.")
+			"A migration job must name the snapshot hash it imports.")
 	}
-	result, err := r.locals.Migration(ctx, MigrationJobRequest{ProjectID: input.ProjectID, SnapshotID: input.Subject})
+	result, err := r.locals.Migration(ctx, MigrationJobRequest{ProjectID: input.ProjectID, SnapshotID: input.SnapshotHash, Fingerprint: input.Fingerprint, ImportMode: input.ImportMode})
 	if err != nil {
 		return appjobs.Outcome{}, err
 	}

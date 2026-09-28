@@ -253,16 +253,16 @@ func (s *TimelineService) Read(ctx context.Context, request TimelineRequest) (Ti
 	for _, row := range rows {
 		durationMS := row.DurationSecs * 1000
 		shot := TimelineShot{
-			Ordinal:         row.Ordinal,
-			ItemID:          row.ItemID,
-			ShotID:          row.ShotID,
-			DurationMS:      durationMS,
-			MediaVersionID:  row.ApprovedVersionID,
-			MediaHash:       row.MediaHash,
-			MediaKind:       row.MediaKind,
-			PanelVersionID:  row.PanelVersionID,
-			HasAudio:        row.AudioApproved,
-			AudioClips:      row.AudioClips,
+			Ordinal:        row.Ordinal,
+			ItemID:         row.ItemID,
+			ShotID:         row.ShotID,
+			DurationMS:     durationMS,
+			MediaVersionID: row.ApprovedVersionID,
+			MediaHash:      row.MediaHash,
+			MediaKind:      row.MediaKind,
+			PanelVersionID: row.PanelVersionID,
+			HasAudio:       row.AudioApproved,
+			AudioClips:     row.AudioClips,
 			// The shot starts where everything before it ended, which is the same running total the
 			// cue placement below uses — computed once, here, so the two cannot disagree.
 			StartMS: position,

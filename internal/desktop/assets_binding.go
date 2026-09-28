@@ -158,6 +158,11 @@ type AssetRelationDTO struct {
 // is why it is a string here and §8.6's "consumer_id 多态" is why it carries no foreign
 // key. Nothing about the consumer crosses this boundary except its identity and type.
 type AssetUsageDTO struct {
+	// ID is the usage's own identity (RP-01.1). The audio track editor keys its
+	// rows by it: two usages of the SAME version on one shot — a dialogue and an
+	// effect track — are indistinguishable without it, and a UI that guessed by
+	// version+role edited the wrong row.
+	ID             string `json:"id"`
 	AssetVersionID string `json:"assetVersionId"`
 	ConsumerType   string `json:"consumerType"`
 	ConsumerID     string `json:"consumerId"`
@@ -687,12 +692,16 @@ func toAssetRelationDTO(record asset.Relation) AssetRelationDTO {
 	}
 }
 
-// toAssetUsageDTO converts a usage to its transport view.
+// toAssetUsageDTO converts a usage to its transport view. It is the ONE
+// converter for every return path (RP-01.1): AddUsage, ListUsages,
+// ListUsagesOfConsumer and the approval impact all route through it, so an id
+// or params document cannot vanish from one path while another carries it.
 func toAssetUsageDTO(record asset.Usage) AssetUsageDTO {
 	return AssetUsageDTO{
-		AssetVersionID: record.AssetVersionID, ConsumerType: string(record.ConsumerType),
+		ID: record.ID, AssetVersionID: record.AssetVersionID, ConsumerType: string(record.ConsumerType),
 		ConsumerID: record.ConsumerID, UsageRole: record.UsageRole,
 		Required: record.Required, CreatedAt: record.CreatedAt.UTC().Format(rfc3339),
+		Params: record.Params,
 	}
 }
 
@@ -761,7 +770,8 @@ func (b *AssetsBinding) SetUsageParams(request SetUsageParamsRequest) error {
 }
 
 // ListUsagesOfConsumer returns the uses one consumer makes (T05 read), with
-// each use's stored placement document.
+// each use's stored placement document. RP-01.1: it reuses toAssetUsageDTO so
+// the editor's read carries the same identity the other paths carry.
 func (b *AssetsBinding) ListUsagesOfConsumer(consumerType, consumerID string) ([]AssetUsageDTO, error) {
 	service := b.assetService()
 	if service == nil {
@@ -773,15 +783,40 @@ func (b *AssetsBinding) ListUsagesOfConsumer(consumerType, consumerID string) ([
 	}
 	out := make([]AssetUsageDTO, 0, len(usages))
 	for _, usage := range usages {
-		out = append(out, AssetUsageDTO{
-			AssetVersionID: usage.AssetVersionID,
-			ConsumerType:   string(usage.ConsumerType),
-			ConsumerID:     usage.ConsumerID,
-			UsageRole:      usage.UsageRole,
-			Required:       usage.Required,
-			CreatedAt:      usage.CreatedAt.UTC().Format("2006-01-02T15:04:05Z"),
-			Params:         usage.Params,
-		})
+		out = append(out, toAssetUsageDTO(usage))
 	}
 	return out, nil
+}
+
+// --- RP-07.1: the licence record's binding surface ---
+
+// SetAssetLicenseRequest carries one asset's licence record from the UI.
+type SetAssetLicenseRequest struct {
+	AssetID string `json:"assetId"`
+	// License is the licence statement's text; empty clears it.
+	License string `json:"license"`
+	// LicenseSource is a bounded human note about where the statement came
+	// from. It is recorded, never fetched by this build.
+	LicenseSource string `json:"licenseSource"`
+	// AllowsExportUse is the tri-state: "" unknown, "1" allowed, "0" refused.
+	// Unknown and refused are DIFFERENT answers and the final review treats
+	// them differently, so the field is a string rather than a bool.
+	AllowsExportUse string `json:"allowsExportUse"`
+}
+
+// SetAssetLicense writes one asset's licence record.
+func (b *AssetsBinding) SetAssetLicense(request SetAssetLicenseRequest) error {
+	service := b.assetService()
+	if service == nil {
+		return bindingUnavailable()
+	}
+	if err := service.SetAssetLicense(b.context(), appassets.SetAssetLicenseRequest{
+		AssetID:         request.AssetID,
+		License:         request.License,
+		LicenseSource:   request.LicenseSource,
+		AllowsExportUse: request.AllowsExportUse,
+	}); err != nil {
+		return toAssetError(err)
+	}
+	return nil
 }

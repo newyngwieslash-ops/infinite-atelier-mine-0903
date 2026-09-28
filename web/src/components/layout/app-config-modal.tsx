@@ -6,6 +6,7 @@ import { useTranslation } from "react-i18next";
 import { ModelPicker } from "@/components/model-picker";
 import { ChannelEditorDrawer } from "@/components/layout/channel-editor-drawer";
 import { ProjectBackupPanel } from "@/components/config/backup-panel";
+import { AppSettingsPanel } from "@/components/config/app-settings-panel";
 import { GarbageCollectionPanel } from "@/components/config/garbage-collection-panel";
 import { DiagnosticsPanel } from "@/components/config/diagnostics-panel";
 import { LegacySecretStatus } from "@/components/layout/legacy-secret-notice";
@@ -200,6 +201,11 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                                 </Form.Item>
                             </Form>
                         ),
+                    },
+                    {
+                        key: "appSettings",
+                        label: t("config.tabs.appSettings"),
+                        children: <AppSettingsPanel />,
                     },
                     {
                         key: "backup",

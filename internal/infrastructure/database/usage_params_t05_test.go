@@ -105,3 +105,70 @@ func TestSetAssetLicenseRoundTrip(t *testing.T) {
 		t.Fatal("an unknown asset accepted a licence")
 	}
 }
+
+// TestRP07LicenseTriStateRoundTrip is RP-07.1's contract over the real
+// repository: the licence record's tri-state survives write → read, unknown
+// and refused stay distinct, and an invented answer is refused.
+func TestRP07LicenseTriStateRoundTrip(t *testing.T) {
+	harness := newMediaHarness(t)
+	repo := NewAssetRepository(harness.db)
+	ctx := context.Background()
+
+	// An image asset with NO licence record yet — the unknown state every
+	// pre-000031 row has.
+	if _, err := harness.db.ExecContext(ctx, `INSERT INTO assets
+		(id, project_id, asset_type, name, current_approved_version_id, status, created_at, updated_at, revision)
+		VALUES ('lic-asset-rp07', 'drama-project', 'image', 'frame', '', 'active',
+		 '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 1)`); err != nil {
+		t.Fatal(err)
+	}
+
+	// UNKNOWN → the record is absent, and the read says so.
+	record, err := repo.GetAsset(ctx, "lic-asset-rp07")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.AllowsExportUse != "" || record.License != "" {
+		t.Fatalf("a fresh asset carries a licence record: %+v", record)
+	}
+
+	// ALLOWED with provenance.
+	if err := repo.SetAssetLicense(ctx, "lic-asset-rp07", "CC-BY-4.0", "user", "1"); err != nil {
+		t.Fatalf("write allowed: %v", err)
+	}
+	record, err = repo.GetAsset(ctx, "lic-asset-rp07")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.AllowsExportUse != "1" || record.License != "CC-BY-4.0" || record.LicenseSource != "user" {
+		t.Fatalf("allowed read-back = %+v", record)
+	}
+
+	// REFUSED stays distinct from unknown: '' and '0' are different answers
+	// and the final review grades them differently.
+	if err := repo.SetAssetLicense(ctx, "lic-asset-rp07", "all rights reserved", "user", "0"); err != nil {
+		t.Fatalf("write refused: %v", err)
+	}
+	record, err = repo.GetAsset(ctx, "lic-asset-rp07")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.AllowsExportUse != "0" {
+		t.Fatalf("refused read-back = %q, want \"0\"", record.AllowsExportUse)
+	}
+
+	// An invented answer is refused BEFORE the write.
+	if err := repo.SetAssetLicense(ctx, "lic-asset-rp07", "x", "user", "maybe"); err == nil {
+		t.Fatal("a non-tri-state answer was accepted")
+	}
+	// And the stored record is unchanged by the refusal.
+	record, _ = repo.GetAsset(ctx, "lic-asset-rp07")
+	if record.AllowsExportUse != "0" {
+		t.Fatalf("the refused write mutated the row: %q", record.AllowsExportUse)
+	}
+
+	// An unknown asset is a not-found, not a silent success.
+	if err := repo.SetAssetLicense(ctx, "no-such-asset", "", "", "1"); err == nil {
+		t.Fatal("a licence was written to an asset that does not exist")
+	}
+}

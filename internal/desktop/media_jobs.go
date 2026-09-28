@@ -29,11 +29,12 @@ import (
 
 // Bounds on the media inputs, so one command cannot enqueue an unbounded payload.
 const (
+	// defaultVideoSeconds is what a request that states no duration gets, and
+	// what the capability read reports as the default (RP-03.1).
+	defaultVideoSeconds = 4
 	// maxVideoSeconds bounds one video request. A shot is seconds long, and an episode's worth of
 	// minutes in a single call is a caller that meant a batch.
 	maxVideoSeconds = 60
-
-
 
 	// maxMediaReferences bounds the reference images one video request carries: a first frame, a last
 	// frame and a handful of style references.
@@ -56,6 +57,53 @@ var videoSizeAllowed = map[string]bool{
 	"1280x720":  true,
 	"1024x1792": true,
 	"1792x1024": true,
+}
+
+// VideoCapabilitiesDTO is the queryable answer to "what can this build's video
+// providers accept" (RP-03.1). The UI renders the lists as CHOICES instead of
+// offering a numeric field whose values the backend may refuse, so the set a
+// user can select and the set the commands accept are the same set by
+// construction rather than by a copy that can drift.
+type VideoCapabilitiesDTO struct {
+	// AllowedSeconds is the vendor's documented `seconds` enum (T28).
+	AllowedSeconds []int `json:"allowedSeconds"`
+	// AllowedSizes is the vendor's documented `size` enum.
+	AllowedSizes []string `json:"allowedSizes"`
+	// DefaultSeconds is what a request that states no duration gets.
+	DefaultSeconds int `json:"defaultSeconds"`
+}
+
+// VideoCapabilities returns the video request values this build accepts.
+//
+// It is a plain function on the binding type's package rather than a method
+// needing the runtime: the capability is a property of the build's vendor
+// contract, not of a job store.
+func VideoCapabilities() VideoCapabilitiesDTO {
+	seconds := make([]int, 0, len(videoSecondsAllowed))
+	for value := range videoSecondsAllowed {
+		seconds = append(seconds, value)
+	}
+	// Sorted, so the UI's choices render in a stable order.
+	for i := 1; i < len(seconds); i++ {
+		for j := i; j > 0 && seconds[j] < seconds[j-1]; j-- {
+			seconds[j], seconds[j-1] = seconds[j-1], seconds[j]
+		}
+	}
+	sizes := make([]string, 0, len(videoSizeAllowed))
+	for value := range videoSizeAllowed {
+		sizes = append(sizes, value)
+	}
+	// Sizes sorted for the same stable-render reason.
+	for i := 1; i < len(sizes); i++ {
+		for j := i; j > 0 && sizes[j] < sizes[j-1]; j-- {
+			sizes[j], sizes[j-1] = sizes[j-1], sizes[j]
+		}
+	}
+	return VideoCapabilitiesDTO{
+		AllowedSeconds: seconds,
+		AllowedSizes:   sizes,
+		DefaultSeconds: defaultVideoSeconds,
+	}
 }
 
 // SubmitVideoJobRequest asks for one shot's video.
@@ -104,7 +152,7 @@ func (b *JobsBinding) SubmitVideoJob(request SubmitVideoJobRequest) (JobDTO, err
 	}
 	seconds := request.Seconds
 	if seconds <= 0 {
-		seconds = 4
+		seconds = defaultVideoSeconds
 	}
 	if seconds > maxVideoSeconds {
 		// A single command must not enqueue an unbounded clip: a provider bills by the second, and
@@ -272,9 +320,19 @@ func submitVideoBatch(ctx context.Context, service jobSubmitter, request SubmitV
 	}
 	seconds := request.Seconds
 	if seconds <= 0 {
-		seconds = 4
+		seconds = defaultVideoSeconds
 	}
 	if seconds > maxVideoSeconds {
+		return result, bindingInvalidInput()
+	}
+	// RP-03.1: the batch shares the SINGLE command's enum rule — a batch that
+	// accepted what the single refused would make the two paths disagree about
+	// what a valid request is.
+	if !videoSecondsAllowed[seconds] {
+		return result, bindingInvalidInput()
+	}
+	size := strings.TrimSpace(request.Size)
+	if size != "" && !videoSizeAllowed[size] {
 		return result, bindingInvalidInput()
 	}
 
@@ -494,7 +552,7 @@ type SubmitEffectJobRequest struct {
 	EpisodeID string `json:"episodeId"`
 	// ShotID is the shot the effect punctuates, and it is the job's entity —
 	// the same subject the collection and the mix's effect join read.
-	ShotID string `json:"shotId"`
+	ShotID     string `json:"shotId"`
 	ProviderID string `json:"providerId"`
 	Model      string `json:"model"`
 	// Description is what the scene should SOUND like, in the language the

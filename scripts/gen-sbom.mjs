@@ -58,6 +58,24 @@ import { fileURLToPath } from "node:url";
 const repoRoot = resolve(fileURLToPath(new URL(".", import.meta.url)), "..");
 const sbomRoot = join(repoRoot, "sbom");
 
+
+// RP-10.1: the project toolchain, read from go.mod, is the version the
+// generator pins `go env` to. The old hardcoded go1.25.0 could resolve a
+// DIFFERENT module cache than the toolchain that builds the project, which
+// silently changed licence identification between machines. go.mod's own
+// `toolchain` directive is the single source of truth; a build without the
+// directive keeps the environment's go.
+function projectToolchain() {
+    try {
+        const goMod = readFileSync(join(repoRoot, "go.mod"), "utf8");
+        const match = goMod.match(/^toolchain\s+(go\S+)\s*$/m);
+        if (match) return match[1];
+    } catch { /* go.mod unreadable: the caller below reports the cause */ }
+    return "";
+}
+
+const PROJECT_TOOLCHAIN = projectToolchain();
+
 // --- Go module cache location -------------------------------------------------
 //
 // `go env GOMODCACHE` is asked rather than assumed, because the path is per-machine.
@@ -69,7 +87,7 @@ function goEnv(key) {
         return execFileSync("go", ["env", key], {
             cwd: repoRoot,
             encoding: "utf8",
-            env: { ...process.env, GOTOOLCHAIN: process.env.GOTOOLCHAIN || "go1.25.0", GOSUMDB: process.env.GOSUMDB || "sum.golang.org" },
+            env: { ...process.env, GOTOOLCHAIN: process.env.GOTOOLCHAIN || PROJECT_TOOLCHAIN, GOSUMDB: process.env.GOSUMDB || "sum.golang.org" },
             stdio: ["ignore", "pipe", "ignore"],
         }).trim();
     } catch {
@@ -218,7 +236,7 @@ function goListSet(args) {
             cwd: repoRoot,
             encoding: "utf8",
             maxBuffer: 96 * 1024 * 1024,
-            env: { ...process.env, GOTOOLCHAIN: process.env.GOTOOLCHAIN || "go1.25.0", GOSUMDB: process.env.GOSUMDB || "sum.golang.org", GOFLAGS: "-mod=readonly" },
+            env: { ...process.env, GOTOOLCHAIN: process.env.GOTOOLCHAIN || PROJECT_TOOLCHAIN, GOSUMDB: process.env.GOSUMDB || "sum.golang.org", GOFLAGS: "-mod=readonly", CGO_ENABLED: process.env.CGO_ENABLED || "1" },
             stdio: ["ignore", "pipe", "pipe"],
         });
     } catch (err) {

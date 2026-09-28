@@ -183,8 +183,8 @@ var _ stagepipeline.Layer = (*Layer)(nil)
 func (l *Layer) Name() string { return "scriptpipeline" }
 
 // Stages lists the three stages in pipeline order.
-func (l *Layer) Stages() []Stage                  { return Stages() }
-func (l *Layer) DependsOn(stage Stage) []Stage    { return DependsOn(stage) }
+func (l *Layer) Stages() []Stage               { return Stages() }
+func (l *Layer) DependsOn(stage Stage) []Stage { return DependsOn(stage) }
 
 // AgentsFor returns the agents serving one stage.
 func (l *Layer) AgentsFor(stage Stage) (stagepipeline.StageAgents, bool) {

@@ -37,8 +37,10 @@ export default defineConfig({
         },
     ],
     webServer: {
-        // A dedicated port, so the suite never disturbs a developer's own server.
-        command: "npm run dev -- --port 3100 --strictPort",
+        // A dedicated port, so the suite never disturbs a developer's own server,
+        // and an explicit loopback host so the e2e surface never depends on Vite's
+        // default host resolution (RP-10.2).
+        command: "npm run dev -- --port 3100 --strictPort --host 127.0.0.1",
         url: "http://127.0.0.1:3100",
         reuseExistingServer: false,
         timeout: 120_000,

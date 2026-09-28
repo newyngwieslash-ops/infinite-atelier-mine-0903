@@ -9,6 +9,7 @@ import (
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/desktop"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/infrastructure/database"
 	infraproviders "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/infrastructure/providers"
+	"time"
 )
 
 // providerWiring holds the composed provider stack so app.go stays a thin
@@ -22,6 +23,9 @@ type providerWiring struct {
 	secretsService *appsecrets.Service
 	configService  *appproviders.Service
 	requests       *appproviders.RequestService
+	// manifestService is RP-05.3's versioned manifest management. Optional:
+	// composed only when the database (and migration 000032's tables) exist.
+	manifestService *appproviders.ManifestService
 	// registry is the same configured provider stack the job runner uses, so
 	// provider policy, secrets and audit are shared rather than duplicated.
 	registry *infraproviders.Registry
@@ -40,6 +44,13 @@ func composeProviders(db *sql.DB, publisher appproviders.EventPublisher) *provid
 	healthChecker := infraproviders.NewHealthChecker(registry)
 	configService := appproviders.NewService(repository, registry, healthChecker)
 	requests := appproviders.NewRequestService(registry, publisher)
+	// RP-05.3: the manifest version service, over migration 000032's tables.
+	// The clock comes from the shared pattern (UTC now); ids are content-hash
+	// derived inside the service, so none are minted here.
+	manifestService := appproviders.NewManifestService(
+		database.NewManifestRepository(db), repository,
+		func() (string, error) { return "manifest-fixed", nil },
+		func() string { return time.Now().UTC().Format(time.RFC3339) })
 	// Media adapters: WP-03 registers the mock video/audio implementations so
 	// the job pipeline is exercisable end to end, and the mock stays registered
 	// for `mock_media` — a build keeps it and configures a real provider beside
@@ -87,10 +98,11 @@ func composeProviders(db *sql.DB, publisher appproviders.EventPublisher) *provid
 	// deterministic image adapter builds its own registry and registers it, which is exactly
 	// what the batch's tests do and what the mock-text adapter has always required.
 	return &providerWiring{
-		secretsService: secretService,
-		configService:  configService,
-		requests:       requests,
-		registry:       registry,
+		secretsService:  secretService,
+		configService:   configService,
+		requests:        requests,
+		manifestService: manifestService,
+		registry:        registry,
 	}
 }
 
@@ -106,6 +118,13 @@ func (w *providerWiring) attach(ctx context.Context) {
 	}
 	if w.providersBinding != nil {
 		desktop.AttachProviders(w.providersBinding, ctx, w.configService, w.requests)
+	}
+	// RP-05.3: the manifest version service rides the same wiring. A build
+	// without the manifest store (no database) leaves the binding's manifests
+	// nil, and the manifest commands answer "unavailable" — the config
+	// commands keep working.
+	if w.providersBinding != nil && w.manifestService != nil {
+		desktop.AttachProviderManifests(w.providersBinding, w.manifestService)
 	}
 }
 

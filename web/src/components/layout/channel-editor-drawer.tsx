@@ -1,4 +1,4 @@
-import { Button, Drawer, Input, InputNumber, Segmented, Select, Space } from "antd";
+import { Alert, Button, Drawer, Input, InputNumber, Segmented, Select, Space } from "antd";
 import { ListPlus, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -40,6 +40,16 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
     const secureMode = isSecureProviderMode();
     const [draft, setDraft] = useState<ModelChannel | null>(channel);
     const [selectOpen, setSelectOpen] = useState(false);
+    /**
+     * RP-02.2: the save is now AWAITED. The old save fired the provider
+     * registration into the void (`void ... .catch(() => undefined)`) and
+     * closed the drawer as if it had succeeded, so a backend refusal left the
+     * UI and the registry diverged silently — and repeated clicks fired
+     * repeated registrations. `saving` guards the buttons and
+     * `saveError` names the failure instead of pretending.
+     */
+    const [saving, setSaving] = useState(false);
+    const [saveError, setSaveError] = useState("");
     const apiFormatOptions: Array<{ label: string; value: ApiCallFormat }> = [
         { label: "OpenAI", value: "openai" },
         { label: "Gemini", value: "gemini" },
@@ -68,16 +78,33 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
     const setCapability = (name: string, capability: ModelCapability) => setModels(draft.models.map((model) => (model.name === name ? { ...model, capability } : model)));
     const removeModel = (name: string) => setModels(draft.models.filter((model) => model.name !== name));
 
-    const save = () => {
-        const saved = { ...draft, name: draft.name.trim() || t("config.channels.unnamed"), models: normalizeChannelModels(draft.models) };
-        onSave(saved);
-        // Register the non-secret provider metadata in the Go registry so a
-        // stored secret has a provider to attach to. The key itself is written
-        // only through the secure field's secrets binding.
-        if (secureMode && saved.baseUrl.trim()) {
-            void saveProviderConfig(toProviderConfigInput(saved)).catch(() => undefined);
+    const save = async () => {
+        if (!draft || saving) return;
+        setSaving(true);
+        setSaveError("");
+        try {
+            const saved = { ...draft, name: draft.name.trim() || t("config.channels.unnamed"), models: normalizeChannelModels(draft.models) };
+            // Register the non-secret provider metadata in the Go registry so a
+            // stored secret has a provider to attach to. The key itself is written
+            // only through the secure field's secrets binding. The save is
+            // AWAITED (RP-02.2): the drawer stays open and shows the error when
+            // the backend refuses, instead of reporting success on a hope.
+            if (secureMode && saved.baseUrl.trim()) {
+                try {
+                    await saveProviderConfig(toProviderConfigInput(saved));
+                } catch (failure) {
+                    const reason = failure instanceof Error ? failure.message : String(failure);
+                    setSaveError(reason || t("config.channelEditor.saveFailed"));
+                    return;
+                }
+            }
+            // Only a CONFIRMED save reaches the caller and closes the drawer;
+            // the draft stays exactly as the user left it for correction.
+            onSave(saved);
+            onClose();
+        } finally {
+            setSaving(false);
         }
-        onClose();
     };
 
     return (
@@ -89,14 +116,24 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
             styles={{ body: { paddingTop: 16 } }}
             extra={
                 <Space>
-                    <Button onClick={onClose}>{t("common.cancel")}</Button>
-                    <Button type="primary" onClick={save}>
+                    <Button onClick={onClose} disabled={saving}>{t("common.cancel")}</Button>
+                    <Button type="primary" loading={saving} onClick={() => void save()}>
                         {t("common.save")}
                     </Button>
                 </Space>
             }
         >
-            <div className="grid gap-4 md:grid-cols-2">
+        {saveError ? (
+            <Alert
+                type="error"
+                showIcon
+                className="mb-4"
+                message={t("config.channelEditor.saveFailed")}
+                description={saveError}
+                data-testid="channel-save-error"
+            />
+        ) : null}
+        <div className="grid gap-4 md:grid-cols-2">
                 <label className="block">
                     <span className="mb-1 block text-sm font-medium">{t("config.channelEditor.name")}</span>
                     <Input value={draft.name} onChange={(event) => patch({ name: event.target.value })} />
@@ -125,6 +162,25 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
                         data-testid="channel-max-concurrency"
                     />
                     <span className="mt-1 block text-xs text-stone-500">{t("config.channelEditor.maxConcurrencyHint")}</span>
+                </label>
+                {/*
+                  The provider's requests-per-minute ceiling (T07, RP-02.1). ZERO IS
+                  UNLIMITED, and the hint says so, for the same reason the concurrency
+                  field's does: an unexplained 0 reads as "no requests allowed". The
+                  value rides the save into provider_configs.rate_limit_per_minute;
+                  leaving it untouched preserves an already-configured limit.
+                */}
+                <label className="block">
+                    <span className="mb-1 block text-sm font-medium">{t("config.channelEditor.rateLimit")}</span>
+                    <InputNumber
+                        className="w-full"
+                        min={0}
+                        max={100000}
+                        value={draft.rateLimitPerMinute ?? 0}
+                        onChange={(value) => patch({ rateLimitPerMinute: Math.max(0, Math.trunc(Number(value ?? 0))) })}
+                        data-testid="channel-rate-limit"
+                    />
+                    <span className="mt-1 block text-xs text-stone-500">{t("config.channelEditor.rateLimitHint")}</span>
                 </label>
                 {/*
                   Secure mode stores keys in the OS credential store through the

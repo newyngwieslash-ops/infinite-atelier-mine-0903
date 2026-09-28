@@ -87,13 +87,35 @@ if (Test-Path (Join-Path $RootDir "go.mod")) {
     if (-not (Get-Command go -ErrorAction SilentlyContinue)) { throw "go.mod exists but go is unavailable" }
     Push-Location $RootDir
     try {
+        # gofmt -l exits 0 even when it lists files, so the FAIL must come from
+        # us: a listed file is unformatted code (RP-10.2's alignment with the
+        # sh script's gate).
+        Invoke-Step "Go formatting (gofmt)" {
+            $Unformatted = gofmt -l .
+            if ($Unformatted) { throw "gofmt found unformatted files:`n$Unformatted" }
+        }
         Invoke-Step "Go tests" { go test ./... -count=1 }
         Invoke-Step "Go vet" { go vet ./... }
+        Invoke-Step "release prerequisites" { node scripts/check-release-prerequisites.mjs }
     } finally {
         Pop-Location
     }
 } else {
     Write-Host "SKIP: Go tests and vet — go.mod is unavailable."
+}
+
+# RP-10.2: the NSIS template's tracked source must be in sync with the build
+# input before any build step consumes it.
+$NsisSync = Join-Path $RootDir "scripts\sync-nsis-template.mjs"
+if (Test-Path $NsisSync) {
+    Push-Location $RootDir
+    try {
+        Invoke-Step "NSIS template source is in sync" { node scripts/sync-nsis-template.mjs --check }
+    } finally {
+        Pop-Location
+    }
+} else {
+    Write-Host "SKIP: NSIS template sync — scripts/sync-nsis-template.mjs is missing."
 }
 
 if (Get-Command wails -ErrorAction SilentlyContinue) {

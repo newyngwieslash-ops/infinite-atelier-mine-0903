@@ -32,4 +32,6 @@ export function ListUsagesOfConsumer(arg1:string,arg2:string):Promise<Array<desk
 
 export function ListVersions(arg1:string):Promise<Array<desktop.AssetVersionDTO>>;
 
+export function SetAssetLicense(arg1:desktop.SetAssetLicenseRequest):Promise<void>;
+
 export function SetUsageParams(arg1:desktop.SetUsageParamsRequest):Promise<void>;

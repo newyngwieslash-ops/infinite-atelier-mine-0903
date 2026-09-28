@@ -144,8 +144,8 @@ type FinalShot struct {
 	// which a bed or one line's speech satisfies while other lines stay
 	// silent; the counts answer "does every line the shot speaks have its
 	// take".
-	SpokenLineCount   int
-	CoveredLineCount  int
+	SpokenLineCount  int
+	CoveredLineCount int
 	// UncoveredLines name the lines without audio, so a finding can point at
 	// the exact line rather than the shot.
 	UncoveredLines []FinalLine
@@ -244,6 +244,13 @@ const (
 	RuleAudioComplete = "AUDIO_COMPLETE"
 	// RuleSubtitleComplete is 11.4's "音频和字幕完整", its subtitle clause.
 	RuleSubtitleComplete = "SUBTITLE_COMPLETE"
+	// RP-07.2's content rules: located black/silent windows in the approved
+	// media, reported at MAJOR for the reviewer to judge (an intentional fade
+	// IS a black range), plus the "engine absent" note that keeps a missing
+	// analyser from reading as a clean bill.
+	RuleContentBlackFrames = "CONTENT_BLACK_FRAMES"
+	RuleContentSilence     = "CONTENT_SILENCE"
+	RuleContentNotAnalysed = "CONTENT_NOT_ANALYSED"
 	// RuleMediaFilePresent is 11.4's "媒体文件存在".
 	RuleMediaFilePresent = "MEDIA_FILE_PRESENT"
 	// RuleStaleOpen is 11.4's "stale/waiver".
@@ -295,6 +302,9 @@ type FinalRuleset struct {
 	maxWidth      int
 	maxHeight     int
 	maxFPS        int
+	// analyzer is RP-07.2's content port (black frames / silence), optional:
+	// nil keeps the metadata-only review and the report says so.
+	analyzer ContentAnalyzer
 }
 
 // NewFinalRuleset builds the ruleset.
@@ -353,6 +363,11 @@ func (f *FinalRuleset) CheckEpisode(ctx context.Context, episodeID string) ([]co
 	findings = append(findings, f.checkStale(facts)...)
 	findings = append(findings, f.checkDuration(facts)...)
 	findings = append(findings, f.checkLicenses(facts)...)
+	contentFindings, contentErr := f.checkContent(ctx, facts)
+	if contentErr != nil {
+		return nil, contentErr
+	}
+	findings = append(findings, contentFindings...)
 	findings = append(findings, f.checkExportParameters(facts)...)
 	findings = append(findings, f.checkTraceability(facts)...)
 	return consistency.Sort(consistency.Dedupe(findings)), nil

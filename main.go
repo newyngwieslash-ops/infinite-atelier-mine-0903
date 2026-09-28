@@ -56,6 +56,7 @@ func run() error {
 	application.projectsBinding = &desktop.ProjectsBinding{}
 	application.legacyUploadBinding = desktop.NewLegacyUploadBinding()
 	application.backupBinding = &desktop.BackupBinding{}
+	application.settingsBinding = &desktop.SettingsBinding{}
 	// FR-180's diagnostics bundle. Declared here like the others so it exists on the binding
 	// surface; its service is attached only when startup composes a writable database, because every
 	// section it carries is read from the database or the log file.
@@ -111,6 +112,7 @@ func run() error {
 			application.projectsBinding,
 			application.legacyUploadBinding,
 			application.backupBinding,
+			application.settingsBinding,
 			application.diagnosticsBinding,
 			application.dramaBinding,
 			application.assetsBinding,

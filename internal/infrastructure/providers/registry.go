@@ -416,11 +416,15 @@ func (r *Registry) TextProviderFor(ctx context.Context, providerID string) (prov
 }
 
 // buildTextAdapter maps a kind to its adapter constructor. Adding a kind here
-// is the only way to make it reachable.
+// is the only way to make it reachable. RP-02.3: `gemini_compatible` routes to
+// the Gemini-native generateContent adapter — NOT the OpenAI-compatible chat
+// adapter — so a kind never reaches the other protocol family's endpoint.
 func buildTextAdapter(kind provider.Kind, registry *Registry) (providers.TextPort, error) {
 	switch kind {
-	case provider.KindOpenAICompatible, provider.KindGeminiCompatible:
+	case provider.KindOpenAICompatible:
 		return NewOpenAITextAdapter(registry), nil
+	case provider.KindGeminiCompatible:
+		return NewGeminiTextAdapter(registry), nil
 	case provider.KindMockText:
 		// The mock is returned as the SAME instance it was registered as rather than
 		// built per call, because its scenario and its call log are state a caller set

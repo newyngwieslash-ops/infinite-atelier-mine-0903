@@ -47,20 +47,31 @@ const ManifestMaxBytes = 256 << 10
 
 // Manifest is one declarative provider.
 type Manifest struct {
-	APIVersion string         `json:"apiVersion"`
-	Kind       string         `json:"kind"`
-	Name       string         `json:"name"`
-	Capability Capability     `json:"capability"`
-	Endpoints  ManifestHTTP   `json:"http"`
-	Mapping    ManifestMap    `json:"mapping"`
-	Poll       *ManifestPoll  `json:"poll,omitempty"`
+	APIVersion string        `json:"apiVersion"`
+	Kind       string        `json:"kind"`
+	Name       string        `json:"name"`
+	Capability Capability    `json:"capability"`
+	Endpoints  ManifestHTTP  `json:"http"`
+	Mapping    ManifestMap   `json:"mapping"`
+	Poll       *ManifestPoll `json:"poll,omitempty"`
 }
 
 // ManifestHTTP names the endpoint paths, relative to the provider config's
 // base URL. Paths are VALIDATED: they must start with a slash, name no host,
 // and carry no query — a manifest cannot redirect a request's destination.
 type ManifestHTTP struct {
-	SubmitPath string `json:"submitPath"`
+	// Method is the submit request's HTTP verb. RP-05.1: the empty value
+	// means POST (the only verb every capability's submit needs today), and
+	// anything outside the allowlist {POST} is refused — a GET-with-body or a
+	// DELETE is not configuration this build runs.
+	Method string `json:"method,omitempty"`
+	// Headers names additional non-sensitive request headers as literal
+	// name/value pairs. Names and values are validated: a header named
+	// Authorization, Cookie, or any credential-shaped name is refused —
+	// credentials are resolved from the secret store at request time, never
+	// declared in a manifest.
+	Headers    map[string]string `json:"headers,omitempty"`
+	SubmitPath string            `json:"submitPath"`
 	// PollPath and FetchPath are required for async capabilities (video) and
 	// refused for sync ones — each capability states its own shape.
 	PollPath  string `json:"pollPath,omitempty"`
@@ -88,11 +99,27 @@ type ManifestMap struct {
 }
 
 // ManifestPoll is an async capability's polling configuration.
+//
+// RP-05.1: the manifest may only TIGHTEN the server's bounds, never widen
+// them — a poll that never stops is a billable loop, so the server caps the
+// floor and the ceiling and refuses an interval or count outside them.
 type ManifestPoll struct {
 	IntervalSeconds int `json:"intervalSeconds,omitempty"`
 	// MaxPolls bounds how long a poll may run before the job is failed.
 	MaxPolls int `json:"maxPolls,omitempty"`
 }
+
+// Server-side poll bounds. A manifest's own poll block, when present, must
+// sit inside them.
+const (
+	// ManifestMinPollIntervalSeconds keeps a poll from hammering a provider.
+	ManifestMinPollIntervalSeconds = 1
+	// ManifestMaxPollIntervalSeconds bounds the wait between polls; longer is
+	// a stall, not a poll.
+	ManifestMaxPollIntervalSeconds = 120
+	// ManifestMaxPolls bounds how many polls one job may spend.
+	ManifestMaxPolls = 1000
+)
 
 // LoadManifest decodes and validates one manifest document.
 //
@@ -129,17 +156,26 @@ func (m Manifest) Validate() error {
 	if !IsValidCapability(m.Capability) {
 		return NewConfigurationErrorWith("That manifest's capability is not recognised.")
 	}
-	if !strings.HasPrefix(m.Endpoints.SubmitPath, "/") || strings.ContainsAny(m.Endpoints.SubmitPath, "?# ") {
-		return NewConfigurationErrorWith("A submit path must be a path: it starts with a slash and carries no query or fragment.")
+	if err := validateManifestPath("submit", m.Endpoints.SubmitPath); err != nil {
+		return err
 	}
 	async := m.Capability == CapabilityVideo
 	if async {
-		if !strings.HasPrefix(m.Endpoints.PollPath, "/") || !strings.HasPrefix(m.Endpoints.FetchPath, "/") {
-			return NewConfigurationErrorWith("An async manifest must name poll and fetch paths.")
+		if err := validateManifestPath("poll", m.Endpoints.PollPath); err != nil {
+			return err
+		}
+		if err := validateManifestPath("fetch", m.Endpoints.FetchPath); err != nil {
+			return err
 		}
 		if strings.TrimSpace(m.Endpoints.ResultPath) == "" || strings.TrimSpace(m.Endpoints.StatusPath) == "" {
 			return NewConfigurationErrorWith("An async manifest must name its result id and status fields.")
 		}
+	}
+	if err := validateHeaders(m.Endpoints.Headers); err != nil {
+		return err
+	}
+	if err := validatePollBounds(m.Poll); err != nil {
+		return err
 	}
 	if strings.TrimSpace(m.Mapping.Template) == "" {
 		return NewConfigurationErrorWith("A manifest must state its request template.")
@@ -166,6 +202,71 @@ var validPlaceholders = map[string]bool{
 	"size":        true,
 }
 
+// validateManifestPath applies the closed path rules RP-05.1 states: a
+// manifest endpoint is a PATH under the configured base URL, so scheme/host
+// overrides, protocol-relative forms, userinfo, query/fragment, backslash
+// separators and dot segments are all refused — each is a way to move the
+// request's destination past the SSRF guard's reach.
+func validateManifestPath(field, path string) error {
+	if !strings.HasPrefix(path, "/") {
+		return NewConfigurationErrorWith("A " + field + " path must start with a slash: a manifest cannot redirect a request's destination.")
+	}
+	if strings.ContainsAny(path, "?# \\\\") {
+		return NewConfigurationErrorWith("A " + field + " path carries no query, fragment or backslash.")
+	}
+	if strings.Contains(path, "//") || strings.Contains(path, "/./") || strings.HasSuffix(path, "/.") {
+		return NewConfigurationErrorWith("A " + field + " path carries no empty or dot path segments.")
+	}
+	if strings.Contains(path, "%2f") || strings.Contains(path, "%2F") || strings.Contains(path, "%5c") || strings.Contains(path, "%5C") {
+		return NewConfigurationErrorWith("A " + field + " path carries no encoded separators.")
+	}
+	return nil
+}
+
+// manifestForbiddenHeaders is the credential-shaped header vocabulary a
+// manifest may never declare. Credentials are the secret store's job.
+var manifestForbiddenHeaders = map[string]bool{
+	"authorization":       true,
+	"proxy-authorization": true,
+	"cookie":              true,
+	"set-cookie":          true,
+	"x-api-key":           true,
+	"x-goog-api-key":      true,
+}
+
+// validateHeaders checks the declared header map against the closed rules:
+// token-form names only, no credential-shaped names, and bounded values.
+func validateHeaders(headers map[string]string) error {
+	for name, value := range headers {
+		lower := strings.ToLower(name)
+		if manifestForbiddenHeaders[lower] {
+			return NewConfigurationErrorWith("A manifest may not declare the credential header \"" + name + "\".")
+		}
+		if strings.TrimSpace(name) == "" || strings.ContainsAny(name, " :\r\n") {
+			return NewConfigurationErrorWith("A manifest's header names must be header tokens.")
+		}
+		if len(value) > 512 || strings.ContainsAny(value, "\r\n") {
+			return NewConfigurationErrorWith("A manifest's header values must be short single lines.")
+		}
+	}
+	return nil
+}
+
+// validatePollBounds checks an async manifest's poll block against the
+// server's caps: the manifest may tighten them, never widen.
+func validatePollBounds(poll *ManifestPoll) error {
+	if poll == nil {
+		return nil
+	}
+	if poll.IntervalSeconds != 0 && (poll.IntervalSeconds < ManifestMinPollIntervalSeconds || poll.IntervalSeconds > ManifestMaxPollIntervalSeconds) {
+		return NewConfigurationErrorWith("A manifest's poll interval must sit between the server's one-second floor and its two-minute ceiling.")
+	}
+	if poll.MaxPolls != 0 && poll.MaxPolls > ManifestMaxPolls {
+		return NewConfigurationErrorWith("A manifest's poll count may not exceed the server's cap.")
+	}
+	return nil
+}
+
 // validateTemplate checks the request template's placeholders against the
 // closed set.
 func validateTemplate(template string) error {
@@ -186,6 +287,7 @@ func validateTemplate(template string) error {
 		start = open + close_ + 2
 	}
 }
+
 // NewConfigurationErrorWith reports configuration the domain refuses, with the
 // message a caller can act on — the manifest validation's error shape.
 func NewConfigurationErrorWith(message string) *Error {

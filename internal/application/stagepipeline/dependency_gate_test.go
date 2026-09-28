@@ -39,9 +39,9 @@ type gatedLayer struct {
 	depends []Stage
 }
 
-func (gatedLayer) Name() string                    { return "gatedpipeline" }
-func (gatedLayer) Stages() []Stage                 { return []Stage{"first_stage", "second_stage"} }
-func (g gatedLayer) DependsOn(Stage) []Stage       { return g.depends }
+func (gatedLayer) Name() string              { return "gatedpipeline" }
+func (gatedLayer) Stages() []Stage           { return []Stage{"first_stage", "second_stage"} }
+func (g gatedLayer) DependsOn(Stage) []Stage { return g.depends }
 func (gatedLayer) AgentsFor(Stage) (StageAgents, bool) {
 	return StageAgents{ArtifactType: "x"}, true
 }

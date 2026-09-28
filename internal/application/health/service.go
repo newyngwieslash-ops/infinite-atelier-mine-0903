@@ -13,8 +13,8 @@ type Snapshot struct {
 	// "not_configured", "unavailable", or "provider". A user who configured a
 	// local model must see here whether it actually loaded — the quiet loss
 	// of the local path is the failure FR-120 names.
-	Embedding          string `json:"embedding"`
-	EmbeddingReason    string `json:"embeddingReason,omitempty"`
+	Embedding       string `json:"embedding"`
+	EmbeddingReason string `json:"embeddingReason,omitempty"`
 }
 
 // Probe is the smallest database liveness check the health service needs.

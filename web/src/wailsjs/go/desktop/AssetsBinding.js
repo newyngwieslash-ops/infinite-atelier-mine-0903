@@ -62,6 +62,10 @@ export function ListVersions(arg1) {
   return window['go']['desktop']['AssetsBinding']['ListVersions'](arg1);
 }
 
+export function SetAssetLicense(arg1) {
+  return window['go']['desktop']['AssetsBinding']['SetAssetLicense'](arg1);
+}
+
 export function SetUsageParams(arg1) {
   return window['go']['desktop']['AssetsBinding']['SetUsageParams'](arg1);
 }

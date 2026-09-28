@@ -278,3 +278,15 @@ export async function readResultFile(storageKey: string): Promise<desktop.JobRes
     const { ReadResultFile } = await loadJobsBinding();
     return ReadResultFile(storageKey);
 }
+
+/**
+ * getVideoCapabilities reads the build's video request contract (RP-03.1):
+ * the seconds/size enums the backend's commands validate against, so the UI
+ * renders exactly those as choices instead of offering a free numeric field
+ * whose values the backend would refuse. It answers even when the job service
+ * is unavailable — the capability is the build's vendor contract, not state.
+ */
+export async function getVideoCapabilities(): Promise<desktop.VideoCapabilitiesDTO> {
+    const { VideoCapabilities } = await loadJobsBinding();
+    return VideoCapabilities();
+}

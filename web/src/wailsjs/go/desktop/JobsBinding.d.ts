@@ -24,8 +24,18 @@ export function SubmitAudioJob(arg1:desktop.SubmitAudioJobRequest):Promise<deskt
 
 export function SubmitEffectJob(arg1:desktop.SubmitEffectJobRequest):Promise<desktop.JobDTO>;
 
+export function SubmitExportJob(arg1:desktop.SubmitExportJobRequest):Promise<desktop.JobDTO>;
+
 export function SubmitImageJob(arg1:desktop.SubmitImageJobRequest):Promise<desktop.JobDTO>;
+
+export function SubmitImportJob(arg1:desktop.SubmitImportJobRequest):Promise<desktop.JobDTO>;
+
+export function SubmitMigrationJob(arg1:desktop.SubmitMigrationJobRequest):Promise<desktop.JobDTO>;
+
+export function SubmitThumbnailJob(arg1:desktop.SubmitThumbnailJobRequest):Promise<desktop.JobDTO>;
 
 export function SubmitVideoBatch(arg1:desktop.SubmitVideoBatchRequest):Promise<desktop.SubmitVideoBatchResultDTO>;
 
 export function SubmitVideoJob(arg1:desktop.SubmitVideoJobRequest):Promise<desktop.JobDTO>;
+
+export function VideoCapabilities():Promise<desktop.VideoCapabilitiesDTO>;

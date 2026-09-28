@@ -1,10 +1,36 @@
 # Implementation Status
 
-> Last updated: 2026-09-26（审计整改批次 T01–T31 后）
+> Last updated: 2026-09-28（PRD Gap Closure：RP-00～RP-05.1 完成后）
 > Product: Infinite Atelier Core + Drama Production Pack
-> Current work package: **T-batch（2026-09-26 审计整改）— 见下方「2026-09-26 审计整改批次」小节**
-> Status: **本批次交付 T01–T24 全部软件工作 + T26/T27/T28 的可本机部分（29/32 项完整或部分到位）；BLOCKED 仅剩 T25（VM）、T29（证书）、T32（推送授权）、T28 后半（付费冒烟）——各附零思考执行包，见小节末。**
-> 上一批（WP-23，section 0za）的结论保留在原段；与本品有出入的旧判定以本小节为准。**
+> Current work package: **RP-00～RP-11.3 可离线部分全部 COMPLETE（RP-10.2 verify/CI 对齐、NSIS 源码化、e2e 收口均已交付）；RP-08/11.2/12 BLOCKED 待用户授权**
+> 批次四（2026-09-29）补充交付：
+> - **RP-10.2**：verify.sh 与 verify.ps1 门语义对齐（两脚本同增 gofmt 门、release-prerequisites 门、NSIS 模板同步门，均 17 门对齐）；`verify.sh` 进程清理窄化——删除按 5173 端口杀进程的 `fuser/lsof` 逻辑（不再误杀用户自有 dev server），EXIT trap 只恢复 embed 占位文件；Playwright dev server 显式 `--host 127.0.0.1`（loopback）；**NSIS 模板源码化**——`packaging/windows/project.nsi`（含 T30 声明文件四 File 指令）为版本控制来源，`scripts/sync-nsis-template.mjs` 构建/CI 前校验（--check 拒绝漂移，绝不静默覆盖）；`scripts/verify-contract.test.mjs` 5 测试钉住两平台门清单、strict 机制、清理窄化、模板来源与 loopback。
+> - **RP-11.1（e2e 收口）**：`web/e2e/track-editor-roundtrip.spec.ts`——音轨编辑器 OPEN 行收口：经页面内生产服务模块跑 读→合并→替换→重开 全环，断言裁剪/台词关联/时长存活、编辑字段生效；浏览器证据类（原生 shell 归 RP-12.3）。全 e2e 套件 28 passed + 1 skipped（仅既有 provider 面跳过）。
+> - 测试矩阵更新：COVERED 34 / PARTIAL 2 / OPEN 4 / BLOCKED 2。
+> 批次三（2026-09-28 晚）补充：`agent-skill-editor.tsx` 组件 + `agent-skills.ts` 前端服务（版本历史/派生/激活三命令，生成字段大小写对齐，i18n 双语）。
+> 本批次（RP 批次二，2026-09-28 晚）新增交付：
+> - **RP-05.3**：`ProviderManifestEditor` 组件（预览→保存→激活三步，域层错误直接呈现，无执行语义）；`PreviewManifest/SaveManifest/ActivateManifest/ListManifestVersions` Binding 四命令 + `AttachProviderManifests` 组合接线；Binding 层恶意 Manifest 全路径拒绝测试 3 例（预览拒/保存零落库/无 store fail-closed）。
+> - **RP-09.2**：`SettingsBinding`（GetAutoBackup/SetAutoBackup，revision 守卫，敌意值边界拒绝）；`ParseAutoBackupSettings` 调度器装载（missing/hostile/disabled 三路）；app.go 启动接线（调度器从持久设置读取）；`AppSettingsPanel` 组件入设置页（"下次启动生效"明示）；测试 5 例。
+> - **RP-09.1**：`rp09-settings-inventory-2026-09-28.md`——FR-180 十一类设置逐项登记（存储/读/写/可改性/重启/测试/差异），9 类有证据、2 类如实 OPEN（日志保留上限、键盘焦点自动化）。
+> - **RP-10.3（部分）**：`scripts/check-release-prerequisites.mjs`——严格门把 ONNX/FFmpeg/race/NSIS 环境缺失变 FAIL（本机 report 模式 exit 0，strict 正确 FAIL=1——gcc/onnx/makensis 缺失如实暴露）。
+> - **RP-11.1（矩阵）**：`gap-closure-test-matrix.md`——RP-01～09 断链→回归用例映射：COVERED 33 / PARTIAL 2 / OPEN 5 / BLOCKED 2，每行指向真实测试文件。
+> - **RP-11.3（协议）**：`product-metrics-protocol.md`——测量前冻结的阈值/分母/样本/排除/失败分类规则（T27 单机渲染数字不替代 P95）。
+> Status: **本批次（RP 批次 2026-09-28）已交付以下软件事实，全部有测试证据：**
+>
+> - **RP-00**：执行前基线（`gap-closure-baseline-2026-09-28.md`）与范围冻结/FR-AC→RP 映射（`gap-closure-scope-decisions.md`，8 项 DECISION_REQUIRED 登记）。
+> - **RP-01（音轨完整性）**：`AssetUsageDTO` 携带 `id`+`params` 且四条返回路径统一走 `toAssetUsageDTO`（RP-01.1，Binding 已用 wails v2.15.0 重新生成，补齐此前缺失的 T05/T09 方法）；音轨编辑器保存「读全量快照→`mergeTrackEdit` 只覆盖编辑字段→发完整文档」，读取失败显示错误并禁用保存，移除 `as never`（RP-01.2，纯函数 7 spec）；`SetUsageParams` 写前校验（负 offset/倒置裁剪/负与超界与非有限音量/非正时长），拒绝发生在数据库写入前（RP-01.3，RED→GREEN + 真实 FFmpeg 混音回归：静音/音量 0/双台词隔离）。
+> - **RP-02（Provider）**：`kindForApiFormat`（gemini→`gemini_compatible`，未知拒绝）；`rateLimitPerMinute` 贯通 channel→sync→DTO→`ConfigInput`（`RateLimitPerMinuteSet` 区分缺失/显式 0，未声明保留已存值）+ 抽屉速率字段与双语 i18n（RP-02.1）；`syncProviderConfigsWithOutcome` 逐通道结果（registered/failed/skipped），抽屉保存改 await，失败显示 Alert、保留草稿、不关闭（RP-02.2）；**新增 `gemini_text.go`**——Gemini 原生 generateContent/streamGenerateContent?alt=sse 协议、x-goog-api-key、systemInstruction、usageMetadata，`buildTextAdapter` 按 kind 显式路由，httptest 证明 gemini kind 文本不再走 OpenAI chat 端点（RP-02.3）。
+> - **RP-03**：`VideoCapabilities` 可查询能力（4/8/12s + 四分辨率枚举 + 默认值），单发与批量共用同一枚举校验；视频页时长改能力驱动 Select、新增分辨率 Select（O02 并入），切换模型后非法值显式回落；Binding 重新生成。
+> - **RP-04（本地任务）**：类型化带版本输入 `ThumbnailInput/ImportInput/ExportInput/MigrationInput`（`decodeVersioned` 拒绝未知字段/旧 envelope/未声明版本），四类 handler 逐字段透传，import 结果改真实语义（chapters/entities/episodes 分列，不再拿章节数冒充实体数、不再固定 1 集）（RP-04.1）；import handler 改为经 story 服务读最新版本、从受管 store 读回真实字节再导入（RP-04.2，真实 DB+文件 store 集成测试：内容字节级往返、章节行可定位、缺原文拒绝、超限拒绝）；崩溃恢复契约测试（thumbnail 链接重跑不重复、export 记录在崩溃窗口存活且重跑为新版本不改旧记录、四类本地任务 stuck running 进恢复扫描分支）（RP-04.3）；四个窄提交命令 `SubmitThumbnailJob/SubmitImportJob/SubmitExportJob/SubmitMigrationJob`——类型化请求、 Binding 内构建版本化输入、主语缺失拒绝先于持久化、逐类型幂等 scope（RP-04.4）。
+> - **RP-10.1**：SBOM drift 根因查明并修复——(a) 生成器硬编码 `GOTOOLCHAIN=go1.25.0` 与 go.mod `toolchain go1.25.13` 冲突，改为读取 go.mod toolchain 指令；(b) 本机 module cache 缺少 go.sum 锁定版本的源码目录（gojq v0.12.17 vs 锁定 v0.12.13 等 22 个模块），`go mod download` 补齐后许可证识别恢复；(c) `go list -deps` 未固定 CGO 使 onnxruntime_go 掉出 linked 闭包（20→19），固定 `CGO_ENABLED=1`（与 STATUS T24 的 CGO 桌面构建一致）；新增 `scripts/gen-sbom.test.mjs`（4 测试：toolchain 来源、--check 只读、确定性、unknown/restrictive 策略门在失败路径）全 PASS；`node scripts/gen-sbom.mjs --check` 现已 **exit 0**。
+> - **RP-05.2**：版本化 Manifest 存储——迁移 000032（provider_manifest_versions 不可变表 + content_hash 唯一约束 + provider_configs.active_manifest_version_id 指针 + kind CHECK 扩至 gemini_compatible/manifest），ManifestStore 端口 + 应用服务（SaveManifest 域校验前置/同内容幂等/ActivateManifest 指针切换带 revision 冲突）+ SQL 仓储（同 hash 同版本、切指针与 revision 校验单 UPDATE、跨 config 激活拒绝）+ 真实 DB 往返测试。
+> - **RP-06.1**：`skillVersioning` 版本管理服务——`CreateSkillVersion`（基于历史版本派生、内容 hash 即身份、独立 content 地址、section 4.3 shape 校验与 loader 同源）、`ActivateSkillVersion`（指针切换非重写）、`Snapshot`（文档/版本/Hash/Spec 单次原子读）；生命周期测试钉住计划指定的时序（A 取 v1 快照→激活 v2→A 仍持 v1→B 用 v2→回滚只影响后续调用）。
+> - **RP-06.2**：Binding 层 `ListSkillVersions/CreateSkillVersion/ActivateSkillVersion`（无版本化 store 的构建如实报"不可用"），Binding 已重新生成。
+> - **RP-06.3**：迁移 000033 app_settings（key/value/revision）+ `GetSetting/SetSetting`（revision 丢失更新拒绝，创建冲突同判）+ `PersistDisabledAgents/LoadDisabledAgents`；跨两次 handle 生命周期实测「禁用→重启→仍禁用」与并发写冲突拒绝。
+> - **RP-06.4**：`ReadOnlyTestProbe` 静态只读测试（注册/Layer/工具 allowlist/版本 id+hash/section 缺失/装配检查，`ProbeKind=static` 字段禁止 UI 冒充模型运行）；无写入断言（探测前后版本行数不变）；未知 agent fail-closed。
+> - **RP-05.1**：Manifest 域校验补强——Method 字段（默认 POST，封闭 allowlist）、Header 声明（拒绝 credential 形状名称/受限值长度）、路径校验（拒绝 `//`、`.` 段、编码分隔符、反斜杠、query/fragment）、Poll 服务端上下限（manifest 只能收紧不能放大）；9 份原创 fixture（base-valid + 8 份单属性负例）+ fixture 驱动测试，每条拒绝可归因到具体规则。
+>
+> **验证（本批次实测）**：`go build ./...`、`go vet ./...` PASS；`go test ./... -count=1` PASS（RP 批次起点与各包回归均实测）；`npm run typecheck` PASS；`npm test` **151/151 PASS**（新增 15 个：audio-track-params 7 + provider-config 8）；`npm run build` PASS；`wails generate module`（v2.15.0，本批次安装）PASS；`git diff --check` PASS。SBOM drift、gcc/makensis 缺失、race 等环境项见基线 §2，相应门 BLOCKED 未伪装。
 
 ## 2026-09-26 审计整改批次（T01–T31）
 
@@ -113,17 +139,6 @@
 - "effect 提交走 SubmitAudioJob"（timeline-view 注释）**已被 T03 取代**。
 
 ---
-### T32 已执行（2026-09-27，用户授权后）
-
-- **commit**：`f22fe22`「T-batch: audit remediation T01-T24」——121 文件（含全部
-  T01–T24 修复、迁移 000027–000031、七份文档、ADR-0032、执行清单），已推送到
-  `origin/codex/wp-01-desktop-foundation`（push exit 0，`ea10c35..f22fe22`）。
-- **干净基线哈希**（推送后重建，EXE `a5bc0003…3616c`、安装包 `b5ed8a23…c93c4`）：
-  EXE 33,962,496 字节 `a5bc0003933147507953b7710775858b70f739922a0834bdef88efc29d73616c`；
-  安装包 15,899,831 字节 `b5ed8a236070ac9d8158d05d45ad4fd2115383e71d11370fc9d32cf4728c93c4`。
-  （构建含运行时刻差，哈希与推送前 dirty 版不同属正常。）
-- **T32 状态：COMPLETE**。剩余 BLOCKED：T25（VM）、T29（证书）、T28 后半（付费授权）。
-
 ### T32 执行包更新（2026-09-27 补充二）
 
 `scripts/local-toolchain-env.sh` 已入 `.gitignore`（机器本地 Go/gcc 路径，非仓库

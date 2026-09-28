@@ -232,8 +232,8 @@ func mockEffectWAV(durationSeconds int) []byte {
 // Compile-time proof that the mocks satisfy the capability ports they stand in
 // for. A signature drift breaks the build rather than surfacing at runtime.
 var (
-	_ appjobs.VideoPort = (*MockVideoAdapter)(nil)
-	_ appjobs.AudioPort = (*MockAudioAdapter)(nil)
+	_ appjobs.VideoPort  = (*MockVideoAdapter)(nil)
+	_ appjobs.AudioPort  = (*MockAudioAdapter)(nil)
 	_ appjobs.EffectPort = (*MockEffectAdapter)(nil)
 )
 

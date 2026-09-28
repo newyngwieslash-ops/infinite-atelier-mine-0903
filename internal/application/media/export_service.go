@@ -574,7 +574,7 @@ func (s *ExportService) buildMix(ctx context.Context, scratch string, timeline T
 	// the point the mix is BUILT is what makes "unstated means the role's default" true of the value
 	// the engine receives, and `TestTheComposedRequestOrdersBedsBeforeEffectsBeforeDialogue` asserts the
 	// 0.35 in the request rather than in the struct this function returns.
-		mix := AudioMix{Clips: clips}.Normalized()
+	mix := AudioMix{Clips: clips}.Normalized()
 	// THE USE'S OWN LEVEL (T05), applied AFTER normalization so an explicit
 	// value overrides the role default: a stated volume replaces it, and a
 	// stated mute is literal silence — `volume=0` — rather than the default

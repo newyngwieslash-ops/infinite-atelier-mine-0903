@@ -797,6 +797,24 @@ func (s *memoryStore) GetSourceDocumentVersion(_ context.Context, id string) (st
 	return version, nil
 }
 
+func (s *memoryStore) ListSourceDocumentVersions(_ context.Context, sourceDocumentID string) ([]storydomain.SourceDocumentVersion, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var versions []storydomain.SourceDocumentVersion
+	for _, version := range s.versions {
+		if version.SourceDocumentID == sourceDocumentID {
+			versions = append(versions, version)
+		}
+	}
+	// Oldest first, matching the SQL read's ORDER BY version_number.
+	for a := 1; a < len(versions); a++ {
+		for b := a; b > 0 && versions[b].VersionNumber < versions[b-1].VersionNumber; b-- {
+			versions[b], versions[b-1] = versions[b-1], versions[b]
+		}
+	}
+	return versions, nil
+}
+
 func (s *memoryStore) FindVersionBySourceHash(_ context.Context, projectID, sourceHash string) (storydomain.SourceDocumentVersion, string, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

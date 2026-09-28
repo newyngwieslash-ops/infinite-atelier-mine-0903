@@ -35,6 +35,13 @@ export type ModelChannel = {
      * work nobody asked to throttle.
      */
     maxConcurrency?: number;
+    /**
+     * rateLimitPerMinute is the channel's requests-per-rolling-minute ceiling (T07, FR-150),
+     * where ZERO OR ABSENT MEANS UNLIMITED — the same reading the Go side persists through
+     * `provider_configs.rate_limit_per_minute`. RP-02.1: the value rides the settings drawer's
+     * save so a configured limit reaches the registry instead of being silently cleared.
+     */
+    rateLimitPerMinute?: number;
 };
 
 export type AiConfig = {
@@ -66,7 +73,7 @@ export type AiConfig = {
     canvasImageCount: string;
 };
 
-export type ConfigTabKey = "channels" | "preferences" | "backup";
+export type ConfigTabKey = "channels" | "preferences" | "appSettings" | "backup";
 
 export const CONFIG_STORE_KEY = "infinite-canvas:ai_config_store";
 const CHANNEL_MODEL_SEPARATOR = "::";
@@ -301,7 +308,20 @@ export function createModelChannel(channel?: Partial<ModelChannel>): ModelChanne
         apiKey: channel?.apiKey || "",
         apiFormat,
         models: normalizeChannelModels(channel?.models),
+        rateLimitPerMinute: normaliseRateLimit(channel?.rateLimitPerMinute),
     };
+}
+
+/**
+ * normaliseRateLimit (RP-02.1) coerces a stored rate limit to the whole
+ * non-negative number the Go side persists, where 0 = unlimited. A negative
+ * or fractional stored value normalises rather than throwing: the field is
+ * an optional user input, and a hand-edited store must not make the whole
+ * channel unusable.
+ */
+export function normaliseRateLimit(value: number | undefined | null): number {
+    if (value === undefined || value === null || Number.isNaN(value)) return 0;
+    return Math.max(0, Math.trunc(value));
 }
 
 export function encodeChannelModel(channelId: string, model: string) {

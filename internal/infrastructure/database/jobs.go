@@ -647,7 +647,7 @@ func (r *JobRepository) RecordProviderRequest(ctx context.Context, providerConfi
 		return job.FailedJobError(job.CategoryStorage, "The job store is unavailable.")
 	}
 	windowStart := now.UTC().Format(time.RFC3339[:16]) + "Z"
-	cutoff := now.UTC().Add(-2 * time.Minute).Format(time.RFC3339[:16]) + "Z"
+	cutoff := now.UTC().Add(-2*time.Minute).Format(time.RFC3339[:16]) + "Z"
 	if _, err := r.db.ExecContext(ctx, `INSERT INTO provider_request_windows
 		(provider_config_id, window_start, request_count) VALUES (?, ?, 1)
 		ON CONFLICT(provider_config_id, window_start) DO UPDATE SET

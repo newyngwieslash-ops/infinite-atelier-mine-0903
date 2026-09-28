@@ -228,7 +228,6 @@ func submitForRate(t *testing.T, ctx context.Context, service *Service, reposito
 
 // seqIDsForRate builds the deterministic id source the tests use.
 
-
 // jobStatusRunning and jobStatusQueued name the statuses as strings through
 // the domain, so this file does not restate the vocabulary.
 // idSource is the ID port the service takes.

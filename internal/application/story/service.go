@@ -751,6 +751,17 @@ func (s *Service) ResolveConflict(ctx context.Context, request ResolveConflictRe
 	return record, nil
 }
 
+// ListSourceDocumentVersions returns a document's versions oldest first
+// (RP-04.2). The import JOB reads the latest through this list to find the
+// content it continues the document with — a read the interactive surface
+// never needed, which is why it exists only now.
+func (s *Service) ListSourceDocumentVersions(ctx context.Context, sourceDocumentID string) ([]storydomain.SourceDocumentVersion, error) {
+	if !s.Available() {
+		return nil, storageFailure()
+	}
+	return s.repository.ListSourceDocumentVersions(ctx, strings.TrimSpace(sourceDocumentID))
+}
+
 // GetSourceDocumentVersion returns one version by id.
 func (s *Service) GetSourceDocumentVersion(ctx context.Context, id string) (storydomain.SourceDocumentVersion, error) {
 	if !s.Available() {

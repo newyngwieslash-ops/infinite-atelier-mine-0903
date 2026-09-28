@@ -1,8 +1,9 @@
 package assets
 
 import (
-	"encoding/json"
 	"context"
+	"encoding/json"
+	"math"
 	"strings"
 
 	eventsapp "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/events"
@@ -316,12 +317,12 @@ type SetUsageParamsRequest struct {
 	// OffsetMS/SourceStartMS/SourceEndMS/DurationMS/Volume/Muted mirror
 	// media.TrackParams; nil means "not stated". A document with everything
 	// nil clears the override entirely.
-	OffsetMS       *int
-	SourceStartMS  *int
-	SourceEndMS    *int
-	DurationMS     *int
-	Volume         *float64
-	Muted          *bool
+	OffsetMS      *int
+	SourceStartMS *int
+	SourceEndMS   *int
+	DurationMS    *int
+	Volume        *float64
+	Muted         *bool
 	// DialogueLineID names the line a dialogue clip renders. Empty clears.
 	DialogueLineID string
 }
@@ -353,6 +354,15 @@ func (s *Service) SetUsageParams(ctx context.Context, request SetUsageParamsRequ
 		Muted:          request.Muted,
 		DialogueLineID: request.DialogueLineID,
 	}
+	// RP-01.3: the values are validated HERE, before the write, so a document
+	// the mixer could not honour never reaches the database. The mixer itself
+	// clamps defensively (a negative offset plays from the top), but a stored
+	// row that NEEDED clamping would mean the editor wrote nonsense and the
+	// mix silently differed from the user's settings — refusal at the boundary
+	// is the honest order.
+	if err := validateTrackParamsShape(params); err != nil {
+		return err
+	}
 	encoded, err := marshalTrackParamsShape(params)
 	if err != nil {
 		return err
@@ -360,6 +370,40 @@ func (s *Service) SetUsageParams(ctx context.Context, request SetUsageParamsRequ
 	return s.repository.(interface {
 		UpdateUsageParams(ctx context.Context, usageID, paramsJSON string) error
 	}).UpdateUsageParams(ctx, request.UsageID, encoded)
+}
+
+// validateTrackParamsShape refuses placement values the mixer cannot honour.
+//
+// The rules mirror what the mix does with a document, made refusals instead:
+//   - a negative offset would clamp to the shot's start, so the stored
+//     setting and the played position would differ;
+//   - a trim whose end precedes its start trims to nothing;
+//   - a negative volume, a volume beyond the mixer's 0–2 range, or a
+//     non-finite one is not a level any filter accepts;
+//   - a non-positive duration caps playback to nothing.
+func validateTrackParamsShape(params TrackParamsShape) error {
+	if params.OffsetMS != nil && *params.OffsetMS < 0 {
+		return asset.InvalidError("A track offset cannot be negative.")
+	}
+	if params.SourceStartMS != nil && params.SourceEndMS != nil && *params.SourceEndMS <= *params.SourceStartMS {
+		return asset.InvalidError("A track's trim end must come after its start.")
+	}
+	if params.SourceStartMS != nil && *params.SourceStartMS < 0 {
+		return asset.InvalidError("A track's trim start cannot be negative.")
+	}
+	if params.SourceEndMS != nil && *params.SourceEndMS < 0 {
+		return asset.InvalidError("A track's trim end cannot be negative.")
+	}
+	if params.DurationMS != nil && *params.DurationMS <= 0 {
+		return asset.InvalidError("A track's playback duration must be positive.")
+	}
+	if params.Volume != nil {
+		volume := *params.Volume
+		if volume < 0 || volume > 2 || math.IsNaN(volume) || math.IsInf(volume, 0) {
+			return asset.InvalidError("A track's volume must be between 0 and 2.")
+		}
+	}
+	return nil
 }
 
 // TrackParamsShape is the assets package's own view of the placement
@@ -417,4 +461,50 @@ func (s *Service) ListUsagesOfConsumer(ctx context.Context, consumerType asset.C
 		return reader.ListUsagesOfConsumer(ctx, consumerType, consumerID)
 	}
 	return nil, asset.StorageError("The asset store cannot list a consumer's usages.", nil)
+}
+
+// --- RP-07.1: the licence record's user-facing command ---
+
+// SetAssetLicenseRequest writes one asset's licence record.
+type SetAssetLicenseRequest struct {
+	AssetID string
+	// License is the licence statement's text (empty clears it).
+	License string
+	// LicenseSource is where the statement came from (a bounded human field:
+	// "user", a URL the user pasted, a rights sheet's name). It is recorded,
+	// never fetched.
+	LicenseSource string
+	// AllowsExportUse is the tri-state: "" unknown, "1" allowed, "0" refused.
+	AllowsExportUse string
+}
+
+// SetAssetLicense stores the licence record through the repository's narrow
+// update. The tri-state value is validated here AND the repository re-checks
+// it, so a caller that bypassed the service still cannot write a non-tri-state.
+func (s *Service) SetAssetLicense(ctx context.Context, request SetAssetLicenseRequest) error {
+	if !s.Available() {
+		return storageFailure()
+	}
+	assetID := strings.TrimSpace(request.AssetID)
+	if assetID == "" {
+		return asset.InvalidError("A licence record must name its asset.")
+	}
+	allowed := request.AllowsExportUse
+	if allowed != "" && allowed != "1" && allowed != "0" {
+		return asset.InvalidError("The export-use answer is '', '1' or '0'.")
+	}
+	source := strings.TrimSpace(request.LicenseSource)
+	if len(source) > 500 {
+		return asset.InvalidError("The licence source is too long to be a source note.")
+	}
+	if len(request.License) > 20_000 {
+		return asset.InvalidError("The licence text is too long to be a licence note.")
+	}
+	repo, ok := s.repository.(interface {
+		SetAssetLicense(ctx context.Context, assetID, license, licenseSource, allowsExportUse string) error
+	})
+	if !ok {
+		return asset.StorageError("The asset store cannot record licences.", nil)
+	}
+	return repo.SetAssetLicense(ctx, assetID, request.License, source, allowed)
 }

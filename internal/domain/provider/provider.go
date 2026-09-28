@@ -158,11 +158,11 @@ type Config struct {
 	// rolling sixty-second window (T07). ZERO MEANS UNLIMITED — the same
 	// convention MaxConcurrency states — and a negative is refused.
 	RateLimitPerMinute int
-	LocalApproved  bool
-	Enabled        bool
-	Revision       int64
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	LocalApproved      bool
+	Enabled            bool
+	Revision           int64
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
 }
 
 // MaxConcurrencyCeiling bounds what a configuration may ask for.
@@ -196,6 +196,12 @@ type ConfigInput struct {
 	// RateLimitPerMinute is the per-minute request ceiling to store, 0 for
 	// unlimited (T07).
 	RateLimitPerMinute int
+	// RateLimitPerMinuteSet distinguishes an input that did not state the
+	// rate limit from one that stated 0 (RP-02.1). The old flat int made the
+	// two indistinguishable, so every settings-save that omitted the field
+	// silently cleared a configured limit. When false, the stored value
+	// stands; when true, RateLimitPerMinute is stored as stated.
+	RateLimitPerMinuteSet bool
 }
 
 // RequestRecord is the redacted audit entry persisted per provider call. It

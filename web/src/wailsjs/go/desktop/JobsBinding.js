@@ -46,8 +46,24 @@ export function SubmitEffectJob(arg1) {
   return window['go']['desktop']['JobsBinding']['SubmitEffectJob'](arg1);
 }
 
+export function SubmitExportJob(arg1) {
+  return window['go']['desktop']['JobsBinding']['SubmitExportJob'](arg1);
+}
+
 export function SubmitImageJob(arg1) {
   return window['go']['desktop']['JobsBinding']['SubmitImageJob'](arg1);
+}
+
+export function SubmitImportJob(arg1) {
+  return window['go']['desktop']['JobsBinding']['SubmitImportJob'](arg1);
+}
+
+export function SubmitMigrationJob(arg1) {
+  return window['go']['desktop']['JobsBinding']['SubmitMigrationJob'](arg1);
+}
+
+export function SubmitThumbnailJob(arg1) {
+  return window['go']['desktop']['JobsBinding']['SubmitThumbnailJob'](arg1);
 }
 
 export function SubmitVideoBatch(arg1) {
@@ -56,4 +72,8 @@ export function SubmitVideoBatch(arg1) {
 
 export function SubmitVideoJob(arg1) {
   return window['go']['desktop']['JobsBinding']['SubmitVideoJob'](arg1);
+}
+
+export function VideoCapabilities() {
+  return window['go']['desktop']['JobsBinding']['VideoCapabilities']();
 }

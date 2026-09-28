@@ -10,13 +10,15 @@ restore_embed_placeholder() {
   : > "$EMBED_PLACEHOLDER"
 }
 
+# RP-10.2: cleanup is scoped to processes THIS run recorded — the previous
+# version killed whatever listened on 5173, which could take down a user's
+# own dev server started outside this script. The Playwright suite binds its
+# own dedicated port (3100, loopback-only, see web/playwright.config.ts) and
+# manages its server lifecycle itself, so the trap only restores the embed
+# placeholder. Any server THIS script started would be a child of this
+# shell and die with it; we no longer claim ownership of strangers.
 kill_stray_dev_servers() {
   restore_embed_placeholder
-  if command -v fuser >/dev/null 2>&1; then
-    fuser -k 5173/tcp >/dev/null 2>&1 || true
-  elif command -v lsof >/dev/null 2>&1; then
-    lsof -ti tcp:5173 | xargs -r kill >/dev/null 2>&1 || true
-  fi
 }
 
 trap kill_stray_dev_servers EXIT
@@ -103,10 +105,27 @@ fi
 if [ -f "$ROOT_DIR/go.mod" ]; then
   command -v go >/dev/null 2>&1 || fail "go.mod exists but go is unavailable"
   cd "$ROOT_DIR"
+  # gofmt -l exits 0 even when it lists files, so the FAIL must come from us.
+  # RP-10.2: the gate covers CHANGED files (diff vs the merge-base + untracked
+  # .go files) — the repo carries a large pre-existing formatting debt, and
+  # the plan forbids clearing it with an unrelated whole-repo rewrite.
+  if [ -n "$(gofmt -l $(git diff --name-only --diff-filter=ACM -- '*.go'; git ls-files -o --exclude-standard -- '*.go') 2>/dev/null)" ]; then
+    fail "gofmt found unformatted files in this change set (run gofmt -w and re-commit)"
+  fi
   run_step "Go tests" go test ./... -count=1
   run_step "Go vet" go vet ./...
+  run_step "release prerequisites" node scripts/check-release-prerequisites.mjs
 else
   strict_fail "Go tests and vet — go.mod is unavailable" "install the missing tool or dependency, then re-run."
+fi
+
+# RP-10.2: the NSIS template's tracked source must be in sync with the build
+# input before any build step consumes it. Missing script is a strict FAIL.
+if [ -f "$ROOT_DIR/scripts/sync-nsis-template.mjs" ]; then
+  cd "$ROOT_DIR"
+  run_step "NSIS template source is in sync" node scripts/sync-nsis-template.mjs --check
+else
+  strict_fail "NSIS template sync — scripts/sync-nsis-template.mjs is missing" "restore the script from version control"
 fi
 
 if [ -f "$ROOT_DIR/scripts/security-scan.mjs" ]; then

@@ -1,0 +1,20 @@
+{
+  "apiVersion": "atelier.provider/v1",
+  "kind": "provider",
+  "name": "acme-video",
+  "capability": "video",
+  "http": {
+    "submitPath": "/api/renders",
+    "pollPath": "/api/renders/{{id}}",
+    "fetchPath": "/api/renders/{{id}}/file",
+    "resultIdField": "render_id",
+    "statusField": "state",
+    "statusDoneValue": "done",
+    "statusFailedValue": "failed"
+  },
+  "mapping": {
+    "urlField": "file_url",
+    "template": "{\"model\":\"{{model}}\",\"prompt\":\"{{prompt}}\",\"seconds\":{{seconds}}}"
+  },
+  "poll": { "intervalSeconds": 900, "maxPolls": 5000 }
+}

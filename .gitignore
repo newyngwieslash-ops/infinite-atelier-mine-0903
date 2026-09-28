@@ -42,3 +42,13 @@ build/windows/
 
 # Machine-local toolchain environment (local Go/gcc paths; not repo material)
 scripts/local-toolchain-env.sh
+
+# Local tool state (OMX)
+.omx/
+# Local scratch dir
+dev/
+# Stray build binary
+infinite-atelier-mine-0903.exe
+
+# Playwright root-level test output (error contexts)
+test-results/

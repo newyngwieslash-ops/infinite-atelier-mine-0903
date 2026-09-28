@@ -35,6 +35,10 @@ async function selectProvider(modelSelection: string): Promise<providerModels.Co
     if (configs.length === 0) {
         const { useConfigStore } = await import("@/stores/use-config-store");
         const { syncProviderConfigs } = await import("./provider-sync");
+        // RP-02.2: the drawer's explicit save reports failures; this lazy
+        // fallback stays non-fatal, but a failure is no longer fully silent —
+        // it surfaces as the honest "no provider configured" outcome the
+        // caller already handles when the re-read below still finds nothing.
         await syncProviderConfigs(useConfigStore.getState().config).catch(() => undefined);
         configs = await listProviderConfigs();
     }

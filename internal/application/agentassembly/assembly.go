@@ -25,6 +25,7 @@ import (
 	"io"
 	"sync"
 	"strings"
+	"sync"
 
 	agentruntime "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/agentruntime"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/files"
@@ -101,6 +102,11 @@ type Assembly struct {
 	// reads.
 	mu       sync.RWMutex
 	disabled map[string]bool
+	// skillVersioning is RP-06.1's version-management surface (create from
+	// version, rollback by pointer switch, one-call run snapshot). Nil for an
+	// assembly built without the management store: the surface answers
+	// "unavailable" rather than pretending.
+	skillVersioning *skillVersioning
 }
 
 // Build loads every built-in pack, registers its skill versions, and assembles the

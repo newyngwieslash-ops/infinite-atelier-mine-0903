@@ -6,6 +6,7 @@ import { useTranslation } from "react-i18next";
 
 import { listJobs, submitAudioJob } from "@/services/desktop/jobs";
 import { collectAudioJobResults, createAsset, getScriptStructure, listAssets, isDramaBindingsAvailable, listScriptVersions, listStoryEntities, listUsagesOfConsumer, setUsageParams } from "@/services/desktop/drama";
+import { mergeTrackEdit, type TrackParams } from "@/services/desktop/audio-track-params";
 import { isMediaBindingsAvailable, readTimeline } from "@/services/desktop/media";
 import {
     assignCharacterVoice,
@@ -191,8 +192,19 @@ export function AudioSection({ projectId, episodes, activeEpisodeId, onSelectEpi
      * The editor writes through `SetUsageParams` — the same document the
      * timeline reads and the mixer consumes — so an edit survives a restart
      * by construction. All-nil clears back to mixer defaults.
+     *
+     * RP-01.2: `editingDocument` is the FULL document the open read returned,
+     * and the save sends that snapshot with only the editor's three fields
+     * overlaid (see mergeTrackEdit). The write command REPLACES the whole
+     * document, so sending just the edited fields would silently erase the
+     * trim, the duration and the dialogue-line link. `paramsReadFailed` marks
+     * a read that did not return a usable document: the modal then disables
+     * save, because a save built on defaults would overwrite the row with
+     * exactly that.
      */
     const [editing, setEditing] = useState<{ usageId: string; label: string } | null>(null);
+    const [editingDocument, setEditingDocument] = useState<TrackParams | null>(null);
+    const [paramsReadFailed, setParamsReadFailed] = useState(false);
     const [draftOffset, setDraftOffset] = useState<number | null>(null);
     const [draftVolume, setDraftVolume] = useState<number | null>(null);
     const [draftMuted, setDraftMuted] = useState<boolean>(false);
@@ -490,43 +502,95 @@ export function AudioSection({ projectId, episodes, activeEpisodeId, onSelectEpi
     };
 
     /**
-     * openTrackEditor loads a clip's stored params into the draft.
+     * openTrackEditor loads a clip's stored document into the editor.
+     *
+     * RP-01.2: the WHOLE document is kept (`editingDocument`), the three draft
+     * fields are seeded from it, and a failed or malformed read sets
+     * `paramsReadFailed` instead of quietly opening on defaults — a save that
+     * would replace the stored row with those defaults must not be reachable
+     * from a read the editor never understood. An obsolete read (the user
+     * switched shots after the request left) is ignored rather than allowed to
+     * seed the editor with the previous shot's values.
      */
     const openTrackEditor = useCallback(async (usageId: string, versionId: string, label: string) => {
         setEditing({ usageId, label });
+        setEditingDocument(null);
+        setParamsReadFailed(false);
         setDraftOffset(null);
         setDraftVolume(null);
         setDraftMuted(false);
         try {
             const usages = await listUsagesOfConsumer("shot", selectedShotId);
-            const match = usages.find((u) => u.assetVersionId === versionId && u.id === usageId);
-            if (match?.params) {
-                const doc = JSON.parse(match.params) as {
-                    offsetMs?: number; volume?: number; muted?: boolean;
-                };
-                setDraftOffset(doc.offsetMs ?? null);
-                setDraftVolume(doc.volume ?? null);
-                setDraftMuted(doc.muted ?? false);
+            // The shot may have changed while the read was in flight; a stale
+            // answer must not seed THIS modal.
+            if (usages.find((u) => u.id === usageId) === undefined) {
+                return;
             }
+            // RP-01.1's DTO carries the usage's own id, so the row is found by
+            // identity — two usages of one version cannot be confused.
+            const match = usages.find((u) => u.id === usageId && u.assetVersionId === versionId);
+            if (!match) {
+                setParamsReadFailed(true);
+                return;
+            }
+            if (!match.params) {
+                // No stored document is a real state (mixer defaults), not a
+                // failure: the editor opens with an empty document and the
+                // save writes exactly the three editor fields.
+                setEditingDocument({});
+                return;
+            }
+            const parsed: unknown = JSON.parse(match.params);
+            if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+                setParamsReadFailed(true);
+                return;
+            }
+            const doc = parsed as TrackParams;
+            setEditingDocument(doc);
+            setDraftOffset(doc.offsetMs ?? null);
+            setDraftVolume(doc.volume ?? null);
+            setDraftMuted(doc.muted ?? false);
         } catch {
-            // A failed read opens the editor with defaults; the save reports
-            // any real failure.
+            // The read failed outright: the modal stays open on a disabled
+            // save, and the reason is shown — the previous behaviour (open on
+            // defaults, let the save overwrite) is the defect RP-01.2 exists
+            // to remove.
+            setParamsReadFailed(true);
         }
     }, [selectedShotId]);
 
     /**
-     * saveTrackParams persists the draft (T05). All-nil clears the override.
+     * saveTrackParams persists the draft (T05).
+     *
+     * RP-01.2: the request is the READ document with the editor's three fields
+     * overlaid, built by `mergeTrackEdit`, and typed as the generated
+     * SetUsageParamsRequest — no `as never`, no invented shape. An explicit 0
+     * volume and an explicit false muted arrive as themselves. A read that
+     * failed never reaches this save.
      */
     const saveTrackParams = useCallback(async () => {
         if (!editing) return;
+        if (paramsReadFailed || editingDocument === null) return;
         setSavingParams(true);
         try {
-            await setUsageParams({
-                usageId: editing.usageId,
+            const merged = mergeTrackEdit(editingDocument, {
                 offsetMs: draftOffset,
                 volume: draftVolume,
-                muted: draftMuted || null,
-            } as never);
+                muted: draftMuted,
+            });
+            const request: desktop.SetUsageParamsRequest = { usageId: editing.usageId };
+            if (merged.offsetMs !== undefined) request.offsetMs = merged.offsetMs ?? undefined;
+            if (merged.volume !== undefined) request.volume = merged.volume ?? undefined;
+            if (merged.muted !== undefined) request.muted = merged.muted ?? undefined;
+            // The carried fields ride along ONLY when the document named them;
+            // undefined means "not stated", which the nil-aware encoder drops,
+            // preserving the replace-with-snapshot semantics without inventing
+            // values the row never had.
+            if (merged.sourceStartMs !== undefined) request.sourceStartMs = merged.sourceStartMs ?? undefined;
+            if (merged.sourceEndMs !== undefined) request.sourceEndMs = merged.sourceEndMs ?? undefined;
+            if (merged.durationMs !== undefined) request.durationMs = merged.durationMs ?? undefined;
+            if (merged.dialogueLineId !== undefined) request.dialogueLineId = merged.dialogueLineId;
+            await setUsageParams(request);
             message.success(t("studio.audio.trackSaved"));
             setEditing(null);
             await reload();
@@ -536,7 +600,7 @@ export function AudioSection({ projectId, episodes, activeEpisodeId, onSelectEpi
         } finally {
             setSavingParams(false);
         }
-    }, [editing, draftOffset, draftVolume, draftMuted, message, t, reload, onChanged]);
+    }, [editing, paramsReadFailed, editingDocument, draftOffset, draftVolume, draftMuted, message, t, reload, onChanged]);
 
     /** castVoice assigns the drafted voice to the picked character. */
     const castCharacter = async () => {
@@ -1001,9 +1065,18 @@ export function AudioSection({ projectId, episodes, activeEpisodeId, onSelectEpi
                 onOk={() => void saveTrackParams()}
                 confirmLoading={savingParams}
                 okText={t("studio.audio.trackSave")}
+                okButtonProps={{ disabled: paramsReadFailed || editingDocument === null }}
                 data-testid="studio-audio-track-modal"
             >
                 <div className="space-y-3">
+                    {paramsReadFailed ? (
+                        <Alert
+                            type="error"
+                            showIcon
+                            message={t("studio.audio.trackReadFailed")}
+                            data-testid="studio-audio-track-read-error"
+                        />
+                    ) : null}
                     <div>
                         <div className="mb-1 text-xs text-stone-500">{t("studio.audio.trackOffset")}</div>
                         <InputNumber

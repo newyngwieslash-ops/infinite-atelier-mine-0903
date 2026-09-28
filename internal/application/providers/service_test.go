@@ -266,3 +266,75 @@ func TestCreateConfigRejectsMockMediaKind(t *testing.T) {
 		}
 	}
 }
+
+// TestRP02GeminiKindAndRateLimitPersist is RP-02.1's service-level contract:
+// a gemini_compatible config is a valid persisted configuration, the rate
+// limit round-trips through create/update/read-back, an out-of-range limit is
+// refused rather than clamped, and an update that does not state the field
+// keeps the stored value.
+func TestRP02GeminiKindAndRateLimitPersist(t *testing.T) {
+	repository := newMemoryRepository()
+	service := NewService(repository, nil, nil)
+	ctx := context.Background()
+
+	// The Gemini kind is now reachable from the settings drawer: a config with
+	// it persists, carrying its rate limit.
+	created, err := service.CreateOrUpdateConfig(ctx, provider.ConfigInput{
+		ID: "prov-gem", Kind: provider.KindGeminiCompatible, DisplayName: "Gem", BaseURL: "https://g.example.com",
+		MaxConcurrency: 2, RateLimitPerMinute: 60, RateLimitPerMinuteSet: true,
+	})
+	if err != nil {
+		t.Fatalf("create gemini config: %v", err)
+	}
+	if created.RateLimitPerMinute != 60 || created.MaxConcurrency != 2 {
+		t.Fatalf("created = %+v, want the limits carried", created)
+	}
+	readBack, err := repository.GetConfig(ctx, "prov-gem")
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if readBack.Kind != provider.KindGeminiCompatible {
+		t.Fatalf("stored kind = %q, want gemini_compatible", readBack.Kind)
+	}
+	if readBack.RateLimitPerMinute != 60 {
+		t.Fatalf("stored rate limit = %d, want 60", readBack.RateLimitPerMinute)
+	}
+
+	// An out-of-range rate limit is REFUSED, not clamped (same rule as T07).
+	if _, err := service.CreateOrUpdateConfig(ctx, provider.ConfigInput{
+		ID: "prov-bad", Kind: provider.KindOpenAICompatible, DisplayName: "Bad", BaseURL: "https://b.example.com",
+		RateLimitPerMinute: provider.RateLimitCeiling + 1,
+	}); err == nil {
+		t.Fatal("a rate limit above the ceiling was accepted")
+	}
+	if _, err := service.CreateOrUpdateConfig(ctx, provider.ConfigInput{
+		ID: "prov-bad", Kind: provider.KindOpenAICompatible, DisplayName: "Bad", BaseURL: "https://b.example.com",
+		RateLimitPerMinute: -1,
+	}); err == nil {
+		t.Fatal("a negative rate limit was accepted")
+	}
+
+	// A zero states "unlimited" explicitly and stores as such.
+	if _, err := service.CreateOrUpdateConfig(ctx, provider.ConfigInput{
+		ID: "prov-zero", Kind: provider.KindOpenAICompatible, DisplayName: "Zero", BaseURL: "https://z.example.com",
+		RateLimitPerMinute: 0,
+	}); err != nil {
+		t.Fatalf("zero rate limit refused: %v", err)
+	}
+
+	// Updating the Gemini config WITHOUT naming the rate limit keeps the
+	// stored value: an update that renames the channel must not clear a limit
+	// the user configured.
+	if _, err := service.CreateOrUpdateConfig(ctx, provider.ConfigInput{
+		ID: "prov-gem", Kind: provider.KindGeminiCompatible, DisplayName: "Gem renamed", BaseURL: "https://g.example.com",
+	}); err != nil {
+		t.Fatalf("rename update: %v", err)
+	}
+	updated, _ := repository.GetConfig(ctx, "prov-gem")
+	if updated.RateLimitPerMinute != 60 {
+		t.Fatalf("update cleared the stored rate limit: %d", updated.RateLimitPerMinute)
+	}
+	if updated.DisplayName != "Gem renamed" {
+		t.Fatalf("update not applied: %+v", updated)
+	}
+}

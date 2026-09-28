@@ -100,7 +100,13 @@ export async function listProviderConfigs(): Promise<providers.ConfigDTO[]> {
  */
 export type ProviderConfigInput = {
     id: string;
-    kind: "openai_compatible";
+    /**
+     * kind is the protocol family the Go registry routes by (RP-02.1). The
+     * Gemini kind exists since the registry's own vocabulary does; a frontend
+     * that only ever sent `openai_compatible` sent Gemini traffic down the
+     * OpenAI path.
+     */
+    kind: "openai_compatible" | "gemini_compatible";
     displayName: string;
     baseUrl: string;
     localApprove: boolean;
@@ -109,6 +115,18 @@ export type ProviderConfigInput = {
      * maxConcurrency is the provider's job ceiling, where ZERO MEANS UNLIMITED (ADR-0018).
      */
     maxConcurrency: number;
+    /**
+     * rateLimitPerMinute is the provider's requests-per-rolling-minute ceiling
+     * (T07), where ZERO MEANS UNLIMITED. RP-02.1: carried on the save so a
+     * configured limit reaches the registry instead of being cleared.
+     */
+    rateLimitPerMinute: number;
+    /**
+     * rateLimitPerMinuteSet distinguishes a stated limit (true — including an
+     * explicit 0) from an omitted one (false — keep the stored value).
+     * RP-02.1.
+     */
+    rateLimitPerMinuteSet: boolean;
 };
 
 export async function saveProviderConfig(request: ProviderConfigInput): Promise<providers.ConfigDTO | null> {

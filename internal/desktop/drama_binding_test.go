@@ -2614,6 +2614,24 @@ func (s *dramaStore) GetSourceDocumentVersion(_ context.Context, id string) (sto
 	return version, nil
 }
 
+func (s *dramaStore) ListSourceDocumentVersions(_ context.Context, sourceDocumentID string) ([]storydomain.SourceDocumentVersion, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var versions []storydomain.SourceDocumentVersion
+	for _, version := range s.versions {
+		if version.SourceDocumentID == sourceDocumentID {
+			versions = append(versions, version)
+		}
+	}
+	// Oldest first, matching the SQL read's ORDER BY version_number.
+	for i := 1; i < len(versions); i++ {
+		for j := i; j > 0 && versions[j].VersionNumber < versions[j-1].VersionNumber; j-- {
+			versions[j], versions[j-1] = versions[j-1], versions[j]
+		}
+	}
+	return versions, nil
+}
+
 func (s *dramaStore) FindVersionBySourceHash(_ context.Context, projectID, sourceHash string) (storydomain.SourceDocumentVersion, string, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

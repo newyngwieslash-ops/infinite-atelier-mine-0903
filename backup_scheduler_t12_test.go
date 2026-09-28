@@ -8,7 +8,6 @@ import (
 	"time"
 
 	appbackup "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/backup"
-
 )
 
 // backup_scheduler_t12_test.go is T12's acceptance at the scheduler's own
@@ -138,7 +137,6 @@ func TestRetentionPrunesOnlyItsOwnFiles(t *testing.T) {
 		t.Fatal("the user's own backup file was pruned; retention must touch only atelier-auto-* files")
 	}
 }
-
 
 // errBackupFailed is the stub's failure.
 func errBackupFailed() error { return errBackupFailedType{} }

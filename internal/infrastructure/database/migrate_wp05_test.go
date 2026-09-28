@@ -52,16 +52,18 @@ func wp05Migrations(t testing.TB) fstest.MapFS {
 		"000019_memory_and_consistency.sql":      {Data: wp05SQL(t, "000019_memory_and_consistency.sql")},
 		"000020_media.sql":                       {Data: wp05SQL(t, "000020_media.sql")},
 		"000021_scale_indexes.sql":               {Data: wp05SQL(t, "000021_scale_indexes.sql")},
-		"000022_provider_concurrency.sql":      {Data: wp05SQL(t, "000022_provider_concurrency.sql")},
-		"000023_job_types.sql":                 {Data: wp05SQL(t, "000023_job_types.sql")},
-		"000024_finding_category.sql":          {Data: wp05SQL(t, "000024_finding_category.sql")},
-		"000025_summary_ladder.sql":            {Data: wp05SQL(t, "000025_summary_ladder.sql")},
-		"000026_character_voices.sql":          {Data: wp05SQL(t, "000026_character_voices.sql")},
-		"000027_audio_asset_isolation.sql":     {Data: wp05SQL(t, "000027_audio_asset_isolation.sql")},
-		"000028_effect_generation.sql":         {Data: wp05SQL(t, "000028_effect_generation.sql")},
-		"000029_audio_track_params.sql":        {Data: wp05SQL(t, "000029_audio_track_params.sql")},
-		"000030_provider_rate_limits.sql":      {Data: wp05SQL(t, "000030_provider_rate_limits.sql")},
-		"000031_asset_licenses.sql":            {Data: wp05SQL(t, "000031_asset_licenses.sql")},
+		"000022_provider_concurrency.sql":        {Data: wp05SQL(t, "000022_provider_concurrency.sql")},
+		"000023_job_types.sql":                   {Data: wp05SQL(t, "000023_job_types.sql")},
+		"000024_finding_category.sql":            {Data: wp05SQL(t, "000024_finding_category.sql")},
+		"000025_summary_ladder.sql":              {Data: wp05SQL(t, "000025_summary_ladder.sql")},
+		"000026_character_voices.sql":            {Data: wp05SQL(t, "000026_character_voices.sql")},
+		"000027_audio_asset_isolation.sql":       {Data: wp05SQL(t, "000027_audio_asset_isolation.sql")},
+		"000028_effect_generation.sql":           {Data: wp05SQL(t, "000028_effect_generation.sql")},
+		"000029_audio_track_params.sql":          {Data: wp05SQL(t, "000029_audio_track_params.sql")},
+		"000030_provider_rate_limits.sql":        {Data: wp05SQL(t, "000030_provider_rate_limits.sql")},
+		"000031_asset_licenses.sql":              {Data: wp05SQL(t, "000031_asset_licenses.sql")},
+		"000032_provider_manifests.sql":          {Data: wp05SQL(t, "000032_provider_manifests.sql")},
+		"000033_app_settings.sql":                {Data: wp05SQL(t, "000033_app_settings.sql")},
 	}
 }
 
@@ -80,7 +82,7 @@ func wp05Migrations(t testing.TB) fstest.MapFS {
 // this package's first index migration came to be measured against a database that did not
 // contain it — the plan test failed and the timing test showed no change, which is what
 // caught it.
-const wp05HeadVersion = 31
+const wp05HeadVersion = 33
 
 // applyMigrationFileSplits runs one migration file the way the runner does:
 // splitSQL on the raw text, then execute each fragment in order. It returns the

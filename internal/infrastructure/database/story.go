@@ -721,6 +721,34 @@ func (r *StoryRepository) GetSourceDocumentVersion(ctx context.Context, id strin
 	return version, nil
 }
 
+// ListSourceDocumentVersions returns a document's versions oldest first
+// (RP-04.2). The import job reads the latest through this list to find the
+// content it continues the document with.
+func (r *StoryRepository) ListSourceDocumentVersions(ctx context.Context, sourceDocumentID string) ([]story.SourceDocumentVersion, error) {
+	conn := r.conn()
+	if conn == nil {
+		return nil, storageError("STORY_STORE_UNAVAILABLE", "The story store is unavailable.", nil)
+	}
+	rows, err := conn.QueryContext(ctx,
+		sourceDocumentVersionSelectColumns+` WHERE source_document_id = ? ORDER BY version_number ASC`, sourceDocumentID)
+	if err != nil {
+		return nil, storageError("STORY_READ_FAILED", "The document versions could not be read.", err)
+	}
+	defer rows.Close()
+	var versions []story.SourceDocumentVersion
+	for rows.Next() {
+		version, scanErr := scanSourceDocumentVersion(rows)
+		if scanErr != nil {
+			return nil, storageError("STORY_READ_FAILED", "The document versions could not be read.", scanErr)
+		}
+		versions = append(versions, version)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, storageError("STORY_READ_FAILED", "The document versions could not be read.", err)
+	}
+	return versions, nil
+}
+
 // FindVersionBySourceHash returns the newest version in a project whose original
 // upload has this hash, with its document's name.
 //

@@ -90,8 +90,10 @@ type app struct {
 	// after the project stack gives it the export service, and stopped in the
 	// shutdown path so an in-flight export settles before the database closes.
 	backupScheduler *backupScheduler
-	emit           func(context.Context, string, ...interface{})
-	newEnvelope    func(string, any) (desktop.Envelope, error)
+	// settingsBinding is RP-09.2's settings surface over app_settings.
+	settingsBinding *desktop.SettingsBinding
+	emit            func(context.Context, string, ...interface{})
+	newEnvelope     func(string, any) (desktop.Envelope, error)
 }
 
 // defaultAutoBackupInterval is FR-180's automatic backup cadence: daily.
@@ -342,6 +344,13 @@ func (a *app) startup(ctx context.Context) {
 					// table failing to build.
 					Media: mediaReader{stack: media},
 				})
+				// RP-07.2: the content analyzer rides the final ruleset when the
+				// media engine and the store both exist. A build without them
+				// keeps the metadata-only review, and the report carries a
+				// CONTENT_NOT_ANALYSED finding rather than silence.
+				if agentStack != nil && agentStack.checker != nil && media != nil {
+					agentStack.checker.WithContentAnalyzer(newContentAnalyzer(store, media.engine, dirs.Temp, 2*time.Minute))
+				}
 				if agentStack != nil {
 					if a.agentBinding != nil {
 						desktop.AttachAgent(a.agentBinding, ctx,
@@ -428,10 +437,30 @@ func (a *app) startup(ctx context.Context) {
 	// STATUS); a non-positive interval disables it entirely, and a failed
 	// run never touches the previous backup.
 	if a.projectWiring != nil && a.projectWiring.export != nil {
-		scheduler := newBackupScheduler(a.projectWiring.export, dirs.Database,
-			defaultAutoBackupInterval(), defaultAutoBackupRetain())
+		// RP-09.2: the cadence comes from the persisted settings (the same
+		// table the settings binding writes), falling back to T12's defaults
+		// when the user has never touched them or the stored value is hostile.
+		settingsRepo := database.NewAgentRepository(handle.SQL())
+		interval, retain := desktop.ParseAutoBackupSettings(func() (string, bool) {
+			value, _, found, err := settingsRepo.GetSetting(ctx, "autobackup")
+			if err != nil {
+				return "", false
+			}
+			return value, found
+		})
+		scheduler := newBackupScheduler(a.projectWiring.export, dirs.Database, interval, retain)
 		scheduler.start(ctx)
 		a.backupScheduler = scheduler
+	}
+
+	// RP-09.2: the settings surface attaches where the database exists. A
+	// safe-mode build leaves it unattached, and the binding answers
+	// "unavailable" rather than pretending.
+	if a.settingsBinding != nil {
+		settingsRepo := database.NewAgentRepository(handle.SQL())
+		desktop.AttachSettings(a.settingsBinding, ctx,
+			settingsRepo.GetSetting,
+			settingsRepo.SetSetting)
 	}
 
 	if a.logger != nil {

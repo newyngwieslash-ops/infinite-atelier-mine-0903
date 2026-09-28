@@ -147,7 +147,9 @@ func TestApprovingAPanelImageMovesTheStatusTheExportJoinsOn(t *testing.T) {
 // way that has nothing to do with this question. The acceptance walk uses the real recorder.
 type mediaEvents struct{}
 
-func (mediaEvents) Build(context.Context, eventsapp.Draft) (event.Event, error) { return event.Event{}, nil }
+func (mediaEvents) Build(context.Context, eventsapp.Draft) (event.Event, error) {
+	return event.Event{}, nil
+}
 
 func (mediaEvents) RecordBestEffort(context.Context, eventsapp.Draft) {}
 

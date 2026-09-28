@@ -12,6 +12,7 @@ import (
 	appimporting "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/importing"
 	applegacy "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/legacy"
 	appmedia "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/media"
+	importdomain "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/importing"
 	domainmedia "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/media"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/infrastructure/database"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/infrastructure/filestore"
@@ -174,21 +175,64 @@ func migrationHandler(projects *projectWiring, store *filestore.Store) jobs.Migr
 	}
 }
 
-// importHandler imports one stored document. The importing service's request
-// carries the document bytes, so a job that names an EXISTING document id
-// continues it with a new version — the importer's own path.
+// importHandler imports one stored document. RP-04.2: the importing service's
+// request REQUIRES the document bytes, and the job names a stored document id —
+// so this handler READS the document's latest version through the story
+// service and the managed store (the same file IDs the reader path uses)
+// before calling the importer. The old handler passed no content at all: the
+// importer either failed on empty bytes or, worse, imported a document whose
+// content was nothing — a job that reported success while producing a
+// chapter-less version.
+//
+// The duplicate-hash refusal the importer owns makes a requeued run an honest
+// no-op rather than a second version of the same bytes (FR-020).
 func importHandler(drama *dramaWiring) jobs.ImportHandler {
 	return func(ctx context.Context, request jobs.ImportJobRequest) (jobs.ImportJobResult, error) {
-		result, err := drama.importing.Import(ctx, appimporting.ImportRequest{
-			ProjectID:  request.ProjectID,
-			DocumentID: request.DocumentID,
-		})
+		if drama.story == nil {
+			return jobs.ImportJobResult{}, importdomain.InvalidError("The import job cannot read its document: no story reader is composed.")
+		}
+		// The LATEST version of the named document carries its content. A
+		// document id without a version is a refused job, not an empty import.
+		versions, err := drama.story.ListSourceDocumentVersions(ctx, request.DocumentID)
 		if err != nil {
 			return jobs.ImportJobResult{}, err
 		}
+		if len(versions) == 0 {
+			return jobs.ImportJobResult{}, importdomain.InvalidError(
+				"That document has no version to import from. Upload the document first.")
+		}
+		latest := versions[len(versions)-1]
+		content, err := drama.importing.ReadStored(ctx, latest.ID)
+		if err != nil {
+			return jobs.ImportJobResult{}, err
+		}
+		document, err := drama.story.GetSourceDocument(ctx, request.DocumentID)
+		if err != nil {
+			return jobs.ImportJobResult{}, err
+		}
+		result, err := drama.importing.Import(ctx, appimporting.ImportRequest{
+			ProjectID:  request.ProjectID,
+			DocumentID: request.DocumentID,
+			Name:       document.Name,
+			Content:    content,
+		})
+		if err != nil {
+			// The importer's own duplicate refusal is the idempotent no-op a
+			// requeued run hits; it is reported as such rather than failed.
+			if result.Duplicated {
+				return jobs.ImportJobResult{AlreadyImported: true}, nil
+			}
+			return jobs.ImportJobResult{}, err
+		}
+		// RP-04.1: the result names what the import ACTUALLY produced. A
+		// document import creates chapters and a document version; story
+		// entities and episodes belong to later stages, so their counts here
+		// are zero, which is the truth.
 		return jobs.ImportJobResult{
-			StoryEntities: len(result.Chapters),
-			Episodes:      1,
+			Chapters:        len(result.Chapters),
+			StoryEntities:   0,
+			Episodes:        0,
+			DocumentVersion: result.Version.ID,
 		}, nil
 	}
 }

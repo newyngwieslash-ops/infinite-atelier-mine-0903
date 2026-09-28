@@ -38,7 +38,7 @@ type fakeReader struct {
 func (f *fakeReader) SchemaVersion(context.Context) (int, error) {
 	return f.schemaVersion, f.err
 }
-func (f *fakeReader) PendingMigrations(context.Context) (bool, error)  { return f.pending, f.err }
+func (f *fakeReader) PendingMigrations(context.Context) (bool, error) { return f.pending, f.err }
 func (f *fakeReader) ProviderKinds(context.Context) ([]ProviderSummary, error) {
 	return f.providers, f.err
 }

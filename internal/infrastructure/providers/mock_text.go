@@ -1211,13 +1211,13 @@ func mockSizedStructureArguments(state string, wanted int, episode, version stri
 		for shotIndex := 0; shotIndex < shotsPerScene && written < wanted; shotIndex++ {
 			written++
 			shots = append(shots, map[string]any{
-				"shotNumber":        mockShotNumber(sceneIndex, shotIndex),
-				"shotSize":          "MS",
-				"cameraAngle":       "eye level",
-				"cameraMovement":    "static",
-				"visualDescription": "The mock script's shot " + mockSmallInt(written) + ".",
-				"actionDescription": "The mock script's action for shot " + mockSmallInt(written) + ".",
-				"audioIntent":       "The mock script's audio for shot " + mockSmallInt(written) + ".",
+				"shotNumber":               mockShotNumber(sceneIndex, shotIndex),
+				"shotSize":                 "MS",
+				"cameraAngle":              "eye level",
+				"cameraMovement":           "static",
+				"visualDescription":        "The mock script's shot " + mockSmallInt(written) + ".",
+				"actionDescription":        "The mock script's action for shot " + mockSmallInt(written) + ".",
+				"audioIntent":              "The mock script's audio for shot " + mockSmallInt(written) + ".",
 				"estimatedDurationSeconds": 5,
 			})
 		}
