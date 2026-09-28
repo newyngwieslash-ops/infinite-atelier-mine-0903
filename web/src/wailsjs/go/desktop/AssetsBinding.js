@@ -54,6 +54,14 @@ export function ListUsages(arg1) {
   return window['go']['desktop']['AssetsBinding']['ListUsages'](arg1);
 }
 
+export function ListUsagesOfConsumer(arg1, arg2) {
+  return window['go']['desktop']['AssetsBinding']['ListUsagesOfConsumer'](arg1, arg2);
+}
+
 export function ListVersions(arg1) {
   return window['go']['desktop']['AssetsBinding']['ListVersions'](arg1);
+}
+
+export function SetUsageParams(arg1) {
+  return window['go']['desktop']['AssetsBinding']['SetUsageParams'](arg1);
 }

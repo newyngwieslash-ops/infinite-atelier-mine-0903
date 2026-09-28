@@ -10,11 +10,35 @@ restore_embed_placeholder() {
   : > "$EMBED_PLACEHOLDER"
 }
 
-trap restore_embed_placeholder EXIT
+kill_stray_dev_servers() {
+  restore_embed_placeholder
+  if command -v fuser >/dev/null 2>&1; then
+    fuser -k 5173/tcp >/dev/null 2>&1 || true
+  elif command -v lsof >/dev/null 2>&1; then
+    lsof -ti tcp:5173 | xargs -r kill >/dev/null 2>&1 || true
+  fi
+}
+
+trap kill_stray_dev_servers EXIT
 
 fail() {
   printf 'FAIL: %s\n' "$1" >&2
   exit 1
+}
+
+# STRICT MODE (T23, 2026-09-26 audit): a release-verification run sets
+# STRICT_VERIFY=1, which turns the environmental SKIPs below into FAILURES.
+# The distinction is the audit's completion standard: PASS / SKIP / BLOCKED
+# must be distinguishable, and a release run must exit 0 with every gate
+# PASS - not with gates silently skipped. The default mode keeps the script
+# usable on machines that legitimately lack one tool.
+STRICT=${STRICT_VERIFY:-0}
+strict_fail() {
+  # $1 = what was skipped, $2 = how to make it available.
+  if [ "$STRICT" = "1" ]; then
+    fail "$1 is REQUIRED in strict mode: $2"
+  fi
+  printf 'SKIP: %s\n' "$1"
 }
 
 run_step() {
@@ -46,13 +70,13 @@ run_step "frontend typecheck" "$NPM" run typecheck
 if node -e "process.exit(require('./package.json').scripts?.test ? 0 : 1)"; then
   run_step "frontend tests" "$NPM" test
 else
-  printf '\nSKIP: frontend tests — web/package.json has no test script.\n'
+  strict_fail "frontend tests — web/package.json has no test script" "install the missing tool or dependency, then re-run."
 fi
 
 if node -e "process.exit(require('./package.json').scripts?.lint ? 0 : 1)"; then
   run_step "frontend lint" "$NPM" run lint
 else
-  printf 'SKIP: frontend lint — web/package.json has no lint script.\n'
+  strict_fail "frontend lint — web/package.json has no lint script" "install the missing tool or dependency, then re-run."
 fi
 
 run_step "frontend production build" "$NPM" run build
@@ -64,16 +88,16 @@ if node -e "process.exit(require('./package.json').scripts?.['test:e2e'] ? 0 : 1
   if [ -d "$WEB_DIR/node_modules/@playwright/test" ]; then
     run_step "canvas regression (AC-CANVAS-004)" "$NPM" run test:e2e
   else
-    printf 'SKIP: canvas regression — @playwright/test is absent from node_modules; run npm install.\n'
+    strict_fail "canvas regression — @playwright/test is absent from node_modules; run npm install" "install the missing tool or dependency, then re-run."
   fi
 else
-  printf 'SKIP: canvas regression — web/package.json has no test:e2e script.\n'
+  strict_fail "canvas regression — web/package.json has no test:e2e script" "install the missing tool or dependency, then re-run."
 fi
 
 if [ -f "$WEB_DIR/monoform-studio/package.json" ] && [ -d "$WEB_DIR/monoform-studio/node_modules" ]; then
   run_step "MONOFORM source build" "$NPM" --prefix "$WEB_DIR/monoform-studio" run build
 else
-  printf 'SKIP: MONOFORM source build — its separate node_modules is absent; the main build uses tracked web/public/monoform output.\n'
+  strict_fail "MONOFORM source build — its separate node_modules is absent; the main build uses tracked web/public/monoform output" "install the missing tool or dependency, then re-run."
 fi
 
 if [ -f "$ROOT_DIR/go.mod" ]; then
@@ -82,14 +106,14 @@ if [ -f "$ROOT_DIR/go.mod" ]; then
   run_step "Go tests" go test ./... -count=1
   run_step "Go vet" go vet ./...
 else
-  printf 'SKIP: Go tests and vet — go.mod is unavailable.\n'
+  strict_fail "Go tests and vet — go.mod is unavailable" "install the missing tool or dependency, then re-run."
 fi
 
 if [ -f "$ROOT_DIR/scripts/security-scan.mjs" ]; then
   cd "$ROOT_DIR"
   run_step "security scans (dynamic execution, secrets, persistence, direct calls)" node scripts/security-scan.mjs
 else
-  printf 'SKIP: security scans — scripts/security-scan.mjs is missing.\n'
+  strict_fail "security scans — scripts/security-scan.mjs is missing" "install the missing tool or dependency, then re-run."
 fi
 
 # Both fixture generators can regenerate what they produced, so a fixture that
@@ -101,21 +125,21 @@ if [ -f "$ROOT_DIR/scripts/gen-canary-fixture.mjs" ]; then
   cd "$ROOT_DIR"
   run_step "canary fixture is current" node scripts/gen-canary-fixture.mjs --check
 else
-  printf 'SKIP: canary fixture check — the generator is missing.\n'
+  strict_fail "canary fixture check — the generator is missing" "install the missing tool or dependency, then re-run."
 fi
 
 if [ -f "$ROOT_DIR/scripts/gen-malicious-fixtures.mjs" ]; then
   cd "$ROOT_DIR"
   run_step "hostile-input fixtures are current" node scripts/gen-malicious-fixtures.mjs --check
 else
-  printf 'SKIP: hostile-input fixture check — the generator is missing.\n'
+  strict_fail "hostile-input fixture check — the generator is missing" "install the missing tool or dependency, then re-run."
 fi
 
 if [ -f "$ROOT_DIR/scripts/gen-tool-schemas.mjs" ]; then
   cd "$ROOT_DIR"
   run_step "tool schemas are current" node scripts/gen-tool-schemas.mjs --check
 else
-  printf 'SKIP: tool schema check — the generator is missing.\n'
+  strict_fail "tool schema check — the generator is missing" "install the missing tool or dependency, then re-run."
 fi
 
 # The skill packs' check has two halves since WP-08: a MANIFEST is generated and must match the table
@@ -126,7 +150,7 @@ if [ -f "$ROOT_DIR/scripts/gen-skill-packs.mjs" ]; then
   cd "$ROOT_DIR"
   run_step "skill packs are current" node scripts/gen-skill-packs.mjs --check
 else
-  printf 'SKIP: skill pack check — the generator is missing.\n'
+  strict_fail "skill pack check — the generator is missing" "install the missing tool or dependency, then re-run."
 fi
 
 # The SBOM is generated from go.sum/go.mod/web-package-lock.json and is a release artifact:
@@ -138,14 +162,18 @@ if [ -f "$ROOT_DIR/scripts/gen-sbom.mjs" ]; then
   cd "$ROOT_DIR"
   run_step "SBOM is current" node scripts/gen-sbom.mjs --check
 else
-  printf 'SKIP: SBOM check — the generator is missing.\n'
+  strict_fail "SBOM check — the generator is missing" "install the missing tool or dependency, then re-run."
 fi
 
 if command -v wails >/dev/null 2>&1; then
   cd "$ROOT_DIR"
   run_step "Wails production build" wails build
 else
-  printf 'SKIP: Wails production build — install pinned CLI v2.15.0 with: go install github.com/wailsapp/wails/v2/cmd/wails@v2.15.0. Production build evidence is required for the desktop acceptance gates.\n'
+  strict_fail "Wails production build — install pinned CLI v2.15.0 with: go install github.com/wailsapp/wails/v2/cmd/wails@v2.15.0. Production build evidence is required for the desktop acceptance gates" "install the missing tool or dependency, then re-run."
 fi
 
-printf '\nPASS: available verification gates completed.\n'
+if [ "$STRICT" = "1" ]; then
+  printf '\nPASS: strict verification completed - every gate ran and passed.\n'
+else
+  printf '\nPASS: available verification gates completed.\n'
+fi

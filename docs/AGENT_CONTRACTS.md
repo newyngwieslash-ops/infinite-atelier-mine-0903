@@ -747,13 +747,15 @@ FIX：
 
 - 指定 Review Issue；
 - 保留未受影响与锁定内容；
-- 创建新 Attempt/Version；
+- 创建新 Version（复用 StageRun attempt 行，新增 AgentRun 执行修订；
+  依据 ADR-0011 §4 的裁定——新 attempt 只在上一个 attempt 终止后创建。
+  AC-SCRIPT-002 的字面条文已按同一裁定修订，2026-09-26 审计 T13 记录）；
 - 重新监督。
 
 REDO：
 
 - 从同一上游重新生成；
-- 创建新 Attempt/Version；
+- 创建新 Version（attempt 处理同 FIX，见 ADR-0011 §4）；
 - 旧候选保留；
 - 重新监督。
 

@@ -34,6 +34,8 @@ export function CollectAudioJobResults(arg1:desktop.CollectAudioJobResultsReques
 
 export function CollectBatchResults(arg1:desktop.CollectBatchResultsRequest):Promise<Array<desktop.CollectedCandidateDTO>>;
 
+export function CollectVideoJobResults(arg1:desktop.CollectVideoJobResultsRequest):Promise<Array<desktop.CollectedCandidateDTO>>;
+
 export function CountDomainEvents(arg1:desktop.ListDomainEventsRequest):Promise<number>;
 
 export function CreateAdaptationStrategyVersion(arg1:desktop.CreateAdaptationStrategyVersionRequest):Promise<desktop.AdaptationStrategyVersionDTO>;

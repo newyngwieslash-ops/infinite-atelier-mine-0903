@@ -181,6 +181,21 @@ export async function submitAudioJob(request: desktop.SubmitAudioJobRequest): Pr
     return SubmitAudioJob(request);
 }
 
+/**
+ * submitEffectJob enqueues one shot's SOUND-EFFECT synthesis.
+ *
+ * A separate command from `submitAudioJob` because the two travel to different
+ * provider capabilities: an effect asks a channel for a SOUND from a
+ * description, speech asks it for WORDS from a script. A channel that cannot
+ * produce sounds refuses the effect job honestly instead of reading the
+ * description aloud — the T03 failure mode.
+ */
+export async function submitEffectJob(request: desktop.SubmitEffectJobRequest): Promise<desktop.JobDTO> {
+    if (!isDesktopJobBindingsAvailable()) throw new Error("desktop job bindings are unavailable");
+    const { SubmitEffectJob } = await loadJobsBinding();
+    return SubmitEffectJob(request);
+}
+
 export async function cancelJobs(ids: string[]): Promise<number> {
     if (!isDesktopJobBindingsAvailable()) return 0;
     const { CancelJobs } = await loadJobsBinding();

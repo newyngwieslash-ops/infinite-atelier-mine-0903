@@ -585,3 +585,10 @@ func (batchAdapterSource) VideoPortFor(context.Context, string) (appjobs.VideoPo
 func (batchAdapterSource) AudioPortFor(context.Context, string) (appjobs.AudioPort, error) {
 	return nil, provider.NewUnsupportedError()
 }
+
+// EffectPortFor reports unsupported, on the same reasoning the other two
+// refusals carry: an effect job reaching this image-batch harness is a job the
+// harness did not mean to submit.
+func (batchAdapterSource) EffectPortFor(context.Context, string) (appjobs.EffectPort, error) {
+	return nil, provider.NewUnsupportedError()
+}

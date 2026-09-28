@@ -276,6 +276,14 @@ func (s *assetStore) CountUsages(_ context.Context, versionID string) (int, erro
 	return count, nil
 }
 
+// CollectJobResultVersion is the atomic collection command the binding tests do
+// not drive: the double records a failed collection the same way the production
+// repository refuses an asset it does not know, so a binding test that reached
+// this command would learn its service wiring rather than its transport.
+func (s *assetStore) CollectJobResultVersion(context.Context, appassets.CollectStorageRequest) (bool, string, int, error) {
+	return false, "", 0, asset.StorageError("The asset store is unavailable.", nil)
+}
+
 // attachAssetsFixture builds a binding over the in-memory store.
 func attachAssetsFixture() (*AssetsBinding, *assetStore) {
 	store := newAssetStore()

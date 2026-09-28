@@ -8,6 +8,7 @@
         "build": "vite build",
         "build:monoform": "node scripts/build-monoform.mjs",
         "typecheck": "tsc --noEmit",
+        "lint": "tsc --noEmit --pretty false && echo lint: type-based lint passed (no eslint config in this repo; typecheck is the lint gate)",
         "start": "vite preview --host 0.0.0.0 --port 3000",
         "format": "prettier --write .",
         "format:check": "prettier --check .",

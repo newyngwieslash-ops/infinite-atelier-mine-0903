@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
-import { Alert, Empty, Select, Space, Spin, Table, Tag } from "antd";
+import { Alert, App, Empty, Select, Space, Spin, Switch, Table, Tag } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { useTranslation } from "react-i18next";
 
 import {
     agentInventory,
+    setAgentEnabled,
     getAgentRunTrace,
     isAgentBindingsAvailable,
     isAgentInventoryAvailable,
@@ -40,6 +41,7 @@ export type AgentCenterSectionProps = {
 
 export function AgentCenterSection({ projectId }: AgentCenterSectionProps) {
     const { t } = useTranslation();
+    const { message } = App.useApp();
     const [runs, setRuns] = useState<agentruntime.RunSummary[] | null>(null);
     const [runsError, setRunsError] = useState("");
     const [agents, setAgents] = useState<desktop.AgentSpecDTO[] | null>(null);
@@ -72,6 +74,19 @@ export function AgentCenterSection({ projectId }: AgentCenterSectionProps) {
             return;
         }
         void agentInventory().then(setAgents);
+    }, []);
+
+    /**
+     * toggleAgent starts or stops one agent (T09). The core refuses an
+     * unknown key; the list is re-read so the switch and the core agree.
+     */
+    const toggleAgent = useCallback(async (agentKey: string, enabled: boolean) => {
+        try {
+            await setAgentEnabled(agentKey, enabled);
+            setAgents(await agentInventory());
+        } catch (failure) {
+            message.error(failure instanceof Error ? failure.message : String(failure));
+        }
     }, []);
 
     const selectRun = useCallback(
@@ -282,6 +297,17 @@ export function AgentCenterSection({ projectId }: AgentCenterSectionProps) {
                                 <div className="flex items-center justify-between">
                                     <span className="font-mono text-xs">{agent.key}</span>
                                     <Space>
+                                        {/* THE STOP SWITCH (T09): enabled is the core's
+                                            own state read back, and flipping it re-reads the
+                                            list so the two agree. */}
+                                        <Switch
+                                            size="small"
+                                            checked={agent.enabled}
+                                            checkedChildren={t("studio.agents.enabled")}
+                                            unCheckedChildren={t("studio.agents.disabled")}
+                                            data-testid={`studio-agent-toggle-${agent.key}`}
+                                            onChange={(checked) => void toggleAgent(agent.key, checked)}
+                                        />
                                         <Tag>{t(`studio.agents.layer.${agent.layer}`, { defaultValue: agent.layer })}</Tag>
                                         <span className="text-xs text-neutral-500">
                                             {t("studio.agents.toolBudget", {

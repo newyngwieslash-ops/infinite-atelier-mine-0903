@@ -3,10 +3,16 @@
 import {desktop} from '../models';
 import {agentruntime} from '../models';
 
+export function AgentEnabled(arg1:string):Promise<boolean>;
+
 export function AgentInventory():Promise<desktop.AgentInventoryDTO>;
+
+export function AgentSkillDocument(arg1:string):Promise<string>;
 
 export function GetAgentRunTrace(arg1:string,arg2:string):Promise<agentruntime.RunTrace>;
 
 export function ListAgentRuns(arg1:string):Promise<Array<agentruntime.RunSummary>>;
 
 export function RunStatusCounts(arg1:string):Promise<Record<string, number>>;
+
+export function SetAgentEnabled(arg1:string,arg2:boolean):Promise<void>;

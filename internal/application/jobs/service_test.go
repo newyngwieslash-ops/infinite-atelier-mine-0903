@@ -23,6 +23,11 @@ type memoryRepository struct {
 	// providerLimits is the admission check's configuration, keyed by provider id. A nil map means
 	// every provider is unlimited, which is what keeps every test written before WP-14 unchanged.
 	providerLimits map[string]int
+	// providerRateLimits is the per-minute ceiling map (T07), with the same
+	// nil-means-unlimited convention.
+	providerRateLimits map[string]int
+	// providerWindows is the double's window ledger.
+	providerWindows map[string]int
 }
 
 func newMemoryRepository() *memoryRepository {
@@ -1048,3 +1053,52 @@ func TestCancelWithRemoteJobRecordsUnconfirmedCancellation(t *testing.T) {
 func containsLower(haystack, needle string) bool {
 	return strings.Contains(strings.ToLower(haystack), needle)
 }
+
+// ProviderRateLimit mirrors the real repository's contract: no row and zero
+// both mean UNLIMITED (T07's convention, the same one concurrency states).
+func (r *memoryRepository) ProviderRateLimit(ctx context.Context, providerConfigID string) (int, error) {
+	if err := guard(ctx); err != nil {
+		return 0, err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.providerRateLimits == nil {
+		return 0, nil
+	}
+	return r.providerRateLimits[providerConfigID], nil
+}
+
+// ProviderWindowCount reads the double's window ledger.
+func (r *memoryRepository) ProviderWindowCount(ctx context.Context, providerConfigID string, now time.Time) (int, error) {
+	if err := guard(ctx); err != nil {
+		return 0, err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.providerWindows == nil {
+		return 0, nil
+	}
+	return r.providerWindows[windowKey(providerConfigID, now)], nil
+}
+
+// RecordProviderRequest bumps the double's window ledger.
+func (r *memoryRepository) RecordProviderRequest(ctx context.Context, providerConfigID string, now time.Time) error {
+	if err := guard(ctx); err != nil {
+		return err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.providerWindows == nil {
+		r.providerWindows = map[string]int{}
+	}
+	key := windowKey(providerConfigID, now)
+	r.providerWindows[key]++
+	return nil
+}
+
+// windowKey is the double's window identity: the provider and now's minute.
+func windowKey(providerConfigID string, now time.Time) string {
+	return providerConfigID + "|" + now.UTC().Format("2006-01-02T15:04")
+}
+
+var _ = struct{}{}

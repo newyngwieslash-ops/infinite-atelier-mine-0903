@@ -141,6 +141,13 @@ const (
 	JobTypeVideoGeneration JobType = "video_generation"
 	JobTypeAudioGeneration JobType = "audio_generation"
 	JobTypeAssetDownload   JobType = "asset_download"
+	// JobTypeEffectGeneration is SOUND-EFFECT synthesis — the contract FR-080 V1's
+	// 音效生成适配 names. It is a type of its own rather than `audio_generation` with
+	// a different role because the two mean different THINGS to a provider: speech
+	// synthesises words, an effect requests a sound (footsteps, rain). A channel that
+	// cannot produce sounds refuses the effect type outright instead of reading the
+	// effect's name aloud — the failure mode the 2026-09-26 audit named for TTS.
+	JobTypeEffectGeneration JobType = "effect_generation"
 	// THE FOUR PRD FR-150 NAMES AND THIS BUILD DID NOT HAVE, added by WP-15.
 	//
 	// They are in the vocabulary so the SCHEMA accepts them — migration 000023 rebuilt
@@ -165,7 +172,7 @@ const (
 func AllJobTypes() []JobType {
 	return []JobType{
 		JobTypeImageGeneration, JobTypeImageEdit, JobTypeVideoGeneration,
-		JobTypeAudioGeneration, JobTypeAssetDownload,
+		JobTypeAudioGeneration, JobTypeEffectGeneration, JobTypeAssetDownload,
 		JobTypeThumbnail, JobTypeImport, JobTypeExport, JobTypeMigration,
 	}
 }
@@ -189,6 +196,11 @@ func (t JobType) Capability() string {
 		return "video"
 	case JobTypeAudioGeneration:
 		return "audio"
+	case JobTypeEffectGeneration:
+		// A provider channel that answers only `audio` cannot serve effects —
+		// the capability is its own so a TTS channel is not silently asked to
+		// perform one.
+		return "effect"
 	case JobTypeThumbnail, JobTypeImport, JobTypeExport, JobTypeMigration:
 		// No provider capability: these are local or engine work rather than a model call, so the
 		// provider. The runner refuses them until an adapter exists, which is the honest answer while

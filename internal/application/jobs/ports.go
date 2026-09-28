@@ -64,6 +64,14 @@ type Repository interface {
 	// A job abandoned by an EXPIRED lease does NOT count. Its holder is gone, so it is
 	// consuming nobody's quota, and `ClaimableCandidates` already treats it as runnable.
 	ActiveProviderCounts(ctx context.Context, now time.Time) (map[string]int, error)
+	// ProviderRateLimit returns a provider's per-minute request ceiling, zero
+	// meaning UNLIMITED (T07). The same unreadable-is-unlimited rule applies
+	// as ProviderConcurrency states: a read failure must not stall the queue.
+	ProviderRateLimit(ctx context.Context, providerConfigID string) (int, error)
+	// ProviderWindowCount returns the provider's current sixty-second window's
+	// recorded request count. The window definition is the reader's —
+	// `now`'s UTC minute — which is what the record side writes.
+	ProviderWindowCount(ctx context.Context, providerConfigID string, now time.Time) (int, error)
 
 	// Attempts.
 	StartAttempt(ctx context.Context, attempt job.Attempt) error
@@ -73,6 +81,10 @@ type Repository interface {
 	// Dependencies.
 	AddDependency(ctx context.Context, dependency job.Dependency) error
 	ListDependencies(ctx context.Context, jobID string) ([]job.Dependency, error)
+	// RecordProviderRequest bumps a provider's current window ledger — the write
+	// the admission check reads against. Declared on the same port as the reads
+	// so a store that cannot record cannot silently serve reads either.
+	RecordProviderRequest(ctx context.Context, providerConfigID string, now time.Time) error
 }
 
 // ListFilter narrows a job query. Zero values mean "no constraint".
@@ -198,6 +210,32 @@ type MediaOutcome struct {
 // to a later package.
 type AudioPort interface {
 	GenerateAudio(ctx context.Context, request AudioRequest) (AudioOutcome, error)
+}
+
+// EffectPort is the SOUND-EFFECT synthesis contract — a different request to a
+// provider than speech, because an effect asks for a SOUND (footsteps, rain)
+// where speech asks for words. The 2026-09-26 audit's T03: routing an effect
+// through the speech endpoint produces the effect's name read aloud, filed as
+// an effect. A channel that cannot produce sounds refuses this port outright,
+// which is an honest refusal rather than a wrong recording.
+type EffectPort interface {
+	GenerateEffect(ctx context.Context, request EffectRequest) (AudioOutcome, error)
+}
+
+// EffectRequest describes one sound-effect synthesis request. It carries the
+// effect's description rather than a script to read, and no voice: an effect
+// has no speaker.
+type EffectRequest struct {
+	JobID      string
+	ProviderID string
+	Model      string
+	// Description is what the scene should SOUND like — the effect's own
+	// words, in the language the script is written in.
+	Description string
+	// DurationSeconds is how long the sound should run, when the channel
+	// supports it. Zero means the channel's own default.
+	DurationSeconds int
+	Format          string
 }
 
 // AudioRequest describes a text-to-speech request.

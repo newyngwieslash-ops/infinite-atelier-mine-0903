@@ -395,11 +395,15 @@ Mock Agent 返回人物、地点、事件、因果：
 
 - Supervisor 指向 skeleton/version；
 - 用户 FIX issue；
-- 新 StageRun attempt；
+- 复用 StageRun attempt，新增 AgentRun 执行修订（修订裁定见 ADR-0011 §4：
+  新 attempt 只在上一个 attempt 终止后创建；needs_fix 状态仍算活跃，
+  迁移 000015 的单活跃部分唯一索引据此成立。2026-09-26 审计 T13 记录
+  该裁定与字面条文的差异并选择保留现有行为）；
 - 新版本；
 - 原版本保留；
 - 锁定字段不变；
-- 二次审核通过。
+- 二次审核通过；
+- 自动修订最多 2 次，超出转人工（AC-AGENT-005）。
 
 ## AC-SCRIPT-003 Script Structure
 

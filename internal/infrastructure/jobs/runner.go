@@ -17,6 +17,7 @@ type AdapterSource interface {
 	ImagePortFor(ctx context.Context, providerID string) (appjobs.ImagePort, error)
 	VideoPortFor(ctx context.Context, providerID string) (appjobs.VideoPort, error)
 	AudioPortFor(ctx context.Context, providerID string) (appjobs.AudioPort, error)
+	EffectPortFor(ctx context.Context, providerID string) (appjobs.EffectPort, error)
 }
 
 // Runner executes one job stage. It performs the network call outside any
@@ -27,6 +28,10 @@ type Runner struct {
 	downloads DownloaderPort
 	// MaxDownloadBytes caps a fetched result for this runner.
 	MaxDownloadBytes int64
+	// locals carries the four LOCAL handlers (T06): thumbnail, import, export
+	// and migration. Every field is optional and a type without its handler
+	// refuses with an honest unsupported error (`local_handlers_t06.go`).
+	locals *LocalHandlers
 }
 
 // NewRunner builds the runner.
@@ -116,6 +121,16 @@ func (r *Runner) Run(ctx context.Context, record job.Job) (appjobs.Outcome, erro
 		return r.runVideo(ctx, record)
 	case job.JobTypeAudioGeneration:
 		return r.runAudio(ctx, record)
+	case job.JobTypeEffectGeneration:
+		return r.runEffect(ctx, record)
+	case job.JobTypeThumbnail:
+		return r.runThumbnail(ctx, record)
+	case job.JobTypeImport:
+		return r.runImportJob(ctx, record)
+	case job.JobTypeExport:
+		return r.runExportJob(ctx, record)
+	case job.JobTypeMigration:
+		return r.runMigrationJob(ctx, record)
 	default:
 		return appjobs.Outcome{}, job.FailedJobError(job.CategoryUnsupported, "This job type is not supported yet.")
 	}
@@ -424,6 +439,82 @@ func (r *Runner) runAudio(ctx context.Context, record job.Job) (appjobs.Outcome,
 	mimeType := outcome.MIMEType
 	if mimeType == "" {
 		mimeType = "audio/mpeg"
+	}
+	metadata := resultMetadata{Mode: "inline", MIME: mimeType}
+	if outcome.Data != "" {
+		committed, commitErr := r.results.CommitInline(ctx, record.ID, "audio", mimeType, outcome.Data)
+		if commitErr != nil {
+			return appjobs.Outcome{}, commitErr
+		}
+		metadata.Files = append(metadata.Files, resultFile{
+			StorageKey: committed.StorageKey, MIME: committed.MIME, Size: committed.Size, Hash: committed.Hash,
+		})
+	} else if outcome.URL != "" {
+		committed, commitErr := r.results.DownloadAndCommit(ctx, r.downloads, record.ID, "audio", outcome.URL, r.MaxDownloadBytes)
+		if commitErr != nil {
+			return appjobs.Outcome{}, commitErr
+		}
+		metadata.Files = append(metadata.Files, resultFile{
+			StorageKey: committed.StorageKey, MIME: committed.MIME, Size: committed.Size, Hash: committed.Hash,
+		})
+	} else {
+		return appjobs.Outcome{}, job.FailedJobError(job.CategoryResponseInvalid, "The provider returned no audio.")
+	}
+	encoded, err := json.Marshal(metadata)
+	if err != nil {
+		return appjobs.Outcome{}, job.FailedJobError(job.CategoryStorage, "The job result could not be recorded.")
+	}
+	return appjobs.Outcome{Status: job.StatusSucceeded, ResultJSON: string(encoded)}, nil
+}
+
+// effectInput is an effect job's stored input, mirroring the binding's own
+// shape in the fields the runner drives.
+type effectInput struct {
+	Description     string `json:"description"`
+	Model           string `json:"model"`
+	ProviderID      string `json:"providerId"`
+	DurationSeconds int    `json:"durationSeconds,omitempty"`
+	Format          string `json:"format,omitempty"`
+}
+
+// runEffect executes one SOUND-EFFECT synthesis job through the provider's
+// effect port.
+//
+// The port is looked up through EffectPortFor, not AudioPortFor: a channel
+// whose registry has no effect adapter is refused with an unsupported error
+// HERE, which is the honest refusal the capability split exists for. Asking
+// the speech adapter instead would read the effect's name aloud and file the
+// recording as an effect — the exact defect the 2026-09-26 audit's T03 names.
+func (r *Runner) runEffect(ctx context.Context, record job.Job) (appjobs.Outcome, error) {
+	var input effectInput
+	if err := json.Unmarshal([]byte(record.InputJSON), &input); err != nil {
+		return appjobs.Outcome{}, job.FailedJobError(job.CategoryInvalidInput, "The job input is malformed.")
+	}
+	providerID := input.ProviderID
+	if providerID == "" {
+		providerID = record.ProviderConfigID
+	}
+	if providerID == "" {
+		return appjobs.Outcome{}, job.FailedJobError(job.CategoryConfiguration, "No provider is configured for this job.")
+	}
+	adapter, err := r.adapters.EffectPortFor(ctx, providerID)
+	if err != nil {
+		return appjobs.Outcome{}, err
+	}
+	outcome, err := adapter.GenerateEffect(ctx, appjobs.EffectRequest{
+		JobID:           record.ID,
+		ProviderID:      providerID,
+		Model:           input.Model,
+		Description:     input.Description,
+		DurationSeconds: input.DurationSeconds,
+		Format:          input.Format,
+	})
+	if err != nil {
+		return appjobs.Outcome{}, err
+	}
+	mimeType := outcome.MIMEType
+	if mimeType == "" {
+		mimeType = "audio/wave"
 	}
 	metadata := resultMetadata{Mode: "inline", MIME: mimeType}
 	if outcome.Data != "" {

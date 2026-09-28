@@ -42,6 +42,10 @@ export function SubmitAudioJob(arg1) {
   return window['go']['desktop']['JobsBinding']['SubmitAudioJob'](arg1);
 }
 
+export function SubmitEffectJob(arg1) {
+  return window['go']['desktop']['JobsBinding']['SubmitEffectJob'](arg1);
+}
+
 export function SubmitImageJob(arg1) {
   return window['go']['desktop']['JobsBinding']['SubmitImageJob'](arg1);
 }

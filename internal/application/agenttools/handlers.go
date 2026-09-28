@@ -16,6 +16,7 @@ import (
 	scriptdomain "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/script"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/story"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/storyboard"
+	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/versioning"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/workflow"
 )
 
@@ -1341,12 +1342,24 @@ func bindCreateStoryboardVersion(deps Deps) agentruntime.ToolHandler {
 		if script.EpisodeID != episodeID {
 			return nil, agent.InvalidError("The script version belongs to a different episode.")
 		}
+		// THE CITED VERSIONS MUST BE IN FORCE (T14, 2026-09-26 audit): a board
+		// drawn from a draft or rejected script is a board of nothing — the
+		// stage's own approval is not the same fact as the cited version's,
+		// and reading only the episode passed both before. `approved` is the
+		// exact requirement: `IsContentFrozen` would also admit a superseded
+		// version, which a board may cite for HISTORY but must not build on.
+		if scriptVersion.Status != versioning.StatusApproved {
+			return nil, agent.InvalidError("The cited script version is not approved, so a storyboard cannot be drawn from it.")
+		}
 		plan, err := deps.Storyboard.GetDirectorPlanVersion(ctx, planVersionID)
 		if err != nil {
 			return nil, err
 		}
 		if plan.EpisodeID != episodeID {
 			return nil, agent.InvalidError("The director plan version belongs to a different episode.")
+		}
+		if plan.Status != versioning.StatusApproved {
+			return nil, agent.InvalidError("The cited director plan version is not approved, so a storyboard cannot be drawn from it.")
 		}
 		// The shots the rows must cite are read BEFORE the version is written, so a row
 		// naming a shot that does not belong to this script is refused while the write is

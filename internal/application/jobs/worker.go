@@ -147,6 +147,15 @@ func (s *Service) dispatch(ctx context.Context, work chan<- job.Job) {
 	claimedThisPass := map[string]int{}
 	limits := map[string]int{}
 	limitRead := map[string]bool{}
+	// THE RATE LIMITS (T07): the per-minute ceilings and their window counts,
+	// read per provider once per pass and closed by the same in-pass counter
+	// the concurrency check uses. A provider whose window is full is SKIPPED —
+	// its jobs keep their place — and a full window does not starve other
+	// providers, because admission is per candidate.
+	rateLimits := map[string]int{}
+	rateRead := map[string]bool{}
+	windowCounts := map[string]int{}
+	windowRead := map[string]bool{}
 	for _, candidate := range candidates {
 		if ctx.Err() != nil {
 			return
@@ -179,6 +188,34 @@ func (s *Service) dispatch(ctx context.Context, work chan<- job.Job) {
 					continue
 				}
 			}
+			// THE RATE LIMIT (T07): the window count plus this pass's claims
+			// must stay under the per-minute ceiling. A window at its ceiling
+			// skips the candidate the same way a full concurrency does — the
+			// job keeps its place and the next pass re-offers it once the
+			// minute rolls.
+			if !rateRead[providerID] {
+				limit, readErr := s.repository.ProviderRateLimit(ctx, providerID)
+				if readErr != nil {
+					limit = 0
+				}
+				rateLimits[providerID] = limit
+				rateRead[providerID] = true
+			}
+			if rateLimit := rateLimits[providerID]; rateLimit > 0 {
+				if !windowRead[providerID] {
+					count, countErr := s.repository.ProviderWindowCount(ctx, providerID, now)
+					if countErr != nil {
+						// Unreadable is UNLIMITED this pass, for the same
+						// reason an unreadable concurrency limit is.
+						count = 0
+					}
+					windowCounts[providerID] = count
+					windowRead[providerID] = true
+				}
+				if windowCounts[providerID]+claimedThisPass[providerID] >= rateLimit {
+					continue
+				}
+			}
 		}
 		claim, err := s.repository.Claim(ctx, candidate.ID, s.newID("worker"), now.Add(DefaultLeaseTTL), now)
 		if err != nil {
@@ -187,6 +224,15 @@ func (s *Service) dispatch(ctx context.Context, work chan<- job.Job) {
 		}
 		if providerID := strings.TrimSpace(claim.ProviderConfigID); providerID != "" {
 			claimedThisPass[providerID]++
+			// THE LEDGER (T07): the claim is what the window counts, recorded
+			// here so the durable ledger matches what admission decided. A
+			// recording failure is not fatal — the job is already claimed and
+			// the next pass's read simply under-counts by one request.
+			if rateLimits[providerID] > 0 {
+				if err := s.repository.RecordProviderRequest(ctx, providerID, now); err != nil {
+					_ = err
+				}
+			}
 		}
 		select {
 		case work <- claim:

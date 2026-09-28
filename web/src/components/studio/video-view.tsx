@@ -5,6 +5,16 @@ import { Layers, Play, RefreshCw } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { isVideoBatchAvailable, listJobs, submitVideoBatch, submitVideoJob } from "@/services/desktop/jobs";
+import {
+    approvePanelImage,
+    collectVideoJobResults,
+    createAsset,
+    createPanelVersion,
+    isVideoCollectionAvailable,
+    listAssets,
+    listPanelVersions,
+    listStoryboardItems,
+} from "@/services/desktop/drama";
 import { loadShotFrame, type ShotFrame } from "@/services/desktop/frames";
 import { isMediaBindingsAvailable, mediaCapability, readTimeline } from "@/services/desktop/media";
 import { channelIdForModel, decodeModelSelection } from "@/services/desktop/model-selection";
@@ -30,11 +40,13 @@ import type { desktop } from "@/wailsjs/go/models";
  *     and offset — so the filter is applied here and the comment says so rather than implying the
  *     core scoped the query.
  *
- * WHAT IT DOES NOT OFFER, and why: there is no per-shot "pick this version" control and no
- * version list for a shot's video. The binding exposes no command that enumerates or selects a
- * shot's video versions — `ListExports` and `ListSubtitleTracks` are per episode, and a shot's
- * generated media is reachable only as the job's `resultFiles`. Adding a picker would mean
- * inventing a call, so the section shows the job's outcome and its stored files instead.
+ * ADOPTION (T02, 2026-09-26 audit): the chain a shot's video takes now runs end to end — a
+ * succeeded job's result is COLLECTED into a candidate version of the shot's video asset
+ * (`collectVideoJobResults`), the shot's takes are listed from that asset's versions, and
+ * ADOPTING one writes a candidate panel version carrying it and runs the panel approval
+ * switch, which is the same act a panel image's replacement takes. The timeline's read
+ * resolves the asset's type dynamically, so an adopted video version flows into the export
+ * as a real video segment with no further wiring.
  */
 export type VideoSectionProps = {
     projectId: string;
@@ -149,6 +161,116 @@ export function VideoSection({ projectId, episodes, activeEpisodeId, onSelectEpi
      * the reason the shell's own load gives: a user must still see the shots when the job query is
      * the one that failed.
      */
+    /**
+     * collectJob turns ONE succeeded video job's result into a candidate
+     * version of the shot's video asset — the collection half of adoption.
+     *
+     * The asset is keyed on the SHOT instance (like audio's keying on the
+     * line): re-rendering a shot is a new TAKE of the same asset, and another
+     * shot's adoption never moves. The button appears only on a succeeded job
+     * with committed files, which is what the job table can act on.
+     */
+    const [collecting, setCollecting] = useState("");
+    const [adopting, setAdopting] = useState("");
+    const collectJob = async (jobID: string) => {
+        const job = jobs.find((record) => record.id === jobID);
+        const shotId = job?.entityId?.trim();
+        if (!shotId) {
+            message.error(t("studio.video.collectNoShot"));
+            return;
+        }
+        setCollecting(jobID);
+        try {
+            const label = `video:${shotId}`.slice(0, 200);
+            const existing = await listAssets({ projectId, types: ["video"] } as never);
+            const match = existing.find((record) => record.name === label);
+            const assetId = match?.id ?? (await createAsset({ projectId, type: "video", name: label } as never)).id;
+            const collected = await collectVideoJobResults({
+                assetByJob: { [jobID]: assetId },
+                jobIds: [jobID],
+            } as never);
+            if (collected.length === 0) {
+                message.error(t("studio.video.collectNothing"));
+                return;
+            }
+            message.success(t(collected[0].duplicate ? "studio.video.collectAlready" : "studio.video.collected"));
+            await reload();
+        } catch (failure) {
+            message.error(failure instanceof Error ? failure.message : t("studio.video.collectFailed"));
+        } finally {
+            setCollecting("");
+        }
+    };
+
+    /**
+     * shotTakes reads ONE shot's takes: the versions of its video asset.
+     *
+     * A shot with no video asset has no takes — that is the ordinary state of
+     * a shot nobody has rendered, not an error.
+     */
+    const shotTakes = async (shotId: string): Promise<desktop.AssetVersionDTO[]> => {
+        const label = `video:${shotId}`.slice(0, 200);
+        const existing = await listAssets({ projectId, types: ["video"] } as never);
+        const match = existing.find((record) => record.name === label);
+        if (!match) return [];
+        return listAssetVersionsSafe(match.id);
+    };
+
+    const listAssetVersionsSafe = async (assetId: string): Promise<desktop.AssetVersionDTO[]> => {
+        const { listAssetVersions } = await import("@/services/desktop/drama");
+        return listAssetVersions(assetId);
+    };
+
+    /**
+     * adoptTake puts ONE take in force as the shot's media.
+     *
+     * The whole take list travels as the candidates: §9.5 requires the
+     * adopted version to be among the candidates the caller supplied, and the
+     * panel approval switch is the same one a panel image's replacement runs.
+     */
+    const adoptTake = async (row: desktop.TimelineShotDTO, versionId: string) => {
+        if (!row.panelVersionId) {
+            message.error(t("studio.video.noPanel"));
+            return;
+        }
+        setAdopting(versionId);
+        try {
+            const takes = await shotTakes(row.shotId);
+            // The candidate panel version carries the adopted take; the
+            // approval switch then runs on it — the same two-step a panel
+            // image's replacement takes.
+            await createPanelVersion({
+                storyboardItemId: row.itemId,
+                visualPrompt: "",
+                changeReason: "adopt video take",
+            } as never);
+            const panels = await listPanelVersions(row.itemId);
+            const newest = panels[0];
+            if (!newest) {
+                message.error(t("studio.video.noPanel"));
+                return;
+            }
+            // The guard is the ITEM's revision, read fresh: a stale one is the
+            // one failure a user can act on, and it is named as what it is.
+            const items = await listStoryboardItems(timeline?.boardVersionId ?? "");
+            const item = items.find((record: desktop.StoryboardItemDTO) => record.id === row.itemId);
+            await approvePanelImage({
+                panelVersionId: newest.id,
+                approvedImageAssetVersionId: versionId,
+                candidateVersionIds: takes.map((take) => take.id),
+                expectedRevision: Number(item?.revision ?? 0),
+            });
+            message.success(t("studio.video.adopted"));
+            await reload();
+            onChanged();
+        } catch (failure) {
+            const text = failure instanceof Error ? failure.message : String(failure);
+            message.error(/another window/i.test(text) ? t("studio.video.adoptConflict") : text);
+        } finally {
+            setAdopting("");
+        }
+    };
+
     const reload = useCallback(async () => {
         if (!activeEpisodeId) {
             setTimeline(null);
@@ -448,6 +570,23 @@ export function VideoSection({ projectId, episodes, activeEpisodeId, onSelectEpi
                         {/* The kind is the asset's own type: a frame and a clip are different
                             things to compose, and the export reads the same column. */}
                         {row.mediaKind ? <Tag>{t(`studio.assetKind.${row.mediaKind}`, { defaultValue: row.mediaKind })}</Tag> : null}
+                        {/* THE ADOPT CONTROL (T02): the shot's collected takes, with the
+                            one in force marked. Choosing one runs the panel approval switch,
+                            which is what the export and the final supervisor read. */}
+                        {isVideoCollectionAvailable() ? (
+                            <ShotTakesPicker
+                                shotId={row.shotId}
+                                approvedVersionId={row.mediaVersionId ?? ""}
+                                loadTakes={shotTakes}
+                                adopting={adopting}
+                                onAdopt={(versionId) => void adoptTake(row, versionId)}
+                                labels={{
+                                    takes: t("studio.video.takes"),
+                                    adopt: t("studio.video.adoptTake"),
+                                    none: t("studio.video.noTakes"),
+                                }}
+                            />
+                        ) : null}
                     </Space>
                 ) : (
                     // No approved media is the ordinary state of a board under construction, and
@@ -508,6 +647,22 @@ export function VideoSection({ projectId, episodes, activeEpisodeId, onSelectEpi
         },
         { title: t("studio.video.jobAttempts"), key: "attempts", width: 110, render: (_value, row) => `${row.attemptCount}/${row.maxAttempts}` },
         { title: t("studio.video.jobError"), dataIndex: "errorCode", key: "errorCode", width: 160, render: (value?: string) => value || "—" },
+        {
+            // THE COLLECTION STEP of adoption (T02): a succeeded job's bytes
+            // become a candidate take of the shot's video asset. The button is
+            // offered only when the command exists in this build and the job
+            // has files to collect — the same conditions the audio section's
+            // attach buttons carry.
+            title: t("studio.video.collect"),
+            key: "collect",
+            width: 110,
+            render: (_value, row) =>
+                isVideoCollectionAvailable() && row.status === "succeeded" && row.resultFiles && row.resultFiles.length > 0 ? (
+                    <Button size="small" loading={collecting === row.id} data-testid={`studio-video-collect-${row.id}`} onClick={() => void collectJob(row.id)}>
+                        {t("studio.video.collectTake")}
+                    </Button>
+                ) : null,
+        },
         {
             title: t("studio.video.jobFiles"),
             key: "files",
@@ -763,4 +918,61 @@ function jobStatusColour(status: string): string {
         default:
             return "blue";
     }
+}
+
+/**
+ * ShotTakesPicker is the per-shot take list: the versions of the shot's video
+ * asset, the take in force marked, and an adopt button on the rest.
+ *
+ * The list is loaded when the picker opens rather than held in the section's
+ * state, because a collection can land between renders and a stale take list
+ * would let a user adopt a version the panel cannot offer. A shot with no
+ * video asset has no takes — that is "nobody has rendered this yet", not an
+ * error.
+ */
+function ShotTakesPicker(props: {
+    shotId: string;
+    approvedVersionId: string;
+    loadTakes: (shotId: string) => Promise<desktop.AssetVersionDTO[]>;
+    adopting: string;
+    onAdopt: (versionId: string) => void;
+    labels: { takes: string; adopt: string; none: string };
+}) {
+    const [open, setOpen] = useState(false);
+    const [takes, setTakes] = useState<desktop.AssetVersionDTO[] | null>(null);
+    const [loading, setLoading] = useState(false);
+
+    const load = async () => {
+        setLoading(true);
+        try {
+            setTakes(await props.loadTakes(props.shotId));
+        } catch {
+            setTakes([]);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    if (!open) {
+        return (
+            <Button size="small" loading={loading} data-testid={`studio-video-takes-${props.shotId}`} onClick={() => { setOpen(true); void load(); }}>
+                {props.labels.takes}
+            </Button>
+        );
+    }
+    return (
+        <Space size="small" wrap>
+            {(takes ?? []).map((take) =>
+                take.id === props.approvedVersionId ? (
+                    <Tag key={take.id} color="green">#{take.versionNumber}</Tag>
+                ) : (
+                    <Button key={take.id} size="small" loading={props.adopting === take.id} data-testid={`studio-video-adopt-${take.id}`} onClick={() => props.onAdopt(take.id)}>
+                        #{take.versionNumber} {props.labels.adopt}
+                    </Button>
+                ),
+            )}
+            {takes !== null && takes.length === 0 ? <span className="text-xs text-stone-500">{props.labels.none}</span> : null}
+            <Button size="small" type="text" onClick={() => setOpen(false)}>×</Button>
+        </Space>
+    );
 }

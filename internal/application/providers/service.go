@@ -208,7 +208,11 @@ type ConfigDTO struct {
 	// because the interface is where a user meets the reading: a field that showed 0 without
 	// saying what it means would read as "no work may run".
 	MaxConcurrency int    `json:"maxConcurrency"`
-	LocalApproved  bool   `json:"localApproved"`
+	// RateLimitPerMinute is the per-minute request ceiling, zero unlimited
+	// (T07) — the same zero-means-unlimited reading the concurrency field
+	// states.
+	RateLimitPerMinute int  `json:"rateLimitPerMinute"`
+	LocalApproved      bool `json:"localApproved"`
 	Enabled        bool   `json:"enabled"`
 	Revision       int64  `json:"revision"`
 	UpdatedAt      string `json:"updatedAt,omitempty"`
@@ -264,6 +268,11 @@ func (s *Service) CreateOrUpdateConfig(ctx context.Context, input provider.Confi
 	if !provider.IsValidMaxConcurrency(input.MaxConcurrency) {
 		return provider.Config{}, provider.NewConfigurationError()
 	}
+	// THE RATE LIMIT (T07) is validated the same way: out of range is a
+	// refusal, not a clamp.
+	if input.RateLimitPerMinute < 0 || input.RateLimitPerMinute > provider.RateLimitCeiling {
+		return provider.Config{}, provider.NewConfigurationError()
+	}
 	existing, err := s.repository.GetConfig(ctx, input.ID)
 	if err != nil {
 		providerErr, ok := provider.AsProviderError(err)
@@ -288,6 +297,7 @@ func (s *Service) CreateOrUpdateConfig(ctx context.Context, input provider.Confi
 	config.LocalApproved = input.LocalApprove
 	config.Enabled = input.Enabled
 	config.MaxConcurrency = input.MaxConcurrency
+	config.RateLimitPerMinute = input.RateLimitPerMinute
 	config.SecretRef = provider.SecretRefValue(config.ID)
 	config.UpdatedAt = now
 	if err := s.repository.SaveConfig(ctx, config); err != nil {

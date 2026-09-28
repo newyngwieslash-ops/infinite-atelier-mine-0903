@@ -598,3 +598,65 @@ func contains(haystack, needle string) bool {
 	}
 	return false
 }
+
+// ProviderRateLimit returns a provider's configured per-minute request
+// ceiling, where zero means UNLIMITED — the same convention
+// ProviderConcurrency states. A provider with no config row reports zero.
+func (r *JobRepository) ProviderRateLimit(ctx context.Context, providerConfigID string) (int, error) {
+	if r == nil || r.db == nil {
+		return 0, job.FailedJobError(job.CategoryStorage, "The job store is unavailable.")
+	}
+	var limit int
+	err := r.db.QueryRowContext(ctx,
+		`SELECT rate_limit_per_minute FROM provider_configs WHERE id = ?`, providerConfigID).Scan(&limit)
+	if err == sql.ErrNoRows {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, storageError("JOB_READ_FAILED", "The provider's rate limit could not be read.", err)
+	}
+	return limit, nil
+}
+
+// ProviderWindowCount returns how many requests the provider's CURRENT
+// sixty-second window has recorded. The window is the UTC minute of `now`,
+// which is what the record side writes — one definition of "current".
+func (r *JobRepository) ProviderWindowCount(ctx context.Context, providerConfigID string, now time.Time) (int, error) {
+	if r == nil || r.db == nil {
+		return 0, job.FailedJobError(job.CategoryStorage, "The job store is unavailable.")
+	}
+	var count int
+	err := r.db.QueryRowContext(ctx,
+		`SELECT request_count FROM provider_request_windows WHERE provider_config_id = ? AND window_start = ?`,
+		providerConfigID, now.UTC().Format(time.RFC3339[:16])+"Z").Scan(&count)
+	if err == sql.ErrNoRows {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, storageError("JOB_READ_FAILED", "The provider's window count could not be read.", err)
+	}
+	return count, nil
+}
+
+// RecordProviderRequest bumps the current window's ledger row and prunes the
+// windows that have closed. The prune runs in the same statement batch so a
+// long-lived process does not accumulate rows; the prune's failure is not
+// fatal, because a stale row only over-counts (fails safe).
+func (r *JobRepository) RecordProviderRequest(ctx context.Context, providerConfigID string, now time.Time) error {
+	if r == nil || r.db == nil {
+		return job.FailedJobError(job.CategoryStorage, "The job store is unavailable.")
+	}
+	windowStart := now.UTC().Format(time.RFC3339[:16]) + "Z"
+	cutoff := now.UTC().Add(-2 * time.Minute).Format(time.RFC3339[:16]) + "Z"
+	if _, err := r.db.ExecContext(ctx, `INSERT INTO provider_request_windows
+		(provider_config_id, window_start, request_count) VALUES (?, ?, 1)
+		ON CONFLICT(provider_config_id, window_start) DO UPDATE SET
+			request_count = request_count + 1`,
+		providerConfigID, windowStart); err != nil {
+		return storageError("JOB_WRITE_FAILED", "The provider's request could not be recorded.", err)
+	}
+	_, _ = r.db.ExecContext(ctx,
+		`DELETE FROM provider_request_windows WHERE provider_config_id = ? AND window_start < ?`,
+		providerConfigID, cutoff)
+	return nil
+}

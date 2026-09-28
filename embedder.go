@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"strings"
+	"sync"
 
 	appmemory "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/memory"
 	appproviders "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/providers"
@@ -135,6 +136,14 @@ func (e *projectEmbedder) Embed(ctx context.Context, projectID string, request a
 	if e.localFirst(ctx, projectID) {
 		if result, err := e.local.Embed(ctx, projectID, request); err == nil {
 			return result, nil
+		} else {
+			// THE FALL-THROUGH IS RECORDED (T18): a local model that failed
+			// MID-Run is the same quiet loss a construction failure is, and
+			// the diagnostics surface reads the last reason from here. The
+			// failure does NOT stop embedding — the provider the project
+			// named is the alternative, and refusing instead would trade a
+			// working channel for silence — but the user is told.
+			recordEmbedFallThrough(err)
 		}
 	}
 	if e.registry == nil || e.db == nil {
@@ -217,6 +226,33 @@ func embeddingUnavailable(message string) error {
 	return domainmemory.StorageError(message, nil)
 }
 
+// The last reason a LOCAL embed call failed and the bridge fell through to a
+// provider. It is package-level for the same reason embedder_local.go's
+// construction reason is: a diagnostics reader has no other place to ask,
+// and the health snapshot reads it through the same channel.
+var (
+	embedFallThroughMu     sync.Mutex
+	embedFallThroughReason string
+)
+
+// recordEmbedFallThrough keeps the last local-embed failure's reason.
+func recordEmbedFallThrough(cause error) {
+	if cause == nil {
+		return
+	}
+	embedFallThroughMu.Lock()
+	defer embedFallThroughMu.Unlock()
+	embedFallThroughReason = cause.Error()
+}
+
+// EmbedFallThroughReason reports the last local-embed failure's reason, empty
+// when the local path has not failed.
+func EmbedFallThroughReason() string {
+	embedFallThroughMu.Lock()
+	defer embedFallThroughMu.Unlock()
+	return embedFallThroughReason
+}
+
 // canEmbed reports whether a provider kind has an embedding adapter in this build.
 //
 // The default project row is deliberately excluded at this point rather than at the call site:
@@ -229,4 +265,16 @@ func (e *projectEmbedder) canEmbed(kind provider.Kind) bool {
 	default:
 		return false
 	}
+}
+
+// embedFallThroughSuffix joins the runtime fall-through reason into the
+// health snapshot's reason field when one exists — the two failure windows
+// (construction and mid-run) are the same "local path is gone" fact to a
+// reader, and both belong in the answer.
+func embedFallThroughSuffix() string {
+	reason := EmbedFallThroughReason()
+	if reason == "" {
+		return ""
+	}
+	return " | last runtime failure: " + reason
 }

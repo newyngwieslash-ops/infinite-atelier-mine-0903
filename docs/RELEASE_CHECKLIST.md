@@ -144,6 +144,8 @@ The C toolchain reports:
 cc1.exe: sorry, unimplemented: 64-bit mode not compiled in
 ```
 
+> **2026-09-26 更新（T24）**：本节关于「本机无法跑 race」的结论已过时——`go test -race ./...` 在本机可跑（64 位 gcc），2026-09-25 起有零报告记录（STATUS §0t），CI 亦新增 race 作业（T22）。本节保留为历史记录。
+
 This is an **environment failure, never a pass**. There is **no race-detector evidence for this
 build.** AGENTS §8.6 requires race-aware testing for concurrency (`go test -race` "平台可用时" — where
 the platform allows it). It does not here. A release run must either repair the host's C toolchain or

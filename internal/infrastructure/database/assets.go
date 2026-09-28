@@ -3,6 +3,7 @@ package database
 import (
 	"context"
 	"database/sql"
+	"time"
 
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/assets"
 	"github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/domain/asset"
@@ -34,7 +35,7 @@ func (r *AssetRepository) conn() querier {
 
 const assetSelectColumns = `SELECT id, project_id, asset_type, name, description, story_entity_id,
 	current_approved_version_id, status, deleted_at, deleted_by, legacy_metadata_json,
-	created_at, updated_at, revision FROM assets`
+	license, license_source, allows_export_use, created_at, updated_at, revision FROM assets`
 
 // CreateAsset stores an asset.
 func (r *AssetRepository) CreateAsset(ctx context.Context, record asset.Asset) error {
@@ -44,11 +45,13 @@ func (r *AssetRepository) CreateAsset(ctx context.Context, record asset.Asset) e
 	}
 	_, err := conn.ExecContext(ctx, `INSERT INTO assets
 		(id, project_id, asset_type, name, description, story_entity_id, current_approved_version_id,
-		 status, deleted_at, deleted_by, legacy_metadata_json, created_at, updated_at, revision)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 status, deleted_at, deleted_by, legacy_metadata_json, license, license_source,
+		 allows_export_use, created_at, updated_at, revision)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		record.ID, record.ProjectID, string(record.Type), record.Name, record.Description,
 		record.StoryEntityID, record.CurrentApprovedVersionID, string(record.Status),
 		formatTime(record.DeletedAt), record.DeletedBy, record.LegacyMetadata,
+		record.License, record.LicenseSource, record.AllowsExportUse,
 		formatTime(record.CreatedAt), formatTime(record.UpdatedAt), record.Revision)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -154,12 +157,14 @@ func (r *AssetRepository) UpdateAsset(ctx context.Context, record asset.Asset, e
 	}
 	result, err := conn.ExecContext(ctx, `UPDATE assets
 		SET asset_type = ?, name = ?, description = ?, story_entity_id = ?, current_approved_version_id = ?,
-		    status = ?, deleted_at = ?, deleted_by = ?, legacy_metadata_json = ?, updated_at = ?,
+		    status = ?, deleted_at = ?, deleted_by = ?, legacy_metadata_json = ?,
+		    license = ?, license_source = ?, allows_export_use = ?, updated_at = ?,
 		    revision = revision + 1
 		WHERE id = ? AND revision = ?`,
 		string(record.Type), record.Name, record.Description, record.StoryEntityID,
 		record.CurrentApprovedVersionID, string(record.Status), formatTime(record.DeletedAt),
-		record.DeletedBy, record.LegacyMetadata, formatTime(record.UpdatedAt), record.ID, expectedRevision)
+		record.DeletedBy, record.LegacyMetadata, record.License, record.LicenseSource,
+		record.AllowsExportUse, formatTime(record.UpdatedAt), record.ID, expectedRevision)
 	if err != nil {
 		return storageError("ASSET_WRITE_FAILED", "The asset could not be updated.", err)
 	}
@@ -351,12 +356,41 @@ func (r *AssetRepository) CountFiles(ctx context.Context, versionID string) (int
 }
 
 // scanAsset reads one asset row.
+// SetAssetLicense records one asset's rights (T17): licence text, source,
+// and the export-use tri-state. It is a NARROW write — a caller adjusting a
+// licence must not rewrite the asset's identity columns as a side effect.
+func (r *AssetRepository) SetAssetLicense(ctx context.Context, assetID, license, licenseSource, allowsExportUse string) error {
+	conn := r.conn()
+	if conn == nil {
+		return storageError("ASSET_STORE_UNAVAILABLE", "The asset store is unavailable.", nil)
+	}
+	if allowsExportUse != "" && allowsExportUse != "1" && allowsExportUse != "0" {
+		return asset.InvalidError("The export-use answer is '', '1' or '0'.")
+	}
+	result, err := conn.ExecContext(ctx, `UPDATE assets
+		SET license = ?, license_source = ?, allows_export_use = ?, updated_at = ?, revision = revision + 1
+		WHERE id = ?`,
+		license, licenseSource, allowsExportUse, formatTime(time.Now().UTC()), assetID)
+	if err != nil {
+		return storageError("ASSET_WRITE_FAILED", "The licence could not be saved.", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return storageError("ASSET_WRITE_FAILED", "The licence could not be saved.", err)
+	}
+	if affected == 0 {
+		return asset.NotFoundError()
+	}
+	return nil
+}
+
 func scanAsset(row rowScanner) (asset.Asset, error) {
 	var record asset.Asset
 	var assetType, status, deletedAt, deletedBy, createdAt, updatedAt string
 	if err := row.Scan(&record.ID, &record.ProjectID, &assetType, &record.Name, &record.Description,
 		&record.StoryEntityID, &record.CurrentApprovedVersionID, &status, &deletedAt, &deletedBy,
-		&record.LegacyMetadata, &createdAt, &updatedAt, &record.Revision); err != nil {
+		&record.LegacyMetadata, &record.License, &record.LicenseSource, &record.AllowsExportUse,
+		&createdAt, &updatedAt, &record.Revision); err != nil {
 		return asset.Asset{}, err
 	}
 	record.Type = asset.Type(assetType)
@@ -462,7 +496,7 @@ func (r *AssetRepository) listRelations(ctx context.Context, clause string, vers
 	return relations, nil
 }
 
-const assetUsageSelectColumns = `SELECT id, asset_version_id, consumer_type, consumer_id, usage_role, required, created_at
+const assetUsageSelectColumns = `SELECT id, asset_version_id, consumer_type, consumer_id, usage_role, required, created_at, params_json
 	FROM asset_usages`
 
 // AddUsage records that something consumes an asset version.
@@ -476,10 +510,10 @@ func (r *AssetRepository) AddUsage(ctx context.Context, usage asset.Usage) error
 		return storageError("ASSET_STORE_UNAVAILABLE", "The asset store is unavailable.", nil)
 	}
 	_, err := conn.ExecContext(ctx, `INSERT INTO asset_usages
-		(id, asset_version_id, consumer_type, consumer_id, usage_role, required, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		(id, asset_version_id, consumer_type, consumer_id, usage_role, required, created_at, params_json)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		usage.ID, usage.AssetVersionID, string(usage.ConsumerType), usage.ConsumerID,
-		usage.UsageRole, boolInt(usage.Required), formatTime(usage.CreatedAt))
+		usage.UsageRole, boolInt(usage.Required), formatTime(usage.CreatedAt), usage.Params)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return asset.ConflictError("That version is already used by that consumer in that role.")
@@ -510,10 +544,74 @@ func (r *AssetRepository) ListUsages(ctx context.Context, versionID string) ([]a
 		var consumerType, usageRole, createdAt string
 		var required int
 		if scanErr := rows.Scan(&usage.ID, &usage.AssetVersionID, &consumerType, &usage.ConsumerID,
-			&usageRole, &required, &createdAt); scanErr != nil {
+			&usageRole, &required, &createdAt, &usage.Params); scanErr != nil {
 			return nil, storageError("ASSET_READ_FAILED", "The usages could not be read.", scanErr)
 		}
 		usage.ConsumerType = asset.ConsumerType(consumerType)
+		usage.UsageRole = usageRole
+		usage.Required = required != 0
+		usage.CreatedAt = parseTime(createdAt)
+		usages = append(usages, usage)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, storageError("ASSET_READ_FAILED", "The usages could not be read.", err)
+	}
+	return usages, nil
+}
+
+// UpdateUsageParams replaces ONE use's placement document — the editor
+// command behind T05's readback loop.
+//
+// It is a NARROW write rather than a full usage update, for the same reason
+// the storyboard's UpdateDirectorPlanOverrides is: a caller that read a usage
+// must not be able to rewrite its identity columns (which version, which
+// consumer) as a side effect of adjusting how it plays. The row's identity
+// decides whether the update touches anything, and a row that is gone is a
+// not-found rather than a silent no-op.
+func (r *AssetRepository) UpdateUsageParams(ctx context.Context, usageID, paramsJSON string) error {
+	conn := r.conn()
+	if conn == nil {
+		return storageError("ASSET_STORE_UNAVAILABLE", "The asset store is unavailable.", nil)
+	}
+	result, err := conn.ExecContext(ctx, `UPDATE asset_usages SET params_json = ? WHERE id = ?`,
+		paramsJSON, usageID)
+	if err != nil {
+		return storageError("ASSET_WRITE_FAILED", "The usage could not be updated.", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return storageError("ASSET_WRITE_FAILED", "The usage could not be updated.", err)
+	}
+	if affected == 0 {
+		return asset.NotFoundError()
+	}
+	return nil
+}
+
+// ListUsagesOfConsumer returns every use one consumer makes — the editor's
+// read: a shot's audio panel lists ITS tracks by looking here.
+func (r *AssetRepository) ListUsagesOfConsumer(ctx context.Context, consumerType asset.ConsumerType, consumerID string) ([]asset.Usage, error) {
+	conn := r.conn()
+	if conn == nil {
+		return nil, storageError("ASSET_STORE_UNAVAILABLE", "The asset store is unavailable.", nil)
+	}
+	rows, err := conn.QueryContext(ctx,
+		assetUsageSelectColumns+` WHERE consumer_type = ? AND consumer_id = ? ORDER BY created_at ASC, id ASC`,
+		string(consumerType), consumerID)
+	if err != nil {
+		return nil, storageError("ASSET_READ_FAILED", "The usages could not be read.", err)
+	}
+	defer rows.Close()
+	var usages []asset.Usage
+	for rows.Next() {
+		var usage asset.Usage
+		var consumerTypeValue, usageRole, createdAt string
+		var required int
+		if scanErr := rows.Scan(&usage.ID, &usage.AssetVersionID, &consumerTypeValue, &usage.ConsumerID,
+			&usageRole, &required, &createdAt, &usage.Params); scanErr != nil {
+			return nil, storageError("ASSET_READ_FAILED", "The usages could not be read.", scanErr)
+		}
+		usage.ConsumerType = asset.ConsumerType(consumerTypeValue)
 		usage.UsageRole = usageRole
 		usage.Required = required != 0
 		usage.CreatedAt = parseTime(createdAt)

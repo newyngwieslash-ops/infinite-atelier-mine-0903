@@ -66,6 +66,10 @@ export function CollectBatchResults(arg1) {
   return window['go']['desktop']['DramaBinding']['CollectBatchResults'](arg1);
 }
 
+export function CollectVideoJobResults(arg1) {
+  return window['go']['desktop']['DramaBinding']['CollectVideoJobResults'](arg1);
+}
+
 export function CountDomainEvents(arg1) {
   return window['go']['desktop']['DramaBinding']['CountDomainEvents'](arg1);
 }

@@ -32,6 +32,9 @@ const (
 	// maxVideoSeconds bounds one video request. A shot is seconds long, and an episode's worth of
 	// minutes in a single call is a caller that meant a batch.
 	maxVideoSeconds = 60
+
+
+
 	// maxMediaReferences bounds the reference images one video request carries: a first frame, a last
 	// frame and a handful of style references.
 	maxMediaReferences = 8
@@ -39,6 +42,21 @@ const (
 	// whole script, which would be a batch.
 	maxAudioTextRunes = 2000
 )
+
+// videoSecondsAllowed is the vendor contract's `seconds` enum (T28:
+// docs/VENDOR_PROTOCOL_CROSSCHECK.md). A documented value set, checked at
+// the binding so an invalid request is refused before a billable call.
+var videoSecondsAllowed = map[int]bool{
+	4: true, 8: true, 12: true,
+}
+
+// videoSizeAllowed is the vendor contract's `size` enum (same cross-check).
+var videoSizeAllowed = map[string]bool{
+	"720x1280":  true,
+	"1280x720":  true,
+	"1024x1792": true,
+	"1792x1024": true,
+}
 
 // SubmitVideoJobRequest asks for one shot's video.
 //
@@ -91,6 +109,21 @@ func (b *JobsBinding) SubmitVideoJob(request SubmitVideoJobRequest) (JobDTO, err
 	if seconds > maxVideoSeconds {
 		// A single command must not enqueue an unbounded clip: a provider bills by the second, and
 		// SECURITY requires an explicit limit.
+		return JobDTO{}, bindingInvalidInput()
+	}
+	// THE VENDOR ENUM (T28 cross-check): the OpenAI-compatible video contract
+	// accepts `seconds` as one of its documented values, not an arbitrary
+	// integer — a request outside the enum would be refused by the provider
+	// AFTER accepting the submit call's cost. Validating here sends the same
+	// refusal before the money is spent. Values: the sora-2 family's
+	// documented set (4/8/12); a vendor whose enum differs is one edit to
+	// this table, which is why it lives here rather than in the adapter.
+	if !videoSecondsAllowed[seconds] {
+		return JobDTO{}, bindingInvalidInput()
+	}
+	// `size` is likewise an enum on the wire. Empty means the provider's
+	// default; a stated value must be one of the documented resolutions.
+	if size := strings.TrimSpace(request.Size); size != "" && !videoSizeAllowed[size] {
 		return JobDTO{}, bindingInvalidInput()
 	}
 	if len(request.References)+len(request.ReferenceMIMEs) > maxMediaReferences*2 {
@@ -391,6 +424,15 @@ func (b *JobsBinding) SubmitAudioJob(request SubmitAudioJobRequest) (JobDTO, err
 		strings.TrimSpace(request.DialogueLineID) == "" {
 		return JobDTO{}, bindingInvalidInput()
 	}
+	// THE SPEED RANGE (T28 cross-check): the vendor contract takes 0.25–4.0.
+	// A value outside it is refused here rather than by the provider after
+	// the request's cost. Unset (empty) means the provider default.
+	if speed := strings.TrimSpace(request.Speed); speed != "" {
+		value, parseErr := strconv.ParseFloat(speed, 64)
+		if parseErr != nil || value < 0.25 || value > 4.0 {
+			return JobDTO{}, bindingInvalidInput()
+		}
+	}
 	if strings.TrimSpace(request.ProviderID) == "" || strings.TrimSpace(request.Model) == "" {
 		return JobDTO{}, bindingInvalidInput()
 	}
@@ -439,4 +481,92 @@ type audioJobInput struct {
 	Voice      string `json:"voice,omitempty"`
 	Format     string `json:"format,omitempty"`
 	Speed      string `json:"speed,omitempty"`
+}
+
+// SubmitEffectJobRequest asks for one shot's SOUND EFFECT — the contract
+// FR-080 V1's 音效生成适配 names, and a different PROVIDER CONTRACT from the
+// speech one: a description of what the scene should sound like, not a script
+// to read. The 2026-09-26 audit's T03 is what this command closes: the old
+// path put the effect's word into a TTS request's `text` and filed the spoken
+// word as an effect.
+type SubmitEffectJobRequest struct {
+	ProjectID string `json:"projectId"`
+	EpisodeID string `json:"episodeId"`
+	// ShotID is the shot the effect punctuates, and it is the job's entity —
+	// the same subject the collection and the mix's effect join read.
+	ShotID string `json:"shotId"`
+	ProviderID string `json:"providerId"`
+	Model      string `json:"model"`
+	// Description is what the scene should SOUND like, in the language the
+	// script is written in — the matched term the suggestions surface.
+	Description string `json:"description"`
+	// DurationSeconds bounds the sound's length when the channel supports it.
+	DurationSeconds int    `json:"durationSeconds,omitempty"`
+	Format          string `json:"format,omitempty"`
+	Priority        int    `json:"priority,omitempty"`
+}
+
+// SubmitEffectJob enqueues one effect-synthesis request for a shot.
+//
+// It is a command of its own rather than `SubmitAudioJob` with a flag because
+// the two travel to different provider capabilities: the job type is
+// `effect_generation`, and a channel that cannot produce sounds refuses it at
+// dispatch with an honest unsupported error — the refusal T03 exists for.
+func (b *JobsBinding) SubmitEffectJob(request SubmitEffectJobRequest) (JobDTO, error) {
+	service, ctx, err := b.requestService()
+	if err != nil {
+		return JobDTO{}, err
+	}
+	if strings.TrimSpace(request.ProjectID) == "" || strings.TrimSpace(request.EpisodeID) == "" ||
+		strings.TrimSpace(request.ShotID) == "" {
+		return JobDTO{}, bindingInvalidInput()
+	}
+	if strings.TrimSpace(request.ProviderID) == "" || strings.TrimSpace(request.Model) == "" {
+		return JobDTO{}, bindingInvalidInput()
+	}
+	description := strings.TrimSpace(request.Description)
+	if description == "" {
+		return JobDTO{}, bindingInvalidInput()
+	}
+	// The same per-character bound speech carries: a description is shorter
+	// than a line, and a request past the bound is a caller mistake rather
+	// than a longer sound.
+	if len([]rune(description)) > maxAudioTextRunes {
+		return JobDTO{}, bindingInvalidInput()
+	}
+	input := effectJobInput{
+		Description:     description,
+		Model:           request.Model,
+		ProviderID:      request.ProviderID,
+		DurationSeconds: request.DurationSeconds,
+		Format:          request.Format,
+	}
+	encoded, err := json.Marshal(input)
+	if err != nil {
+		return JobDTO{}, bindingInvalidInput()
+	}
+	record, _, err := service.Submit(ctx, appjobs.SubmitRequest{
+		ProjectID:        request.ProjectID,
+		EntityType:       "shot",
+		EntityID:         strings.TrimSpace(request.ShotID),
+		JobType:          job.JobTypeEffectGeneration,
+		Priority:         request.Priority,
+		ProviderConfigID: request.ProviderID,
+		InputJSON:        string(encoded),
+		Scope:            "submit-effect-job",
+	})
+	if err != nil {
+		return JobDTO{}, toAppError(err)
+	}
+	return toJobDTO(record), nil
+}
+
+// effectJobInput is an effect job's stored input, mirroring the runner's own
+// `effectInput`.
+type effectJobInput struct {
+	Description     string `json:"description"`
+	Model           string `json:"model"`
+	ProviderID      string `json:"providerId"`
+	DurationSeconds int    `json:"durationSeconds,omitempty"`
+	Format          string `json:"format,omitempty"`
 }

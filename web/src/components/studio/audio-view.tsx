@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Alert, App, Button, Empty, Input, Select, Space, Table, Tag, Typography } from "antd";
+import { Alert, App, Button, Empty, Input, InputNumber, Modal, Select, Space, Switch, Table, Tag, Typography } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { Mic, RefreshCw } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { listJobs, submitAudioJob } from "@/services/desktop/jobs";
-import { collectAudioJobResults, createAsset, getScriptStructure, listAssets, isDramaBindingsAvailable, listScriptVersions, listStoryEntities } from "@/services/desktop/drama";
+import { collectAudioJobResults, createAsset, getScriptStructure, listAssets, isDramaBindingsAvailable, listScriptVersions, listStoryEntities, listUsagesOfConsumer, setUsageParams } from "@/services/desktop/drama";
 import { isMediaBindingsAvailable, readTimeline } from "@/services/desktop/media";
 import {
     assignCharacterVoice,
@@ -65,8 +65,12 @@ export type AudioSectionProps = {
     onChanged: () => void;
 };
 
-/** The job types this section lists: one line's speech, and nothing else. */
-const AUDIO_JOB_TYPES = ["audio_generation"];
+/**
+ * The job types this section lists: one line's speech, and one shot's sound
+ * effect. They are two provider contracts (T03), so both are listed here and
+ * each is collected under its own role.
+ */
+const AUDIO_JOB_TYPES = ["audio_generation", "effect_generation"];
 
 /**
  * SPOKEN_LINE_TYPES is the domain's IsSpoken rule (`internal/domain/media/subtitle.go`).
@@ -108,21 +112,28 @@ function flattenSpokenLines(structure: desktop.ScriptStructureDTO): SpokenLine[]
 }
 
 /**
- * audioAssetFor finds or creates the asset a role's versions belong to.
+ * audioAssetFor finds or creates the asset ONE line's (or one effect's) versions belong to.
  *
- * # Why one asset per role rather than one per line
+ * # Why one asset per line instance rather than one per role
  *
- * Every take of a line is a VERSION of the same idea, which is what makes re-recording it a new version
- * instead of a second object — and it is what `AttachJobResult` expects, since it takes an asset id and
- * returns a version. One asset for all speech and another for all effects is the coarsest arrangement
- * that still tells the two apart, and it matches what the asset list can be searched by: `ListAssets`
- * filters on TYPE, and every one of these is an `audio` asset.
+ * The first version of this looked up a project-wide asset by fixed name ("Line speech") for every
+ * dialogue job, and the 2026-09-26 audit traced what that costs: line A's approved take and line B's
+ * were versions of the SAME asset, so collecting B superseded A — and A's usage rows then failed the
+ * mix's `au.asset_version_id = aa.current_approved_version_id` filter. Two spoken lines shared one
+ * sound, across shots and even across episodes.
  *
- * The name carries the role so a user browsing the library sees which is which rather than two rows
- * called "audio".
+ * The keying is now the LINE INSTANCE (`audioAssetFor(projectId, role, instanceKey)`): every take of a
+ * line is still a VERSION of the same asset — which is what makes re-recording it a new take and not a
+ * second object — but another line's approval can never move, because another line's versions hang off
+ * another asset. Sound effects key on the matched word the same way, so two shots each wanting "rain"
+ * keep their own takes.
+ *
+ * The name carries the instance so a user browsing the library sees which is which, and the
+ * `speech|effect` prefix keeps the two roles' assets distinguishable in the same list.
  */
-async function audioAssetFor(projectId: string, role: string): Promise<string> {
-    const label = role === "audio_effect" ? "Sound effects" : "Line speech";
+async function audioAssetFor(projectId: string, role: string, instanceKey: string): Promise<string> {
+    const kind = role === "audio_effect" ? "effect" : "speech";
+    const label = `${kind}:${instanceKey}`.slice(0, 200);
     const existing = await listAssets({ projectId, types: ["audio"] } as never);
     const match = existing.find((record) => record.name === label);
     if (match) return match.id;
@@ -174,6 +185,18 @@ export function AudioSection({ projectId, episodes, activeEpisodeId, onSelectEpi
      * 0.35, an effect at unity, a line placed at its shot.
      */
     const [attaching, setAttaching] = useState("");
+    /**
+     * THE TRACK EDITOR (T05): the clip being edited, and its draft params.
+     *
+     * The editor writes through `SetUsageParams` — the same document the
+     * timeline reads and the mixer consumes — so an edit survives a restart
+     * by construction. All-nil clears back to mixer defaults.
+     */
+    const [editing, setEditing] = useState<{ usageId: string; label: string } | null>(null);
+    const [draftOffset, setDraftOffset] = useState<number | null>(null);
+    const [draftVolume, setDraftVolume] = useState<number | null>(null);
+    const [draftMuted, setDraftMuted] = useState<boolean>(false);
+    const [savingParams, setSavingParams] = useState(false);
     /**
      * The resolved voice for the picked line, and its PROVENANCE.
      *
@@ -427,10 +450,10 @@ export function AudioSection({ projectId, episodes, activeEpisodeId, onSelectEpi
      *
      * # The asset
      *
-     * One asset per role, reused across lines: a line's speech and a sound effect are different things to
-     * a reader, and every line's take is a VERSION of the same idea rather than an asset of its own — which
-     * is what makes re-recording a line a new version instead of a second object. The asset is created on
-     * first use.
+     * One asset per LINE INSTANCE (the job's `entityId`), so re-recording a line is a new VERSION of
+     * that line's asset while another line's approval stays where it is — the isolation rule the
+     * 2026-09-26 audit's T01 fixed (`audioAssetFor` carries the reasoning). An effect keys on its job's
+     * entity id the same way. The asset is created on first use.
      */
     const attachJob = async (jobID: string, role: string) => {
         if (!selectedShotId) {
@@ -439,7 +462,12 @@ export function AudioSection({ projectId, episodes, activeEpisodeId, onSelectEpi
         }
         setAttaching(jobID);
         try {
-            const assetID = await audioAssetFor(projectId, role);
+            // The instance key is the job's own entity id: the same line's jobs
+            // share one asset (so a redo is a take), and a different line's jobs
+            // never share one (so its approval never moves).
+            const job = jobs.find((record) => record.id === jobID);
+            const instanceKey = job?.entityId?.trim() || jobID;
+            const assetID = await audioAssetFor(projectId, role, instanceKey);
             const collected = await collectAudioJobResults({
                 assetByJob: { [jobID]: assetID },
                 jobIds: [jobID],
@@ -460,6 +488,55 @@ export function AudioSection({ projectId, episodes, activeEpisodeId, onSelectEpi
             setAttaching("");
         }
     };
+
+    /**
+     * openTrackEditor loads a clip's stored params into the draft.
+     */
+    const openTrackEditor = useCallback(async (usageId: string, versionId: string, label: string) => {
+        setEditing({ usageId, label });
+        setDraftOffset(null);
+        setDraftVolume(null);
+        setDraftMuted(false);
+        try {
+            const usages = await listUsagesOfConsumer("shot", selectedShotId);
+            const match = usages.find((u) => u.assetVersionId === versionId && u.id === usageId);
+            if (match?.params) {
+                const doc = JSON.parse(match.params) as {
+                    offsetMs?: number; volume?: number; muted?: boolean;
+                };
+                setDraftOffset(doc.offsetMs ?? null);
+                setDraftVolume(doc.volume ?? null);
+                setDraftMuted(doc.muted ?? false);
+            }
+        } catch {
+            // A failed read opens the editor with defaults; the save reports
+            // any real failure.
+        }
+    }, [selectedShotId]);
+
+    /**
+     * saveTrackParams persists the draft (T05). All-nil clears the override.
+     */
+    const saveTrackParams = useCallback(async () => {
+        if (!editing) return;
+        setSavingParams(true);
+        try {
+            await setUsageParams({
+                usageId: editing.usageId,
+                offsetMs: draftOffset,
+                volume: draftVolume,
+                muted: draftMuted || null,
+            } as never);
+            message.success(t("studio.audio.trackSaved"));
+            setEditing(null);
+            await reload();
+            onChanged();
+        } catch (failure) {
+            message.error(failure instanceof Error ? failure.message : t("studio.audio.trackSaveFailed"));
+        } finally {
+            setSavingParams(false);
+        }
+    }, [editing, draftOffset, draftVolume, draftMuted, message, t, reload, onChanged]);
 
     /** castVoice assigns the drafted voice to the picked character. */
     const castCharacter = async () => {
@@ -575,6 +652,22 @@ export function AudioSection({ projectId, episodes, activeEpisodeId, onSelectEpi
             title: t("studio.audio.stateLabel"),
             key: "state",
             render: (_value, row) => (row.hasAudio ? <Tag color="green">{t("studio.audio.hasAudio")}</Tag> : <Tag color="orange">{t("studio.audio.noAudio")}</Tag>),
+        },
+        {
+            // THE TRACK EDITOR ENTRY (T05): opens the placement dialog for this
+            // shot's dialogue clips — offset, volume, mute. The clips come from
+            // the shot's usages, which is what the editor reads and writes.
+            title: t("studio.audio.trackEdit"),
+            key: "trackEdit",
+            width: 90,
+            render: (_value, row) =>
+                row.shotId ? (
+                    <TrackEditButton
+                        shotId={row.shotId}
+                        ordinal={row.ordinal}
+                        onOpen={(usageId, versionId, label) => void openTrackEditor(usageId, versionId, label)}
+                    />
+                ) : null,
         },
         {
             title: t("studio.audio.cuesLabel"),
@@ -900,6 +993,45 @@ export function AudioSection({ projectId, episodes, activeEpisodeId, onSelectEpi
                     />
                 )}
             </section>
+
+            <Modal
+                title={editing?.label ?? t("studio.audio.trackEdit")}
+                open={editing !== null}
+                onCancel={() => setEditing(null)}
+                onOk={() => void saveTrackParams()}
+                confirmLoading={savingParams}
+                okText={t("studio.audio.trackSave")}
+                data-testid="studio-audio-track-modal"
+            >
+                <div className="space-y-3">
+                    <div>
+                        <div className="mb-1 text-xs text-stone-500">{t("studio.audio.trackOffset")}</div>
+                        <InputNumber
+                            className="w-full"
+                            value={draftOffset}
+                            onChange={(value) => setDraftOffset(value)}
+                            addonAfter="ms"
+                            data-testid="studio-audio-track-offset"
+                        />
+                    </div>
+                    <div>
+                        <div className="mb-1 text-xs text-stone-500">{t("studio.audio.trackVolume")}</div>
+                        <InputNumber
+                            className="w-full"
+                            min={0}
+                            max={2}
+                            step={0.05}
+                            value={draftVolume}
+                            onChange={(value) => setDraftVolume(value)}
+                            data-testid="studio-audio-track-volume"
+                        />
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <Switch checked={draftMuted} onChange={(checked) => setDraftMuted(checked)} data-testid="studio-audio-track-mute" />
+                        <span className="text-xs text-stone-500">{t("studio.audio.trackMuteHint")}</span>
+                    </div>
+                </div>
+            </Modal>
         </div>
     );
 }
@@ -937,4 +1069,55 @@ function audioStatusColour(status: string): string {
         default:
             return "blue";
     }
+}
+
+/**
+ * TrackEditButton lists one shot's audio usages and opens the placement
+ * editor for the picked clip (T05's read+write loop).
+ *
+ * The usage list loads on open — a collection can land between renders, and
+ * a stale list would let a user edit a usage that is not there.
+ */
+function TrackEditButton(props: {
+    shotId: string;
+    ordinal: number;
+    onOpen: (usageId: string, versionId: string, label: string) => void;
+}) {
+    const { t } = useTranslation();
+    const [open, setOpen] = useState(false);
+    const [usages, setUsages] = useState<desktop.AssetUsageDTO[] | null>(null);
+
+    const load = async () => {
+        try {
+            setUsages(await listUsagesOfConsumer("shot", props.shotId));
+        } catch {
+            setUsages([]);
+        }
+    };
+
+    if (!open) {
+        return (
+            <Button size="small" data-testid={`studio-audio-trackedit-${props.shotId}`} onClick={() => { setOpen(true); void load(); }}>
+                {t("studio.audio.trackEdit")}
+            </Button>
+        );
+    }
+    return (
+        <Space size="small" wrap>
+            {(usages ?? []).filter((u) => u.usageRole.startsWith("audio_")).map((u) => (
+                <Button
+                    key={u.id}
+                    size="small"
+                    data-testid={`studio-audio-track-${u.id}`}
+                    onClick={() => props.onOpen(u.id, u.assetVersionId, `#${props.ordinal} ${u.usageRole}`)}
+                >
+                    {u.usageRole.replace("audio_", "")}
+                </Button>
+            ))}
+            {usages !== null && usages.length === 0 ? (
+                <span className="text-xs text-stone-500">{t("studio.audio.noTakes")}</span>
+            ) : null}
+            <Button size="small" type="text" onClick={() => setOpen(false)}>×</Button>
+        </Space>
+    );
 }

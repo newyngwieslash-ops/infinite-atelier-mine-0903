@@ -20,6 +20,11 @@ type jobWiring struct {
 	service *appjobs.Service
 	// resultReader serves stored artifacts to the canvas by content hash.
 	resultReader desktop.ResultReader
+	// runner is held so the composition root can attach the four LOCAL
+	// handlers (T06) after the drama and media stacks they drive exist. The
+	// job stack composes first; the handlers arrive later by a method call,
+	// which is the same enrichment pass a.mediaBinding's saveFile takes.
+	runner *infrajobs.Runner
 }
 
 // Default limits for job execution in WP-03.
@@ -61,7 +66,21 @@ func composeJobs(db *sql.DB, registry *infraproviders.Registry, files *infrajobs
 		Policy:             job.DefaultRetryPolicy(),
 		RemotePollInterval: jobRemotePollInterval,
 	}).WithRemoteCanceller(&remoteCanceller{registry: registry})
-	return &jobWiring{binding: &desktop.JobsBinding{}, service: service, resultReader: resultReader}
+	return &jobWiring{binding: &desktop.JobsBinding{}, service: service, resultReader: resultReader, runner: runner}
+}
+
+// AttachLocalHandlers supplies the four local job handlers (T06) once the
+// stacks they drive exist.
+//
+// The call is OPTIONAL per type: a handler left nil leaves that job type
+// refusing with an honest unsupported error, which is how a build without the
+// media stack keeps its import jobs working and its export jobs saying why
+// they cannot.
+func (w *jobWiring) AttachLocalHandlers(handlers *infrajobs.LocalHandlers) {
+	if w == nil || w.runner == nil || handlers == nil {
+		return
+	}
+	w.runner.WithLocalHandlers(handlers)
 }
 
 // remoteCanceller stops provider-side video work when the user cancels a job.

@@ -86,9 +86,42 @@ type app struct {
 	jobWiring      *jobWiring
 	projectWiring  *projectWiring
 	dramaWiring    *dramaWiring
+	// backupScheduler runs FR-180's automatic backup (T12). It is composed
+	// after the project stack gives it the export service, and stopped in the
+	// shutdown path so an in-flight export settles before the database closes.
+	backupScheduler *backupScheduler
 	emit           func(context.Context, string, ...interface{})
 	newEnvelope    func(string, any) (desktop.Envelope, error)
 }
+
+// defaultAutoBackupInterval is FR-180's automatic backup cadence: daily.
+// A settings-driven value replaces it when the settings surface lands; the
+// constant is named rather than inline so the change is one line.
+func defaultAutoBackupInterval() time.Duration { return 24 * time.Hour }
+
+// embeddingStateFor resolves the health snapshot's embedding state from the
+// composition-time facts: whether a model was configured, why it failed, and
+// whether the agent stack (which composes the embedder) exists at all.
+func embeddingStateFor(configured bool, reason string, stackPresent bool) health.EmbeddingStatus {
+	return func() (health.EmbeddingState, string) {
+		switch {
+		case configured && reason != "":
+			// A named model that failed to build: the state FR-120 refuses to
+			// let stay silent.
+			return health.EmbeddingUnavailable, reason
+		case configured && stackPresent:
+			return health.EmbeddingLocal, ""
+		case configured:
+			return health.EmbeddingUnavailable, "the local model was configured but the agent stack did not compose"
+		default:
+			return health.EmbeddingNotConfigured, ""
+		}
+	}
+}
+
+// defaultAutoBackupRetain keeps three successful archives, which bounds disk
+// use at roughly three library sizes while surviving two failed runs.
+func defaultAutoBackupRetain() int { return 3 }
 
 func newApp(shutdown func(context.Context) error) *app {
 	return newAppWithWindowFocusAndLogger(shutdown, focusWailsWindow, slog.Default())
@@ -281,6 +314,15 @@ func (a *app) startup(ctx context.Context) {
 					}
 				}
 
+				// THE LOCAL JOB HANDLERS (T06), attached after the stacks they
+				// drive exist: export needs the media stack, import needs the
+				// drama stack, migration needs the legacy repository, and a
+				// thumbnail needs the media engine. Every handler is optional
+				// and a nil one leaves its job type refusing honestly.
+				if jobStack := a.jobWiring; jobStack != nil {
+					jobStack.AttachLocalHandlers(composeLocalJobHandlers(handle, dramaStack, media, a.projectWiring, store))
+				}
+
 				// The WP-07 agent stack is composed AFTER the drama stack, because
 				// every tool's handler calls one of its services: the order here is
 				// the dependency direction, made visible in one place.
@@ -305,6 +347,9 @@ func (a *app) startup(ctx context.Context) {
 						desktop.AttachAgent(a.agentBinding, ctx,
 							agentruntime.NewInspector(database.NewAgentRepository(handle.SQL())))
 						desktop.AttachAgentRegistry(a.agentBinding, agentStack.assembly.Registry())
+						// THE MANAGEMENT SURFACE (T09): the assembly is what the
+						// stop switch writes through and the skill view reads.
+						desktop.AttachAgentSkills(a.agentBinding, agentStack.assembly)
 					}
 					// The extraction service is REBUILT with the runtime as its Extractor and
 					// re-attached, which is what closes the seam WP-06 recorded: "如果 Agent
@@ -362,7 +407,12 @@ func (a *app) startup(ctx context.Context) {
 	if db := handle.SQL(); db != nil {
 		probe = db
 	}
-	desktop.Attach(healthBinding, ctx, health.New(buildinfo.Version, dirs.Root, probe, handle.Mode() == database.ModeSafe, diagnostic))
+	// THE EMBEDDING STATE (T18): the local ONNX path's outcome travels in the
+	// health snapshot, so a user who configured a model sees whether it loads
+	// — and why, when it does not — instead of losing the local path quietly.
+	healthService := health.New(buildinfo.Version, dirs.Root, probe, handle.Mode() == database.ModeSafe, diagnostic).
+		WithEmbeddingStatus(embeddingStateFor(LocalEmbedderConfigured(), LocalEmbedderStatus()+embedFallThroughSuffix(), a.agentStack != nil))
+	desktop.Attach(healthBinding, ctx, healthService)
 	jobStack := a.jobWiring
 	a.mu.Unlock()
 
@@ -370,6 +420,18 @@ func (a *app) startup(ctx context.Context) {
 	// database and must not hold up the rest of startup.
 	if jobStack != nil {
 		jobStack.start(ctx)
+	}
+
+	// THE AUTOMATIC BACKUP (T12): an ordinary (secret-free) export on an
+	// interval, with retention. The interval and retention are the defaults
+	// FR-180's 自动备份 names until the settings surface lands (recorded in
+	// STATUS); a non-positive interval disables it entirely, and a failed
+	// run never touches the previous backup.
+	if a.projectWiring != nil && a.projectWiring.export != nil {
+		scheduler := newBackupScheduler(a.projectWiring.export, dirs.Database,
+			defaultAutoBackupInterval(), defaultAutoBackupRetain())
+		scheduler.start(ctx)
+		a.backupScheduler = scheduler
 	}
 
 	if a.logger != nil {
@@ -423,10 +485,17 @@ func (a *app) closeDatabase(ctx context.Context) error {
 	handle := a.db
 	wiring := a.providerWiring
 	jobStack := a.jobWiring
+	backupSched := a.backupScheduler
+	a.backupScheduler = nil
 	a.db = nil
 	a.providerWiring = nil
 	a.jobWiring = nil
 	a.mu.Unlock()
+	// Stop the backup scheduler BEFORE the job manager: an in-flight
+	// scheduled export must settle while the database handle is still open.
+	if backupSched != nil {
+		backupSched.stop()
+	}
 	// Stop the job scheduler first, then cancel in-flight provider streams,
 	// so no worker writes into a closed database handle.
 	if jobStack != nil {

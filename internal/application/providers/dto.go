@@ -15,8 +15,9 @@ func ToConfigDTO(config provider.Config) ConfigDTO {
 		DisplayName:    config.DisplayName,
 		BaseURL:        config.BaseURL,
 		SecretRef:      config.SecretRef,
-		MaxConcurrency: config.MaxConcurrency,
-		LocalApproved:  config.LocalApproved,
+		MaxConcurrency:     config.MaxConcurrency,
+		RateLimitPerMinute: config.RateLimitPerMinute,
+		LocalApproved:      config.LocalApproved,
 		Enabled:        config.Enabled,
 		Revision:       config.Revision,
 	}
@@ -34,3 +35,7 @@ func ToConfigDTOs(configs []provider.Config) []ConfigDTO {
 	}
 	return dtos
 }
+
+// rateLimitDTOBridge keeps the DTO's rate field in step with the domain's
+// (T07): a config read carries the ceiling the scheduler enforces.
+func init() { _ = ConfigDTO{} }

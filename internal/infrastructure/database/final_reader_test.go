@@ -123,10 +123,12 @@ func TestFinalFactsReaderReadsTheRealSchema(t *testing.T) {
 	if facts.Export != nil {
 		t.Fatalf("the reader found export %q", facts.Export.ID)
 	}
-	// The licence question is NOT answerable in this build, and the adapter states that rather than
-	// leaving a zero value that reads the same. The ruleset branches on this field.
-	if facts.LicensesChecked {
-		t.Fatal("the reader claims to have checked licences, and there is nowhere in this schema to read one")
+	// THE LICENCE RECORD (T17): migration 000031 gave the asset aggregate its
+	// rights columns, so the reader now answers the licence question — an
+	// episode with no asset records reports each used asset as Present=false,
+	// which is the visible "unknown" rather than an unanswerable question.
+	if !facts.LicensesChecked {
+		t.Fatal("the reader does not claim to have checked licences; the schema now carries the record")
 	}
 }
 

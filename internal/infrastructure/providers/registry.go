@@ -67,6 +67,13 @@ type Registry struct {
 	// field of its own for the same reason `openaiVideo` is: the mock serves `mock_media` and both must
 	// be selectable, so one field would make one of them unreachable.
 	openaiAudio appjobs.AudioPort
+	// effect and openaiEffect stand for the effect capability the same pair
+	// audio/openaiAudio stand for speech: the mock serves `mock_media`, the
+	// real adapter serves `openai_compatible` when the build carries one, and
+	// a channel without its own effect adapter refuses effect jobs instead of
+	// asking the speech adapter to perform them.
+	effect       appjobs.EffectPort
+	openaiEffect appjobs.EffectPort
 
 	// mockText is the deterministic text adapter. It is optional and reachable
 	// only for KindMockText, which no persisted configuration can carry; see
@@ -127,6 +134,30 @@ func (r *Registry) WithOpenAIAudioAdapter(adapter appjobs.AudioPort) *Registry {
 		return r
 	}
 	r.openaiAudio = adapter
+	return r
+}
+
+// WithEffectAdapter registers the effect adapter for the mock-media kind. It
+// is a registration of its own rather than a widening of `WithMediaAdapters`
+// for the reason the video/audio split states: a channel's effect capability
+// is its own fact, and a registry built without one refuses effect jobs with
+// an honest unsupported error instead of asking the speech adapter to perform
+// them.
+func (r *Registry) WithEffectAdapter(adapter appjobs.EffectPort) *Registry {
+	if r == nil {
+		return r
+	}
+	r.effect = adapter
+	return r
+}
+
+// WithOpenAIEffectAdapter registers the real effect adapter for
+// `openai_compatible`, the same split as the video and speech pairs.
+func (r *Registry) WithOpenAIEffectAdapter(adapter appjobs.EffectPort) *Registry {
+	if r == nil {
+		return r
+	}
+	r.openaiEffect = adapter
 	return r
 }
 
@@ -322,6 +353,38 @@ func (r *Registry) AudioPortFor(ctx context.Context, providerID string) (appjobs
 			return nil, provider.NewUnsupportedError()
 		}
 		return r.openaiAudio, nil
+	default:
+		return nil, provider.NewUnsupportedError()
+	}
+}
+
+// EffectPortFor returns the effect adapter for a provider ID. The rules are
+// AudioPortFor's: an enabled config of the mock kind resolves the mock effect
+// adapter, an openai_compatible one resolves the real adapter when the build
+// carries one, and every other kind is refused — a text channel asked for an
+// effect is an unsupported capability, not a request.
+func (r *Registry) EffectPortFor(ctx context.Context, providerID string) (appjobs.EffectPort, error) {
+	if r == nil || r.configs == nil {
+		return nil, provider.NewUnsupportedError()
+	}
+	config, err := r.configs.GetConfig(ctx, providerID)
+	if err != nil {
+		return nil, err
+	}
+	if !config.Enabled {
+		return nil, provider.NewConfigurationError()
+	}
+	switch config.Kind {
+	case provider.KindMockMedia:
+		if r.effect == nil {
+			return nil, provider.NewUnsupportedError()
+		}
+		return r.effect, nil
+	case provider.KindOpenAICompatible:
+		if r.openaiEffect == nil {
+			return nil, provider.NewUnsupportedError()
+		}
+		return r.openaiEffect, nil
 	default:
 		return nil, provider.NewUnsupportedError()
 	}

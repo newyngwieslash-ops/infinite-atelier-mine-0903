@@ -22,6 +22,8 @@ export function RetryFailedJobs(arg1:Array<string>):Promise<number>;
 
 export function SubmitAudioJob(arg1:desktop.SubmitAudioJobRequest):Promise<desktop.JobDTO>;
 
+export function SubmitEffectJob(arg1:desktop.SubmitEffectJobRequest):Promise<desktop.JobDTO>;
+
 export function SubmitImageJob(arg1:desktop.SubmitImageJobRequest):Promise<desktop.JobDTO>;
 
 export function SubmitVideoBatch(arg1:desktop.SubmitVideoBatchRequest):Promise<desktop.SubmitVideoBatchResultDTO>;

@@ -46,7 +46,7 @@ func (r *AssetRepository) UsagesForConsumer(ctx context.Context, consumerType as
 		var required int
 		var createdAt string
 		if err := rows.Scan(&usage.ID, &usage.AssetVersionID, &consumerType, &usage.ConsumerID,
-			&usage.UsageRole, &required, &createdAt); err != nil {
+			&usage.UsageRole, &required, &createdAt, &usage.Params); err != nil {
 			return nil, storageError("ASSET_READ_FAILED", "The asset usages could not be read.", err)
 		}
 		usage.ConsumerType = asset.ConsumerType(consumerType)

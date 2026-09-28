@@ -45,6 +45,10 @@ func composeProviders(db *sql.DB, publisher appproviders.EventPublisher) *provid
 	// for `mock_media` — a build keeps it and configures a real provider beside
 	// it rather than choosing one.
 	registry.WithMediaAdapters(infraproviders.NewMockVideoAdapter(), infraproviders.NewMockAudioAdapter())
+	// The EFFECT adapter for the mock kind: sound-effect synthesis is its own
+	// capability (T03), so the mock family carries its own answer instead of
+	// the speech mock being asked to perform effects.
+	registry.WithEffectAdapter(infraproviders.NewMockEffectAdapter())
 	// THE REAL VIDEO ADAPTER (WP-26), resolved for `openai_compatible`. This
 	// line is what turns the async video protocol from an interface into a path
 	// a user command reaches: before it, `VideoPortFor` returned `unsupported`
@@ -62,6 +66,11 @@ func composeProviders(db *sql.DB, publisher appproviders.EventPublisher) *provid
 	// video side carried before WP-26, with the same consequence: a user could submit a line's speech
 	// and only a deterministic mock could answer it.
 	registry.WithOpenAIAudioAdapter(infraproviders.NewOpenAIAudioAdapter(registry))
+	// The REAL EFFECT ADAPTER, which refuses for now: the OpenAI-compatible
+	// family has no verified effect-synthesis protocol in this build, and
+	// reading an effect's name through the speech endpoint is the defect T03
+	// closed. The refusal is the honest answer until a protocol is verified.
+	registry.WithOpenAIEffectAdapter(infraproviders.NewOpenAIEffectAdapter(registry))
 	// The IMAGE mock is deliberately NOT registered here, and the reason is worth stating
 	// because the absence looks like an omission.
 	//

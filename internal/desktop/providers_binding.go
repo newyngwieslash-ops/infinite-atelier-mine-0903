@@ -28,6 +28,9 @@ type ProviderConfigRequest struct {
 	// (ADR-0018). It is a plain int rather than a pointer because the UI's field has a value:
 	// an empty box means zero, and zero is the reading that admits work.
 	MaxConcurrency int  `json:"maxConcurrency"`
+	// RateLimitPerMinute bounds this provider's requests per rolling minute,
+	// where ZERO means UNLIMITED (T07). Same convention, same zero reading.
+	RateLimitPerMinute int `json:"rateLimitPerMinute"`
 	LocalApprove   bool `json:"localApprove"`
 	Enabled        bool `json:"enabled"`
 }
@@ -78,7 +81,8 @@ func (b *ProvidersBinding) SaveConfig(request ProviderConfigRequest) (providers.
 		BaseURL:        request.BaseURL,
 		LocalApprove:   request.LocalApprove,
 		Enabled:        request.Enabled,
-		MaxConcurrency: request.MaxConcurrency,
+		MaxConcurrency:    request.MaxConcurrency,
+		RateLimitPerMinute: request.RateLimitPerMinute,
 	})
 	if err != nil {
 		return providers.ConfigDTO{}, toAppError(err)

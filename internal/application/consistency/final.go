@@ -137,6 +137,22 @@ type FinalShot struct {
 	// VideoMIME and VideoBytes describe the approved media's file, for the empty-file rule.
 	VideoMIME  string
 	VideoBytes int64
+	// SpokenLineCount is how many spoken lines this shot's scene carries, and
+	// CoveredLineCount is how many of them have approved audio of their own —
+	// the per-LINE completeness the 2026-09-26 audit's T15 asks for. The
+	// single `AudioVersionID` above answers "does this shot have ANY sound",
+	// which a bed or one line's speech satisfies while other lines stay
+	// silent; the counts answer "does every line the shot speaks have its
+	// take".
+	SpokenLineCount   int
+	CoveredLineCount  int
+	// UncoveredLines name the lines without audio, so a finding can point at
+	// the exact line rather than the shot.
+	UncoveredLines []FinalLine
+	// RequiresVideo marks a shot the board authored as needing motion — the
+	// reader sets it from the row's video motion description. A shot with it
+	// must carry approved VIDEO media (T15), not merely an approved frame.
+	RequiresVideo bool
 }
 
 // FinalLine is one spoken line with no cue.
@@ -363,6 +379,31 @@ func (f *FinalRuleset) checkShotMedia(facts FinalFacts) []consistency.Finding {
 	}
 	for _, shot := range facts.Shots {
 		if shot.MediaVersionID != "" {
+			// THE RECORDED EXIT CONDITION (T15, ADR-0015 §2's stated closing):
+			// a shot the director marked as needing MOTION must carry approved
+			// VIDEO — a frame is a real approval, but it does not move, and
+			// an export that showed a still where motion was authored is the
+			// gap the audit's "必需视频缺失" names. Stale/expired marks are
+			// the staleness ruleset's report, not this one's.
+			if shot.RequiresVideo && shot.MediaKind != "video" {
+				findings = append(findings, consistency.Finding{
+					Rule:       RuleShotMedia,
+					Severity:   consistency.SeverityMajor,
+					EntityType: "storyboard_item",
+					EntityID:   shot.ItemID,
+					Location:   fmt.Sprintf("shot %d", shot.Ordinal),
+					Field:      "approvedImageAssetVersionId",
+					Problem: fmt.Sprintf("Shot %d requires motion, but its approved media is a %s. "+
+						"The export would show a still where the shot was authored to move.",
+						shot.Ordinal, shot.MediaKind),
+					Suggestion: "Generate a video for this shot and approve it as the shot's media.",
+					Evidence: []consistency.Evidence{
+						{Type: "entity_ref", Ref: shot.ItemID},
+						{Type: "entity_ref", Ref: shot.MediaVersionID},
+					},
+					AutoFixable: false,
+				})
+			}
 			continue
 		}
 		// WHICH SHOTS ARE REQUIRED IS THE ADAPTER'S ANSWER, through `FinalShot.Required`. It is one
@@ -404,30 +445,56 @@ func (f *FinalRuleset) checkShotMedia(facts FinalFacts) []consistency.Finding {
 func (f *FinalRuleset) checkAudio(facts FinalFacts) []consistency.Finding {
 	findings := []consistency.Finding{}
 	for _, shot := range facts.Shots {
-		if shot.AudioVersionID != "" {
-			continue
-		}
 		if !shot.Required {
 			continue
 		}
-		findings = append(findings, consistency.Finding{
-			Rule:       RuleAudioComplete,
-			Severity:   consistency.SeverityMajor,
-			EntityType: "storyboard_item",
-			EntityID:   shot.ItemID,
-			Location:   fmt.Sprintf("shot %d", shot.Ordinal),
-			Field:      "audio",
-			Problem: fmt.Sprintf("Shot %d has no approved audio, so its dialogue would be silent "+
-				"in the export.", shot.Ordinal),
-			Suggestion: "Run the text-to-speech job for this shot's dialogue and approve the result.",
-			Evidence: []consistency.Evidence{
-				{Type: "entity_ref", Ref: shot.ItemID},
-			},
-			AutoFixable: false,
-		})
+		// Per-line findings fire FIRST and regardless of the shot-level
+		// state: a shot with audio and three uncovered lines, and a shot with
+		// none, are the same facts at line granularity.
+		for _, line := range shot.UncoveredLines {
+			findings = append(findings, consistency.Finding{
+				Rule:       RuleAudioComplete,
+				Severity:   consistency.SeverityMajor,
+				EntityType: "dialogue_line",
+				EntityID:   line.LineID,
+				Location:   fmt.Sprintf("shot %d line %s", shot.Ordinal, line.LineID),
+				Field:      "audio",
+				Problem: fmt.Sprintf("Shot %d's line %q has no approved audio; the shot's other "+
+					"audio does not speak this line.", shot.Ordinal, truncate(line.Text, 40)),
+				Suggestion: "Run the text-to-speech job for this dialogue line and approve the result.",
+				Evidence: []consistency.Evidence{
+					{Type: "entity_ref", Ref: shot.ItemID},
+					{Type: "entity_ref", Ref: line.LineID},
+				},
+				AutoFixable: false,
+			})
+		}
+		if shot.AudioVersionID == "" && len(shot.UncoveredLines) == 0 {
+			// The shot-level finding stays for the case the coverage read
+			// could not answer — no script facts (an empty SpokenLineCount
+			// means the episode's lines were not read, so the shot-level
+			// statement is the only honest one).
+			findings = append(findings, consistency.Finding{
+				Rule:       RuleAudioComplete,
+				Severity:   consistency.SeverityMajor,
+				EntityType: "storyboard_item",
+				EntityID:   shot.ItemID,
+				Location:   fmt.Sprintf("shot %d", shot.Ordinal),
+				Field:      "audio",
+				Problem: fmt.Sprintf("Shot %d has no approved audio, so its dialogue would be silent "+
+					"in the export.", shot.Ordinal),
+				Suggestion: "Run the text-to-speech job for this shot's dialogue and approve the result.",
+				Evidence: []consistency.Evidence{
+					{Type: "entity_ref", Ref: shot.ItemID},
+				},
+				AutoFixable: false,
+			})
+			continue
+		}
 	}
 	return findings
 }
+
 
 // checkSubtitles is 11.4's "音频和字幕完整", the subtitle half, and AC-MEDIA-002's missing-line clause.
 func (f *FinalRuleset) checkSubtitles(facts FinalFacts) []consistency.Finding {

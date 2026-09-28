@@ -28,4 +28,8 @@ export function ListLineage(arg1:string):Promise<desktop.LineageDTO>;
 
 export function ListUsages(arg1:string):Promise<Array<desktop.AssetUsageDTO>>;
 
+export function ListUsagesOfConsumer(arg1:string,arg2:string):Promise<Array<desktop.AssetUsageDTO>>;
+
 export function ListVersions(arg1:string):Promise<Array<desktop.AssetVersionDTO>>;
+
+export function SetUsageParams(arg1:desktop.SetUsageParamsRequest):Promise<void>;

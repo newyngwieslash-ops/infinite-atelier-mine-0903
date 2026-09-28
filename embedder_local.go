@@ -40,8 +40,13 @@ func newLocalEmbedder() appmemory.Embedder {
 	if modelPath == "" || vocabPath == "" {
 		// Not configured. The provider bridge is the path, and nothing is logged: a build with no
 		// local model is the ordinary state rather than a problem.
+		setLocalEmbedderConfigured(false)
 		return nil
 	}
+	// CONFIGURED: from here the health snapshot says "unavailable" rather
+	// than "not_configured" when anything below fails, because the user ASKED
+	// for local embedding.
+	setLocalEmbedderConfigured(true)
 	embedder, err := onnxemb.New(onnxemb.Config{
 		RuntimePath: strings.TrimSpace(os.Getenv("IA_ONNX_RUNTIME")),
 		ModelPath:   modelPath,
@@ -67,6 +72,10 @@ func newLocalEmbedder() appmemory.Embedder {
 var (
 	localEmbedderMu     sync.Mutex
 	localEmbedderReason string
+	// localEmbedderConfigured records that IA_ONNX_MODEL/IA_ONNX_VOCAB were
+	// NAMED, whether or not the model loaded — the distinction the health
+	// snapshot reports as "unavailable" rather than "not_configured".
+	localEmbedderConfigured bool
 )
 
 // recordLocalEmbedderFailure keeps the reason a configured embedder could not be built.
@@ -85,4 +94,20 @@ func LocalEmbedderStatus() string {
 	localEmbedderMu.Lock()
 	defer localEmbedderMu.Unlock()
 	return localEmbedderReason
+}
+
+// setLocalEmbedderConfigured records whether the environment named a model.
+func setLocalEmbedderConfigured(configured bool) {
+	localEmbedderMu.Lock()
+	defer localEmbedderMu.Unlock()
+	localEmbedderConfigured = configured
+}
+
+// LocalEmbedderConfigured reports whether the environment named a model and
+// vocabulary, which is what distinguishes "not configured" from "configured
+// but unavailable" in the health snapshot.
+func LocalEmbedderConfigured() bool {
+	localEmbedderMu.Lock()
+	defer localEmbedderMu.Unlock()
+	return localEmbedderConfigured
 }

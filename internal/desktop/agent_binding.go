@@ -33,6 +33,19 @@ type AgentBinding struct {
 	ctx       context.Context
 	inspector *agentruntime.Inspector
 	registry  *agentruntime.Registry
+	// assembly is the skill source the management surface acts on (T09): its
+	// SetAgentEnabled is the stop switch, its SkillDocument the readback. It
+	// is optional and its absence fails closed, like every other dependency.
+	assembly agentSkillManager
+}
+
+// agentSkillManager is the management surface the binding needs from the
+// assembly, declared narrow here so the binding does not import the whole
+// assembly type's surface.
+type agentSkillManager interface {
+	SetAgentEnabled(agentKey string, enabled bool) error
+	AgentEnabled(agentKey string) bool
+	SkillDocument(agentKey string) (string, bool)
 }
 
 // ListAgentRuns returns a project's runs newest first.
@@ -99,12 +112,20 @@ func (b *AgentBinding) AgentInventory() (AgentInventoryDTO, error) {
 		agent.LayerDecision, agent.LayerExecution, agent.LayerSupervision,
 	} {
 		for _, spec := range registry.OfLayer(layer) {
+			// THE ENABLED FLAG travels per agent (T09), read from the same
+			// skill manager the stop switch writes through, so the list and
+			// the switch cannot disagree.
+			enabled := true
+			if b.assembly != nil {
+				enabled = b.assembly.AgentEnabled(spec.Key)
+			}
 			inventory.Agents = append(inventory.Agents, AgentSpecDTO{
 				Key: spec.Key, Layer: string(spec.Layer), Skill: spec.Skill,
 				AllowedTools:       append([]string(nil), spec.AllowedTools...),
 				MaxToolCalls:       spec.Limits.MaxToolCalls,
 				MaxDurationSeconds: int(spec.Limits.MaxDuration.Seconds()),
 				PolicyLayer:        string(spec.PolicyLayer),
+				Enabled:            enabled,
 			})
 		}
 	}
@@ -132,6 +153,9 @@ type AgentSpecDTO struct {
 	// number of nanoseconds nobody reads or a string each consumer parses differently.
 	MaxDurationSeconds int    `json:"maxDurationSeconds"`
 	PolicyLayer        string `json:"policyLayer"`
+	// Enabled is the management surface's stop state (T09): a disabled agent
+	// refuses at the skill read, and the inventory shows it.
+	Enabled bool `json:"enabled"`
 }
 
 // ready returns the binding and its context, refusing when the stack is absent.
@@ -160,6 +184,70 @@ func AttachAgent(binding *AgentBinding, ctx context.Context, inspector *agentrun
 	binding.ctx = ctx
 	binding.inspector = inspector
 	binding.mu.Unlock()
+}
+
+// AttachAgentSkills supplies the management surface's skill manager (T09).
+func AttachAgentSkills(binding *AgentBinding, assembly agentSkillManager) {
+	if binding == nil {
+		return
+	}
+	binding.mu.Lock()
+	binding.assembly = assembly
+	binding.mu.Unlock()
+}
+
+// SetAgentEnabled starts or stops one agent (T09, FR-090).
+//
+// The refusal for an unknown key comes from the assembly, which validates
+// against the registered set; the binding's only rule is that the surface
+// must exist. The state is this build's in-process stop switch — a stopped
+// agent resumes on the next app start, which the Agent Center says.
+func (b *AgentBinding) SetAgentEnabled(agentKey string, enabled bool) error {
+	if b == nil {
+		return bindingUnavailable()
+	}
+	b.mu.RLock()
+	assembly := b.assembly
+	b.mu.RUnlock()
+	if assembly == nil {
+		return bindingUnavailable()
+	}
+	return assembly.SetAgentEnabled(agentKey, enabled)
+}
+
+// AgentEnabled reports whether one agent is enabled.
+func (b *AgentBinding) AgentEnabled(agentKey string) (bool, error) {
+	if b == nil {
+		return false, bindingUnavailable()
+	}
+	b.mu.RLock()
+	assembly := b.assembly
+	b.mu.RUnlock()
+	if assembly == nil {
+		return false, bindingUnavailable()
+	}
+	return assembly.AgentEnabled(agentKey), nil
+}
+
+// AgentSkillDocument returns one agent's skill text for viewing (T09). It is
+// prompt MATERIAL, shown read-only: a UI that edited it here would be editing
+// an embedded pack's copy, and the version a run cites is the pack's hash —
+// a new version is a new pack, not an edit.
+func (b *AgentBinding) AgentSkillDocument(agentKey string) (string, error) {
+	if b == nil {
+		return "", bindingUnavailable()
+	}
+	b.mu.RLock()
+	assembly := b.assembly
+	b.mu.RUnlock()
+	if assembly == nil {
+		return "", bindingUnavailable()
+	}
+	document, ok := assembly.SkillDocument(agentKey)
+	if !ok {
+		return "", agent.InvalidError("That agent key is not registered in this build.")
+	}
+	return document, nil
 }
 
 // AttachAgentRegistry supplies the assembled registry the inventory reads.

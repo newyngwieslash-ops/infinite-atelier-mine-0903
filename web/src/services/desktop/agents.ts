@@ -110,3 +110,32 @@ export async function agentInventory(): Promise<desktop.AgentSpecDTO[]> {
         | null;
     return inventory?.agents ?? [];
 }
+
+/**
+ * setAgentEnabled starts or stops one agent — FR-090's management surface.
+ *
+ * The state is this build's in-process stop switch (T09): a disabled agent
+ * refuses at the skill read, and a stopped agent resumes on the next app
+ * start. An unknown key is refused by the core.
+ */
+export async function setAgentEnabled(agentKey: string, enabled: boolean): Promise<void> {
+    const binding = getDesktopWindow()?.go?.desktop?.AgentBinding;
+    if (!binding || typeof binding["SetAgentEnabled"] !== "function") {
+        throw new Error("desktop agent bindings are unavailable");
+    }
+    await (binding["SetAgentEnabled"] as (key: string, enabled: boolean) => Promise<void>)(agentKey, enabled);
+}
+
+/**
+ * agentSkillDocument returns one agent's skill text for read-only viewing.
+ *
+ * It is prompt material: the version a run cites is the pack's hash, so a
+ * change is a new pack rather than an edit here.
+ */
+export async function agentSkillDocument(agentKey: string): Promise<string> {
+    const binding = getDesktopWindow()?.go?.desktop?.AgentBinding;
+    if (!binding || typeof binding["AgentSkillDocument"] !== "function") {
+        throw new Error("desktop agent bindings are unavailable");
+    }
+    return (binding["AgentSkillDocument"] as (key: string) => Promise<string>)(agentKey);
+}

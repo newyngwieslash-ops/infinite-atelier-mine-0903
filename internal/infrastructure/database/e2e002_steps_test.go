@@ -734,3 +734,10 @@ func (w *e2e002Walk) reportIDOf(t *testing.T, result stagepipeline.StageResult) 
 	t.Helper()
 	return w.productionReader().reportIDOf(t, result)
 }
+
+// EffectPortFor reports unsupported, on the same reasoning the other two
+// refusals carry: an effect job reaching this image-batch walk is a job the
+// walk did not mean to submit.
+func (e2e002AdapterSource) EffectPortFor(context.Context, string) (appjobs.EffectPort, error) {
+	return nil, provider.NewUnsupportedError()
+}

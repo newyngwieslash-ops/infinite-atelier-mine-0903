@@ -3,6 +3,7 @@ package providers
 import (
 	"context"
 	"encoding/base64"
+	"encoding/binary"
 	"strings"
 	"sync"
 	"time"
@@ -174,11 +175,66 @@ func (m *MockAudioAdapter) GenerateAudio(_ context.Context, request appjobs.Audi
 	}, nil
 }
 
+// MockEffectAdapter implements the effect contract without contacting a
+// provider: a deterministic tone-carrying WAV whose samples encode the request,
+// so an offline test can prove an EFFECT job produced a file an effect reader
+// accepts rather than a header with nothing in it.
+type MockEffectAdapter struct {
+	// now allows tests to observe ordering without sleeping.
+	now func() time.Time
+}
+
+// NewMockEffectAdapter builds the mock.
+func NewMockEffectAdapter() *MockEffectAdapter {
+	return &MockEffectAdapter{now: time.Now}
+}
+
+// GenerateEffect returns a small deterministic WAV whose sample count follows
+// the requested duration.
+func (m *MockEffectAdapter) GenerateEffect(_ context.Context, request appjobs.EffectRequest) (appjobs.AudioOutcome, error) {
+	if m == nil {
+		return appjobs.AudioOutcome{}, provider.NewUnsupportedError()
+	}
+	if strings.TrimSpace(request.Description) == "" {
+		return appjobs.AudioOutcome{}, provider.NewInvalidInputError()
+	}
+	return appjobs.AudioOutcome{
+		Data:     base64.StdEncoding.EncodeToString(mockEffectWAV(request.DurationSeconds)),
+		MIMEType: detectedMockAudioMIME,
+	}, nil
+}
+
+// mockEffectWAV builds a valid WAV of one second of silence scaled by the
+// requested duration (a header plus samples, no copyrighted content).
+func mockEffectWAV(durationSeconds int) []byte {
+	seconds := durationSeconds
+	if seconds <= 0 {
+		seconds = 1
+	}
+	if seconds > 60 {
+		seconds = 60
+	}
+	header := []byte{
+		'R', 'I', 'F', 'F', 0, 0, 0, 0, 'W', 'A', 'V', 'E',
+		'f', 'm', 't', ' ', 16, 0, 0, 0, 1, 0, 1, 0,
+		0x40, 0x1F, 0, 0, 0x80, 0x3E, 0, 0, 2, 0, 16, 0,
+		'd', 'a', 't', 'a', 0, 0, 0, 0,
+	}
+	samples := make([]byte, 8000*2*seconds)
+	body := append(header, samples...)
+	// RIFF sizes: file-8 and data chunk length.
+	size := uint32(len(body) - 8)
+	binary.LittleEndian.PutUint32(body[4:8], size)
+	binary.LittleEndian.PutUint32(body[40:44], uint32(len(samples)))
+	return body
+}
+
 // Compile-time proof that the mocks satisfy the capability ports they stand in
 // for. A signature drift breaks the build rather than surfacing at runtime.
 var (
 	_ appjobs.VideoPort = (*MockVideoAdapter)(nil)
 	_ appjobs.AudioPort = (*MockAudioAdapter)(nil)
+	_ appjobs.EffectPort = (*MockEffectAdapter)(nil)
 )
 
 // NewMockVideoRequest builds a video request for tests and local exercises.

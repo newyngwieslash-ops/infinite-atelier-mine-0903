@@ -239,10 +239,15 @@ func collectAudio(t *testing.T, harness *mediaHarness, request appproduction.Col
 		// latter, so this adapts the same generator to the former.
 		IDs: audioWalkIDs{},
 	})
+	assetRepository := NewAssetRepository(harness.db)
 	assetService := appassets.NewService(appassets.Options{
-		Repository: NewAssetRepository(harness.db),
+		Repository: assetRepository,
 		Clock:      mediaClock{at: harness.now},
 		IDs:        harness,
+		// The atomic collection command's scope, composed the way production
+		// composes it (`drama_wiring.go`): the same repository's adapter owns
+		// the transaction the collection writes through.
+		Transactions: NewAssetTransactions(assetRepository),
 	})
 	service := appproduction.New(appproduction.Options{Jobs: jobService, Assets: assetService})
 	return service.CollectAudioJobResults(context.Background(), request)

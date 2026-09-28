@@ -152,6 +152,9 @@ const (
 
 // TestWP12RecordScaleWithinBounds is item 4's bound test.
 func TestWP12RecordScaleWithinBounds(t *testing.T) {
+	if raceBuild {
+		t.Skip("performance bounds are measured in a normal build; race instrumentation invalidates the timing comparison (T24)")
+	}
 	load := wp12RecordsFixture(t)
 	ctx := context.Background()
 
@@ -335,6 +338,9 @@ func TestWP12RecordScaleWithinBounds(t *testing.T) {
 // makes the benchmark's "O(the cap), not O(the table)" claim a tested fact rather than a
 // comment.
 func TestWP12VectorScanIsBoundedByTheCandidateCap(t *testing.T) {
+	if raceBuild {
+		t.Skip("performance bounds are measured in a normal build; race instrumentation invalidates the timing comparison (T24)")
+	}
 	load := wp12RecordsFixture(t)
 	ctx := context.Background()
 
@@ -393,6 +399,9 @@ func TestWP12VectorScanIsBoundedByTheCandidateCap(t *testing.T) {
 // finds this comment — which is the point, because the change would be a product change and
 // should be made deliberately.
 func TestWP12VectorCandidatesReachOnlyTheNewestRows(t *testing.T) {
+	if raceBuild {
+		t.Skip("performance bounds are measured in a normal build; race instrumentation invalidates the timing comparison (T24)")
+	}
 	load := wp12RecordsFixture(t)
 	ctx := context.Background()
 
@@ -437,6 +446,9 @@ func TestWP12VectorCandidatesReachOnlyTheNewestRows(t *testing.T) {
 // The comparison is between TWO FIXTURES rather than two calls on one, because the point is
 // the shape of the read against the store's SIZE and one store cannot be two sizes.
 func TestWP12RecordReadsDoNotQueryPerRow(t *testing.T) {
+	if raceBuild {
+		t.Skip("performance bounds are measured in a normal build; race instrumentation invalidates the timing comparison (T24)")
+	}
 	small := wp12RecordsOfSize(t, 2500)
 	large := wp12RecordsFixture(t)
 	ctx := context.Background()

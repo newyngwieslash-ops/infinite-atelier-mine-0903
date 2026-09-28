@@ -377,6 +377,15 @@ func (c *productionCanary) seedScriptWithShots(t *testing.T, shots int) (string,
 	}); err != nil {
 		t.Fatalf("writing the structure: %v", err)
 	}
+	// The board tool requires the CITED version to be in force (T14), so the
+	// walk approves what it seeded — after the structure write, which an
+	// approved version refuses — the same statement production makes before
+	// the storyboard stage runs.
+	if _, err := c.script.ApproveScriptVersion(ctx, appscript.ApproveScriptVersionRequest{
+		ScriptVersionID: version.ID,
+	}); err != nil {
+		t.Fatalf("approving the canary's script version: %v", err)
+	}
 	return version.ID, shotIDs
 }
 

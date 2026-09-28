@@ -94,9 +94,23 @@ type Asset struct {
 	DeletedAt                time.Time
 	DeletedBy                string
 	LegacyMetadata           string
-	CreatedAt                time.Time
-	UpdatedAt                time.Time
-	Revision                 int64
+	// License is the asset's rights record (T17): the licence text or an
+	// SPDX-style identifier the user states. Empty means UNKNOWN, and the
+	// final ruleset reports the unknown rather than assuming permission —
+	// the software's own THIRD_PARTY_NOTICES covers the build's dependencies,
+	// never the assets a user imports or generates.
+	License string
+	// LicenseSource is where the licence statement came from (the user, the
+	// asset's origin, the provider's terms). A licence without provenance is
+	// not verifiable, which is why the source travels beside the text.
+	LicenseSource string
+	// AllowsExportUse is the tri-state '' (unknown) / '1' (allowed) /
+	// '0' (not allowed). The final ruleset treats unknown as a MAJOR finding
+	// and a '0' as CRITICAL — the same two severities the audit's T17 names.
+	AllowsExportUse string
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+	Revision        int64
 }
 
 // ValidateName rejects a name the schema would reject anyway.
@@ -407,6 +421,11 @@ type Usage struct {
 	UsageRole      string
 	Required       bool
 	CreatedAt      time.Time
+	// Params is the USE's own JSON document — how this consumer plays the
+	// version (an audio track's offset, trim, volume, mute; T05). Empty is
+	// the ordinary value and means "play it as the reader defaults", so a
+	// column added by migration 000029 changes nothing for existing rows.
+	Params string
 }
 
 // Validate checks the shape of a usage row.

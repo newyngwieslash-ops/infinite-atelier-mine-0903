@@ -5,6 +5,10 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # T22: feature branches must be able to run this workflow too — a gate that
+  # only fires on main cannot protect the branch the work happens on. Manual
+  # dispatch covers the release-freeze builds.
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -37,6 +41,27 @@ jobs:
       - name: Security scans (dynamic execution, secrets, persistence, direct calls)
         run: node scripts/security-scan.mjs
 
+  fixtures:
+    # The generated-fixture checks (canary, hostile inputs, tool schemas, skill
+    # packs, SBOM) run as their own gate so drift cannot ride along with a
+    # green build.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Canary fixture is current
+        run: node scripts/gen-canary-fixture.mjs --check
+      - name: Hostile-input fixtures are current
+        run: node scripts/gen-malicious-fixtures.mjs --check
+      - name: Tool schemas are current
+        run: node scripts/gen-tool-schemas.mjs --check
+      - name: Skill packs are current
+        run: node scripts/gen-skill-packs.mjs --check
+      - name: SBOM is current
+        run: node scripts/gen-sbom.mjs --check
+
   windows-desktop:
     runs-on: windows-latest
     steps:
@@ -68,3 +93,39 @@ jobs:
         run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.15.0
       - name: Build Windows desktop application
         run: wails build
+      # T22: the NSIS installer is part of the build gate, not a local-only
+      # afterthought — a commit whose app builds but whose installer does not
+      # is exactly the artifact drift the release checklist warns about.
+      - name: Install NSIS
+        run: choco install nsis -y --no-progress
+      - name: Build Windows installer (NSIS)
+        run: wails build -nsis
+      - name: Upload application binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: InfiniteAtelier-exe
+          path: build/bin/InfiniteAtelier.exe
+          if-no-files-found: error
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: InfiniteAtelier-installer
+          path: build/bin/*.exe
+          if-no-files-found: error
+
+  race:
+    # T24: the race gate is its own job on the same platform the desktop app
+    # ships on, with CGO enabled the way the local gate runs it. A data race
+    # in a concurrency-critical path blocks the build rather than being a
+    # known-issue footnote.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+      - name: Run Go tests under race detector
+        shell: pwsh
+        run: |
+          $env:CGO_ENABLED = '1'
+          go test -race ./... -count=1

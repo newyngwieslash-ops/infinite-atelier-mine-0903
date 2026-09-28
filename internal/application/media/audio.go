@@ -1,6 +1,9 @@
 package media
 
-import "strings"
+import (
+	"encoding/json"
+	"strings"
+)
 
 // audio.go is FR-080's V1 audio clauses: 简单混音, 背景音乐导入, 音效建议, 多角色声线映射.
 //
@@ -154,9 +157,30 @@ type AudioClip struct {
 	// Silence is a gain that is actually zero, and the two would be indistinguishable without a
 	// separate way to say "unset" — which is what the pointer-free convention and `Normalize` give.
 	Gain float64
+	// SourceStartMS and SourceEndMS trim the SOURCE FILE (T05): playback uses
+	// the [start, end) window of the file rather than its whole length, which
+	// is a different act from the playback `DurationMS` cap and the placement
+	// `StartMS`. Zero start and zero end mean the whole file.
+	SourceStartMS int
+	SourceEndMS   int
+	// Overrides is the USE's explicit level statement (T05): a stated volume
+	// or mute. It is a POINTER-FREE struct of its own because Gain's zero
+	// means "unset" — the convention `Normalize` implements — so a muted clip
+	// cannot say "zero" through the same field without being normalized back
+	// up to its role default. Nil means the use stated nothing.
+	Overrides *TrackOverrides
 	// Label names the clip in the engine's error output, for a failure a reader can act on. It is
 	// a line or shot identifier, never a filename.
 	Label string
+}
+
+// TrackOverrides is the level statement a use can make about its clip.
+type TrackOverrides struct {
+	// Volume replaces the role default when set.
+	Volume *float64
+	// Muted is literal silence: the clip keeps its row and its manifest
+	// reference, and the engine formats `volume=0` for it.
+	Muted bool
 }
 
 // Validate checks one clip before anything is composed.
@@ -176,6 +200,12 @@ func (c AudioClip) Validate() error {
 	if c.Gain < 0 {
 		return InvalidError("An audio clip's gain cannot be negative.")
 	}
+	if c.SourceStartMS < 0 || c.SourceEndMS < 0 {
+		return InvalidError("A source trim cannot start before the file's beginning.")
+	}
+	if c.SourceEndMS > 0 && c.SourceEndMS <= c.SourceStartMS {
+		return InvalidError("A source trim's end must be after its start.")
+	}
 	return nil
 }
 
@@ -185,6 +215,22 @@ func (c AudioClip) Validate() error {
 // that quietly rewrote its receiver would be a surprise. The mix path calls this once, before
 // building anything.
 func (c AudioClip) Normalize() AudioClip {
+	// THE USE'S OWN LEVEL (T05) is the exception to the zero-means-unset
+	// convention: a stated volume replaces the role default, and a stated
+	// mute is literal silence — the gain stays zero because the mix applies
+	// the override AFTER this pass. Filling it here would turn 「静音」 into
+	// the role default, which is the exact ambiguity the override struct
+	// exists to keep apart.
+	if c.Overrides != nil {
+		if c.Overrides.Muted {
+			c.Gain = 0
+			return c
+		}
+		if c.Overrides.Volume != nil {
+			c.Gain = *c.Overrides.Volume
+			return c
+		}
+	}
 	if c.Gain == 0 {
 		c.Gain = DefaultGainFor(c.Role)
 	}
@@ -235,3 +281,103 @@ const maxMixClips = 64
 
 // MaxAudioClips exposes the bound to the application layer, which checks it where it builds the mix.
 func MaxAudioClips() int { return maxMixClips }
+
+// TrackParams is one audio USE's own placement — the per-usage document
+// migration 000029 stores, read by the timeline and consumed by the mixer.
+//
+// # Why the parameters are sparse
+//
+// Every field is a pointer: nil means "not set", and the mixer fills it from
+// what it already knows — the shot's start, the role's default gain, the
+// clip's own length. A document that had to restate everything would go stale
+// the moment a shot moved; a sparse one only overrides what the user set.
+type TrackParams struct {
+	// OffsetMS moves the clip's start relative to its default (the shot's
+	// start for dialogue and effects, zero for a bed). Positive is later.
+	OffsetMS *int
+	// SourceStartMS and SourceEndMS trim the SOURCE file: playback uses the
+	// [start, end) window rather than the whole file. Nil start means zero,
+	// nil end means the file's own end.
+	SourceStartMS *int
+	SourceEndMS   *int
+	// DurationMS caps playback length after trimming. Nil means "until the
+	// trimmed source ends".
+	DurationMS *int
+	// Volume is the clip's gain multiplier. Nil falls back to the role
+	// default through Normalized().
+	Volume *float64
+	// Muted silences the clip while keeping its row — a mix that keeps the
+	// take listed but plays nothing.
+	Muted *bool
+	// DialogueLineID names the line a dialogue clip renders, so a shot with
+	// several lines can place each one by the line's own cue rather than at
+	// the shot's start. Empty on effects and beds.
+	DialogueLineID string
+}
+
+// ParseTrackParams reads the stored document, tolerating anything malformed:
+// a row whose params cannot be parsed still plays, at its defaults — the
+// same direction audioJobInputOf takes, because a placement the user set is
+// an override, not a precondition.
+func ParseTrackParams(paramsJSON string) TrackParams {
+	var params TrackParams
+	trimmed := strings.TrimSpace(paramsJSON)
+	if trimmed == "" {
+		return params
+	}
+	var document struct {
+		OffsetMS       *int     `json:"offsetMs"`
+		SourceStartMS  *int     `json:"sourceStartMs"`
+		SourceEndMS    *int     `json:"sourceEndMs"`
+		DurationMS     *int     `json:"durationMs"`
+		Volume         *float64 `json:"volume"`
+		Muted          *bool    `json:"muted"`
+		DialogueLineID string   `json:"dialogueLineId"`
+	}
+	if err := json.Unmarshal([]byte(trimmed), &document); err != nil {
+		return TrackParams{}
+	}
+	return TrackParams{
+		OffsetMS:       document.OffsetMS,
+		SourceStartMS:  document.SourceStartMS,
+		SourceEndMS:    document.SourceEndMS,
+		DurationMS:     document.DurationMS,
+		Volume:         document.Volume,
+		Muted:          document.Muted,
+		DialogueLineID: document.DialogueLineID,
+	}
+}
+
+// MarshalTrackParams writes the document a usage stores.
+func MarshalTrackParams(params TrackParams) (string, error) {
+	if params.Empty() {
+		return "", nil
+	}
+	encoded, err := json.Marshal(struct {
+		OffsetMS       *int     `json:"offsetMs,omitempty"`
+		SourceStartMS  *int     `json:"sourceStartMs,omitempty"`
+		SourceEndMS    *int     `json:"sourceEndMs,omitempty"`
+		DurationMS     *int     `json:"durationMs,omitempty"`
+		Volume         *float64 `json:"volume,omitempty"`
+		Muted          *bool    `json:"muted,omitempty"`
+		DialogueLineID string   `json:"dialogueLineId,omitempty"`
+	}{
+		OffsetMS:       params.OffsetMS,
+		SourceStartMS:  params.SourceStartMS,
+		SourceEndMS:    params.SourceEndMS,
+		DurationMS:     params.DurationMS,
+		Volume:         params.Volume,
+		Muted:          params.Muted,
+		DialogueLineID: params.DialogueLineID,
+	})
+	if err != nil {
+		return "", err
+	}
+	return string(encoded), nil
+}
+
+// Empty reports whether the parameters override nothing.
+func (t TrackParams) Empty() bool {
+	return t.OffsetMS == nil && t.SourceStartMS == nil && t.SourceEndMS == nil &&
+		t.DurationMS == nil && t.Volume == nil && t.Muted == nil && t.DialogueLineID == ""
+}

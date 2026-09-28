@@ -31,7 +31,7 @@ import {
 import { ensureStoryboard, getScriptStructure, isDramaBindingsAvailable, listScriptVersions, listStoryboardVersions } from "@/services/desktop/drama";
 import { importBackgroundMusic, isMusicImportAvailable } from "@/services/desktop/music";
 import { isVoiceSurfaceAvailable, suggestShotEffects } from "@/services/desktop/voices";
-import { submitAudioJob } from "@/services/desktop/jobs";
+import { submitAudioJob, submitEffectJob } from "@/services/desktop/jobs";
 import { channelIdForModel, decodeModelSelection } from "@/services/desktop/model-selection";
 import { useEffectiveConfig } from "@/stores/use-config-store";
 import type { desktop } from "@/wailsjs/go/models";
@@ -1001,18 +1001,18 @@ export function TimelineSection({ episodes, activeEpisodeId, onSelectEpisode, on
         }
         setGeneratingEffect(shot.shotId);
         try {
-            const job = await submitAudioJob({
+            // An effect is an EFFECT job (T03), not a speech job with the
+            // matched word in its text: a speech endpoint would read the word
+            // aloud, which is the failure mode the audit named. The dedicated
+            // command carries the description to the effect capability, and a
+            // channel without one refuses honestly.
+            const job = await submitEffectJob({
                 projectId,
                 episodeId: activeEpisodeId,
-                // The job's entity is the SHOT's row here rather than a dialogue line, because a sound
-                // effect does not belong to a line. The binding's field is named for the line because
-                // that is what speech usually renders; an effect job is the same command with a different
-                // subject, and the entity is what records which.
-                dialogueLineId: shot.shotId,
+                shotId: shot.shotId,
                 providerId: channelId,
                 model: decoded.model,
-                text: matched,
-                voice: config.audioVoice || undefined,
+                description: matched,
                 format: config.audioFormat || undefined,
             } as never);
             message.success(t("studio.timeline.effectSubmitted", { effect, job: job.id.slice(0, 8) }));

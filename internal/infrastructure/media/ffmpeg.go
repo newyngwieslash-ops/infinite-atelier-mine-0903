@@ -749,12 +749,27 @@ func audioMixGraph(mix appmedia.AudioMix) (string, error) {
 		input := "[" + strconv.Itoa(index+1) + ":a:0]"
 		label := "[a" + strconv.Itoa(index) + "]"
 		filter := "adelay=" + strconv.Itoa(clip.StartMS) + "|" + strconv.Itoa(clip.StartMS)
+		// THE SOURCE TRIM (T05) narrows the file BEFORE any of the other
+		// filters see it: `atrim=start:end` keeps the [start, end) window of
+		// the source, so a bed the user cut to its second half plays only
+		// that half. End zero means the file's own end — an omitted `end`.
+		// The trim is FIRST in the chain because every later measure (the
+		// playback cap and the delay) counts from the trimmed clip.
+		trim := ""
+		if clip.SourceStartMS > 0 || clip.SourceEndMS > 0 {
+			trim = "atrim=start=" + formatSeconds(clip.SourceStartMS)
+			if clip.SourceEndMS > 0 {
+				trim += ":end=" + formatSeconds(clip.SourceEndMS)
+			}
+			trim += ","
+		}
 		if clip.DurationMS > 0 {
 			// A stated duration TRIMS the clip, which is a different act from placing it: a user who
 			// wants the last two seconds off a bed changes this and not its start. `atrim` before the
 			// delay so the delay is measured from the trimmed clip's own beginning.
 			filter = "atrim=0:" + formatSeconds(clip.DurationMS) + "," + filter
 		}
+		filter = trim + filter
 		// `%g` so unity is `1` and a bed is `0.35` rather than six decimal places of noise.
 		filter += ",volume=" + strconv.FormatFloat(clip.Gain, 'g', -1, 64)
 		parts = append(parts, input+filter+label)
@@ -898,4 +913,40 @@ func (e *FFmpegEngine) runReadingStderr(ctx context.Context, program string, arg
 		return "", appmedia.ComposeError("The media engine refused the request.", errors.New(detail))
 	}
 	return stderr.String(), nil
+}
+
+// Thumbnail derives a small image from one source image's bytes — the local
+// thumbnail job's engine half (T06).
+//
+// It runs the same scale+pad filter the segment normaliser uses, through the
+// same audited exec path, with the output written to a temp file and read
+// back as PNG bytes. A source the engine cannot decode fails here, which is
+// the honest answer for a thumbnail job.
+func (e *FFmpegEngine) Thumbnail(ctx context.Context, source []byte, width, height int) ([]byte, error) {
+	if e == nil || !e.Available() {
+		return nil, appmedia.NotAvailableError("The media engine is unavailable, so no thumbnail can be derived.")
+	}
+	if width <= 0 || height <= 0 {
+		return nil, appmedia.InvalidError("A thumbnail needs a positive size.")
+	}
+	scratch, err := os.MkdirTemp(e.tempDir, "thumb-")
+	if err != nil {
+		return nil, appmedia.StorageError("The thumbnail's scratch directory could not be created.", err)
+	}
+	defer os.RemoveAll(scratch)
+	input := filepath.Join(scratch, "source")
+	if err := os.WriteFile(input, source, 0o600); err != nil {
+		return nil, appmedia.StorageError("The thumbnail's source could not be staged.", err)
+	}
+	output := filepath.Join(scratch, "thumb.png")
+	filter := fmt.Sprintf("scale=%d:%d:force_original_aspect_ratio=decrease,pad=%d:%d:(ow-iw)/2:(oh-ih)/2", width, height, width, height)
+	args := []string{"-y", "-i", input, "-vf", filter, "-frames:v", "1", output}
+	if _, err := e.run(ctx, "ffmpeg", args, 30*time.Second); err != nil {
+		return nil, err
+	}
+	png, err := os.ReadFile(output)
+	if err != nil {
+		return nil, appmedia.StorageError("The thumbnail could not be read back.", err)
+	}
+	return png, nil
 }

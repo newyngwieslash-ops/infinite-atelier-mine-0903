@@ -22,15 +22,29 @@ import (
 // WP-11's acceptance walk BY HAND, under a comment that says it writes "the asset, version, file and
 // usage **a TTS job's result leaves**" — a path that did not exist.
 //
-// The same shape as WP-29's two defects: every test passed because every test supplied its own
-// equivalent of production. `AttachJobResult` has a Wails binding, the audio section listed a job's
-// `resultFiles`, and nothing joined the two.
+// # Why the three writes became ONE command
 //
-// # Why it lives beside the image batch's collector
+// The collector used to call AttachJobResult, then ApproveVersion, then AddUsage — three commands, three
+// commits. The 2026-09-26 audit named what that costs: a failure between the writes left a candidate with
+// no approval, or a new approval shadowing the old with no usage of its own, and a retry could die between
+// the same writes again. The asset service now carries the atomic command (`appassets.CollectJobResult`,
+// whose storage half is one transaction over version, files, approval and usage), and this collector is
+// its caller: it decides WHICH jobs to collect and WHAT their rows mean, and the service decides THAT the
+// row set lands complete or not at all.
 //
-// Because it is the same act, and because the alternative is a second implementation of "a job's result
-// becomes a version with a role" — the duplication this repository treats as the defect rather than the
-// accident. What differs between the two is only what a role MEANS, and that is a string.
+// The repeat rule the audit requires lives on both sides. A restarted collection asks about the same job
+// ids; the atomic command answers "already there" — after repairing whatever the interrupted first
+// attempt left behind, because a halfway state repaired on repeat is what makes the retry idempotent
+// without being a no-op. That answer is REPORTED (`Duplicate: true`) rather than refused, for the reason
+// the image batch reports it: a caller retrying has to be able to continue.
+//
+// # A job that has not succeeded is SKIPPED, and a succeeded one with no file is REFUSED
+//
+// The first mirrors the image collector: a batch's jobs finish at different times, so a collection that
+// refused on the first unfinished one could never be called while anything was still rendering. The
+// second is the opposite, for the same reason the image collector refuses it: a succeeded job whose
+// result names no file is a job the collector cannot turn into audio, and skipping it would leave the
+// user with a succeeded job and no sound.
 
 // CollectAudioJobResultsRequest names the jobs to collect and the role their versions carry.
 type CollectAudioJobResultsRequest struct {
@@ -61,15 +75,8 @@ type CollectAudioJobResultsRequest struct {
 // A panel's images are candidates because a user chooses among several; a line's speech is not a choice
 // between renders, it is the take the user asked for. Approving here is what makes the mix find it: the
 // audio read requires `au.asset_version_id = aa.current_approved_version_id`, so a candidate would be
-// invisible until somebody approved it through a surface that does not exist for audio.
-//
-// # A job that has not succeeded is SKIPPED, and a succeeded one with no file is REFUSED
-//
-// The first mirrors the image collector: a batch's jobs finish at different times, so a collection that
-// refused on the first unfinished one could never be called while anything was still rendering. The
-// second is the opposite, for the same reason the image collector refuses it: a succeeded job whose
-// result names no file is a job the collector cannot turn into audio, and skipping it would leave the
-// user with a succeeded job and no sound.
+// invisible until somebody approved it through a surface that does not exist for audio. The approval is
+// part of the atomic command now, so "collected" and "the mix can read it" are the same fact.
 func (s *Service) CollectAudioJobResults(ctx context.Context, request CollectAudioJobResultsRequest) ([]CollectedCandidate, error) {
 	if s == nil || s.jobs == nil || s.assets == nil {
 		return nil, agent.UnavailableError()
@@ -115,7 +122,7 @@ func (s *Service) CollectAudioJobResults(ctx context.Context, request CollectAud
 			return collected, agent.InvalidError("A succeeded audio job's result named no committed file.")
 		}
 		input := audioJobInputOf(record.InputJSON)
-		version, _, err := s.assets.AttachJobResult(ctx, appassets.AttachJobResultRequest{
+		result, err := s.assets.CollectJobResult(ctx, appassets.CollectJobResultRequest{
 			AssetID:          assetID,
 			JobID:            record.ID,
 			Prompt:           input.Text,
@@ -123,39 +130,24 @@ func (s *Service) CollectAudioJobResults(ctx context.Context, request CollectAud
 			ModelConfigID:    record.ModelConfigID,
 			ModelParameters:  input.Voice,
 			Files:            files,
+			ConsumerType:     asset.ConsumerType(consumerType),
+			ConsumerID:       consumerID,
+			UsageRole:        role,
+			ProjectID:        record.ProjectID,
 		})
 		if err != nil {
-			if isDuplicateCandidate(err) {
-				// The job was already collected. Reported rather than refused, for the reason the image
-				// batch reports it: a restarted collection asks about the same job ids, and "it is
-				// already there" is the answer that lets it continue.
-				collected = append(collected, CollectedCandidate{
-					JobID: record.ID, ItemID: record.EntityID, AssetID: assetID, Duplicate: true,
-				})
-				continue
-			}
 			return collected, err
 		}
-		if _, err := s.assets.ApproveVersion(ctx, appassets.ApproveVersionRequest{
-			VersionID: version.ID,
-			// The flag is a statement about having LOOKED, and this collector has: the version was
-			// created one step above by this same command, so it replaces nothing.
-			ImpactAcknowledged: true,
-		}); err != nil {
-			return collected, err
-		}
-		if _, err := s.assets.AddUsage(ctx, appassets.AddUsageRequest{
-			AssetVersionID: version.ID,
-			ConsumerType:   asset.ConsumerType(consumerType),
-			ConsumerID:     consumerID,
-			UsageRole:      role,
-			Required:       false,
-		}); err != nil {
-			return collected, err
-		}
+		// The atomic command returns the number it wrote or found — a repeat
+		// reports the EXISTING take's number, so a caller showing "take 2"
+		// does not show a different one on a retry.
 		collected = append(collected, CollectedCandidate{
-			JobID: record.ID, ItemID: record.EntityID, AssetID: assetID,
-			VersionID: version.ID, VersionNumber: version.VersionNumber,
+			JobID:         record.ID,
+			ItemID:        record.EntityID,
+			AssetID:       assetID,
+			VersionID:     result.VersionID,
+			VersionNumber: result.VersionNumber,
+			Duplicate:     result.Duplicate,
 		})
 	}
 	return collected, nil

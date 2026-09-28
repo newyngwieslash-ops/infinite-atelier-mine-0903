@@ -109,6 +109,7 @@ wails build
   table (data directory index 4): `rva=0 size=0`, which means no signature is attached. Windows will
   show this as an unknown publisher.
 - **No uninstaller**, because there is nothing installed.
+- **2026-09-26 更新**：安装包（NSIS）已产出（见上文 WP-24 记录）。本节早段"No uninstaller" 的语境是便携版 EXE；安装包的安装/卸载行为以 NSIS 模板为准，其干净 VM 验收（T25）仍待执行。
 
 ---
 

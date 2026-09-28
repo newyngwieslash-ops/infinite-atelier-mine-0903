@@ -2089,6 +2089,11 @@ type ProductionBatch interface {
 	// one because it is the same act over the same service — a succeeded job's result becoming a
 	// version with a usage — and a second port would be a second place for the two to drift.
 	CollectAudioJobResults(ctx context.Context, request appproductionpipeline.CollectAudioJobResultsRequest) ([]appproductionpipeline.CollectedCandidate, error)
+	// CollectVideoJobResults is the video counterpart: a succeeded video job's
+	// result becomes a CANDIDATE version whose usage names the shot, for the
+	// preview/compare/approve act FR-080 asks for. Same act, same service, one
+	// port.
+	CollectVideoJobResults(ctx context.Context, request appproductionpipeline.CollectVideoJobResultsRequest) ([]appproductionpipeline.CollectedCandidate, error)
 	ApproveCandidate(ctx context.Context, request appproductionpipeline.ApproveCandidateRequest) (storyboard.StoryboardPanelVersion, error)
 }
 
@@ -2283,6 +2288,42 @@ func (b *DramaBinding) CollectAudioJobResults(request CollectAudioJobResultsRequ
 		UsageRole:    request.UsageRole,
 		ConsumerType: request.ConsumerType,
 		ConsumerID:   request.ConsumerID,
+	})
+	if err != nil {
+		return nil, toDramaError(err)
+	}
+	out := make([]CollectedCandidateDTO, 0, len(collected))
+	for _, candidate := range collected {
+		out = append(out, CollectedCandidateDTO{
+			JobID: candidate.JobID, ItemID: candidate.ItemID, AssetID: candidate.AssetID,
+			VersionID: candidate.VersionID, VersionNumber: candidate.VersionNumber,
+			Duplicate: candidate.Duplicate,
+		})
+	}
+	return out, nil
+}
+
+// CollectVideoJobResultsRequest names the video jobs to collect and the asset
+// each result belongs to.
+type CollectVideoJobResultsRequest struct {
+	AssetByJob map[string]string `json:"assetByJob"`
+	JobIDs     []string          `json:"jobIds"`
+	// UsageRole is what the versions are used AS; empty is "video".
+	UsageRole string `json:"usageRole,omitempty"`
+}
+
+// CollectVideoJobResults turns succeeded video jobs' results into candidate
+// versions whose usages name their shots — the collection half of FR-080's
+// adopt-one-of-several path.
+func (b *DramaBinding) CollectVideoJobResults(request CollectVideoJobResultsRequest) ([]CollectedCandidateDTO, error) {
+	batch := b.productionBatch()
+	if batch == nil {
+		return nil, bindingUnavailable()
+	}
+	collected, err := batch.CollectVideoJobResults(b.context(), appproductionpipeline.CollectVideoJobResultsRequest{
+		AssetByJob: request.AssetByJob,
+		JobIDs:     request.JobIDs,
+		UsageRole:  request.UsageRole,
 	})
 	if err != nil {
 		return nil, toDramaError(err)

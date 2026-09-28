@@ -45,8 +45,8 @@ func (r *ProviderRepository) SaveConfig(ctx context.Context, config provider.Con
 	// change take effect: the scheduler reads the column each dispatch pass rather than caching it,
 	// so the next pass honours a new value without a restart.
 	if _, err := tx.ExecContext(ctx, `INSERT INTO provider_configs
-		(id, kind, display_name, base_url, secret_ref, local_approved, enabled, max_concurrency, revision, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		(id, kind, display_name, base_url, secret_ref, local_approved, enabled, max_concurrency, rate_limit_per_minute, revision, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			kind = excluded.kind,
 			display_name = excluded.display_name,
@@ -55,10 +55,12 @@ func (r *ProviderRepository) SaveConfig(ctx context.Context, config provider.Con
 			local_approved = excluded.local_approved,
 			enabled = excluded.enabled,
 			max_concurrency = excluded.max_concurrency,
+			rate_limit_per_minute = excluded.rate_limit_per_minute,
 			revision = excluded.revision,
 			updated_at = excluded.updated_at`,
 		config.ID, string(config.Kind), config.DisplayName, config.BaseURL, config.SecretRef,
-		boolInt(config.LocalApproved), boolInt(config.Enabled), config.MaxConcurrency, config.Revision,
+		boolInt(config.LocalApproved), boolInt(config.Enabled), config.MaxConcurrency,
+		config.RateLimitPerMinute, config.Revision,
 		config.CreatedAt.Format(time.RFC3339), config.UpdatedAt.Format(time.RFC3339)); err != nil {
 		return provider.NewStorageError()
 	}
@@ -73,7 +75,7 @@ func (r *ProviderRepository) ListConfigs(ctx context.Context) ([]provider.Config
 	if r == nil || r.db == nil {
 		return nil, provider.NewStorageError()
 	}
-	rows, err := r.db.QueryContext(ctx, `SELECT id, kind, display_name, base_url, secret_ref, local_approved, enabled, max_concurrency, revision, created_at, updated_at
+	rows, err := r.db.QueryContext(ctx, `SELECT id, kind, display_name, base_url, secret_ref, local_approved, enabled, max_concurrency, rate_limit_per_minute, revision, created_at, updated_at
 		FROM provider_configs ORDER BY display_name`)
 	if err != nil {
 		return nil, provider.NewStorageError()
@@ -98,7 +100,7 @@ func (r *ProviderRepository) GetConfig(ctx context.Context, id string) (provider
 	if r == nil || r.db == nil {
 		return provider.Config{}, provider.NewStorageError()
 	}
-	row := r.db.QueryRowContext(ctx, `SELECT id, kind, display_name, base_url, secret_ref, local_approved, enabled, max_concurrency, revision, created_at, updated_at
+	row := r.db.QueryRowContext(ctx, `SELECT id, kind, display_name, base_url, secret_ref, local_approved, enabled, max_concurrency, rate_limit_per_minute, revision, created_at, updated_at
 		FROM provider_configs WHERE id = ?`, id)
 	config, err := scanConfig(row)
 	if err != nil {
@@ -197,7 +199,8 @@ func scanConfig(scanner configScanner) (provider.Config, error) {
 	var localApproved, enabled int
 	var createdAt, updatedAt string
 	if err := scanner.Scan(&config.ID, &kind, &config.DisplayName, &config.BaseURL, &config.SecretRef,
-		&localApproved, &enabled, &config.MaxConcurrency, &config.Revision, &createdAt, &updatedAt); err != nil {
+		&localApproved, &enabled, &config.MaxConcurrency, &config.RateLimitPerMinute, &config.Revision,
+		&createdAt, &updatedAt); err != nil {
 		return provider.Config{}, err
 	}
 	config.Kind = provider.Kind(kind)

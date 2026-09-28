@@ -161,6 +161,11 @@ type AudioVersionRef struct {
 	// vocabulary. An unrecognised or absent role maps to dialogue, which is what every row written
 	// before the roles existed meant.
 	Role AudioRole
+	// Params is the use's own placement document (T05): offset, trim, volume,
+	// mute, the line a dialogue clip renders. Zero value means "play it as
+	// the mixer defaults", which is what every row written before the column
+	// existed means.
+	Params TrackParams
 }
 
 // TimelineOptions configures the service.

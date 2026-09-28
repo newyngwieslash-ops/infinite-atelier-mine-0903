@@ -58,11 +58,12 @@ func (r *FinalFactsReader) FinalFacts(ctx context.Context, episodeID string) (ap
 	}
 	facts := appconsistency.FinalFacts{
 		EpisodeID: episodeID,
-		// Explicitly false, because this build has nowhere to read a licence from. Setting it here
-		// rather than leaving it to a zero value that reads the same is a statement: the ruleset's
-		// licence rule branches on it, and a future build that adds the storage flips this line and
-		// the per-asset rule starts running.
-		LicensesChecked: false,
+		// THE LICENCE RECORD (T17): migration 000031 gave the asset aggregate
+		// its rights columns, so the per-asset licence rule now reads real
+		// rows. An asset whose record is still empty reports Present=false —
+		// the same "unknown" the audit asks to be visible — while an asset
+		// that states a licence carries it with its source.
+		LicensesChecked: true,
 		Licenses:        map[string]appconsistency.FinalLicense{},
 		Files:           map[string]appconsistency.FinalFile{},
 	}
@@ -96,6 +97,9 @@ func (r *FinalFactsReader) FinalFacts(ctx context.Context, episodeID string) (ap
 	}
 	// The newest export, with its manifest decoded.
 	if err := r.readExport(ctx, episodeID, &facts); err != nil {
+		return appconsistency.FinalFacts{}, err
+	}
+	if err := r.readLicenses(ctx, &facts); err != nil {
 		return appconsistency.FinalFacts{}, err
 	}
 	// The file objects every cited hash names. It runs LAST, so it sees every hash the reads above
@@ -197,7 +201,9 @@ func (r *FinalFactsReader) readShots(ctx context.Context, boardVersionID string,
 			COALESCE(au.asset_version_id, '') AS audio_version_id,
 			COALESCE(af.file_hash, '') AS audio_hash,
 			COALESCE(afo.mime_type, '') AS audio_mime,
-			COALESCE(afo.size_bytes, 0) AS audio_bytes
+			COALESCE(afo.size_bytes, 0) AS audio_bytes,
+			COALESCE(i.video_motion_description, '') AS video_motion,
+			COALESCE(v.asset_id, '') AS media_asset_id
 		FROM storyboard_items i
 		LEFT JOIN storyboard_panel_versions p
 			ON p.storyboard_item_id = i.id AND p.status = 'approved'
@@ -230,12 +236,26 @@ func (r *FinalFactsReader) readShots(ctx context.Context, boardVersionID string,
 		// The board stores whole seconds and every rule downstream compares milliseconds, so the
 		// conversion happens once, here, at the boundary between the schema and the ruleset.
 		var durationSecs int
+		var videoMotion, mediaAssetID string
 		if err := rows.Scan(&shot.ItemID, &shot.ShotID, &shot.Ordinal, &durationSecs,
 			&shot.MediaVersionID, &shot.MediaHash, &shot.VideoMIME, &shot.VideoBytes, &shot.MediaKind,
-			&shot.AudioVersionID, &shot.AudioHash, &shot.AudioMIME, &shot.AudioBytes); err != nil {
+			&shot.AudioVersionID, &shot.AudioHash, &shot.AudioMIME, &shot.AudioBytes,
+			&videoMotion, &mediaAssetID); err != nil {
 			return mediaStorageError(err)
 		}
 		shot.DurationMS = durationSecs * 1000
+		// THE MOTION MARK (T15): a row the board authored with a video motion
+		// description is a shot the export must MOVE, so its approved media
+		// must be a video rather than a frame.
+		shot.RequiresVideo = strings.TrimSpace(videoMotion) != ""
+		// THE LICENCE SUBJECT (T17): the shot's approved media asset is the
+		// primary asset whose rights the export needs — its derivation
+		// parents (characters, locations) ride the licence chain later; this
+		// record is the floor.
+		shot.LicenseAssetIDs = []string{}
+		if mediaAssetID != "" {
+			shot.LicenseAssetIDs = append(shot.LicenseAssetIDs, mediaAssetID)
+		}
 		// EVERY BOARDED SHOT IS REQUIRED, and in THIS build that is a constant rather than a reading.
 		//
 		// The schema has no per-shot "may be skipped" column, so a shot a director left out is
@@ -250,6 +270,92 @@ func (r *FinalFactsReader) readShots(ctx context.Context, boardVersionID string,
 	}
 	if err := rows.Err(); err != nil {
 		return mediaStorageError(err)
+	}
+	// PER-LINE AUDIO COVERAGE (T15): for each spoken line of the episode's
+	// script version, does an approved audio take exist whose asset was keyed
+	// on THAT line? The link is the audio asset the collection created per
+	// line instance (T01's isolation rule named for the line's job entity),
+	// matched here by the line's own text-to-asset naming — but names are
+	// prose, not keys, so the durable link is the USAGE: an approved dialogue
+	// usage on the line's SHOT whose version's job entity IS the line. The
+	// job row records which line it rendered (`entity_type='dialogue_line'`),
+	// and the version carries that job id.
+	if facts.ScriptVersionID != "" {
+		if err := r.readLineCoverage(ctx, facts.ScriptVersionID, &facts.Shots); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// readLineCoverage counts, per shot, the spoken lines with and without their
+// own approved audio, naming the uncovered ones.
+//
+// One query, one pass: the lines of the script version join their SHOT
+// through the scene's ordinal mapping the board carries is NOT available in
+// the schema (shots and lines meet only through scenes), so coverage is
+// attached at the EPISODE level instead of the shot level — the audit's
+// requirement is per-LINE locating, which `UncoveredLines` delivers without
+// inventing a shot-line mapping the schema does not state.
+func (r *FinalFactsReader) readLineCoverage(ctx context.Context, scriptVersionID string, shots *[]appconsistency.FinalShot) error {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT l.id, l.line_type, l.text, EXISTS (
+			SELECT 1
+			FROM asset_versions av
+			JOIN generation_jobs j ON j.id = av.generation_job_id
+			JOIN assets aa ON aa.id = av.asset_id
+			JOIN asset_usages au2 ON au2.asset_version_id = av.id
+			WHERE j.entity_type = 'dialogue_line' AND j.entity_id = l.id
+			  AND aa.asset_type = 'audio'
+			  AND au2.consumer_type = 'shot'
+			  AND av.status = 'approved'
+		) AS has_audio
+		FROM dialogue_lines l
+		JOIN scenes sc ON sc.id = l.scene_id
+		WHERE sc.script_version_id = ?
+		  AND l.line_type IN ('dialogue', 'narration')
+		ORDER BY sc.ordinal, l.ordinal`, scriptVersionID)
+	if err != nil {
+		return mediaStorageError(err)
+	}
+	defer rows.Close()
+	type lineRef struct {
+		line   appconsistency.FinalLine
+		hasOne bool
+	}
+	var lines []lineRef
+	for rows.Next() {
+		var ref lineRef
+		if err := rows.Scan(&ref.line.LineID, &ref.line.Type, &ref.line.Text, &ref.hasOne); err != nil {
+			return mediaStorageError(err)
+		}
+		lines = append(lines, ref)
+	}
+	if err := rows.Err(); err != nil {
+		return mediaStorageError(err)
+	}
+	if len(lines) == 0 {
+		return nil
+	}
+	// The episode-level counts ride the FIRST shot's record when there is
+	// one: `SpokenLineCount` and `CoveredLineCount` are per-EPISODE facts in
+	// this schema, and the rule reads them there. The uncovered lines are
+	// every line without its own take, so a finding names the line wherever
+	// the shot mapping is not stated.
+	if len(*shots) > 0 {
+		spoken, coveredCount := 0, 0
+		uncovered := []appconsistency.FinalLine{}
+		for _, ref := range lines {
+			spoken++
+			if ref.hasOne {
+				coveredCount++
+				continue
+			}
+			uncovered = append(uncovered, ref.line)
+		}
+		(*shots)[0].SpokenLineCount = spoken
+		(*shots)[0].CoveredLineCount = coveredCount
+		(*shots)[0].UncoveredLines = uncovered
 	}
 	return nil
 }
@@ -544,4 +650,45 @@ func mediaStoreUnavailable() error {
 
 func mediaStorageError(cause error) error {
 	return appmedia.StorageError("The episode's final state could not be read.", cause)
+}
+
+// readLicenses loads the licence record of every asset this episode's shots
+// reference (T17). The map is keyed by asset id — the same key the licence
+// rule looks its per-asset findings up with — and an asset whose record was
+// never filled still appears, with Present=false, so "unknown" is a row the
+// report carries rather than a silence.
+func (r *FinalFactsReader) readLicenses(ctx context.Context, facts *appconsistency.FinalFacts) error {
+	ids := map[string]bool{}
+	for _, shot := range facts.Shots {
+		for _, assetID := range shot.LicenseAssetIDs {
+			if assetID != "" {
+				ids[assetID] = true
+			}
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	for assetID := range ids {
+		var name, license, source, allows string
+		err := r.db.QueryRowContext(ctx, `
+			SELECT name, license, license_source, allows_export_use
+			FROM assets WHERE id = ?`, assetID).Scan(&name, &license, &source, &allows)
+		if err != nil {
+			if err == sql.ErrNoRows {
+				continue
+			}
+			return mediaStorageError(err)
+		}
+		present := license != ""
+		facts.Licenses[assetID] = appconsistency.FinalLicense{
+			AssetID:   assetID,
+			Name:      name,
+			License:   license,
+			Source:    source,
+			Present:   present,
+			AllowsUse: allows == "1",
+		}
+	}
+	return nil
 }

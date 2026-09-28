@@ -129,6 +129,16 @@ const (
 // it measured in the failure message — so a red run says what the number was and not merely
 // that a number was wrong.
 func TestWP12CanvasScaleWithinBounds(t *testing.T) {
+	// T24's ruling: performance bounds are measured in a NORMAL build. Under
+	// the race detector the instrumentation multiplies database timings by
+	// roughly an order of magnitude, so the same bound measures a different
+	// thing — the two historical 6000 ms failures were exactly this. Detect
+	// the race build by its convention (<race> set by `go test -race`) and
+	// SKIP here; the race job's own value is the zero-data-race report, and
+	// the performance numbers come from the normal `go test` job.
+	if raceBuild {
+		t.Skip("performance bounds are measured in a normal build; race instrumentation invalidates the timing comparison (T24)")
+	}
 	load := wp12CanvasFixture(t)
 	ctx := context.Background()
 	nodes := load.wp12ReadNodes(t)
@@ -279,6 +289,9 @@ func TestWP12CanvasScaleWithinBounds(t *testing.T) {
 // statements. Whether that is acceptable is a product question this test cannot answer, but
 // the figure belongs in the report and not in an assumption.
 func TestWP12CanvasMoveAtTheContractCeiling(t *testing.T) {
+	if raceBuild {
+		t.Skip("performance bounds are measured in a normal build; race instrumentation invalidates the timing comparison (T24)")
+	}
 	load := wp12CanvasFixture(t)
 	ctx := context.Background()
 	nodes := load.wp12ReadNodes(t)
@@ -343,6 +356,9 @@ const wp12MoveCeilingNodes = 5000
 // point is the shape of the read against the canvas's SIZE, and one canvas cannot be two
 // sizes.
 func TestWP12CanvasReadsDoNotQueryPerNode(t *testing.T) {
+	if raceBuild {
+		t.Skip("performance bounds are measured in a normal build; race instrumentation invalidates the timing comparison (T24)")
+	}
 	small := wp12CanvasOfSize(t, 250, 250)
 	large := wp12CanvasFixture(t)
 	ctx := context.Background()

@@ -244,6 +244,12 @@ func composeDrama(handle *database.Handle, store *filestore.Store, canvas *apppr
 		Clock:      clock,
 		IDs:        ids,
 		Events:     eventService,
+		// The atomic collection command's transaction scope (`collect.go`).
+		// The repository itself runs it: `WithinTx` is the method the import
+		// already used to bind its cross-repository writes, so the same
+		// implementation now scopes audio collection too — one composition,
+		// not a second transaction mechanism.
+		Transactions: database.NewAssetTransactions(assetRepository),
 		// The impact half of an approval switch. It is supplied HERE rather than
 		// declared inside the assets package because that package sits below the
 		// staleness service in the dependency order: the service resolves projects

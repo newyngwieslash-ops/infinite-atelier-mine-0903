@@ -23,6 +23,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"sync"
 	"strings"
 
 	agentruntime "github.com/newyngwieslash-ops/infinite-atelier-mine-0903/internal/application/agentruntime"
@@ -94,6 +95,12 @@ type Assembly struct {
 	packs    map[string]Loaded
 	// toolKeys is the table's key set, kept so a caller can ask what a pack may name.
 	toolKeys map[string]bool
+	// disabled is the management surface's stop state (T09), keyed on agent
+	// key and guarded like every other mutable field. A disabled agent's
+	// SkillDocument answers false, which is the gate the runtime already
+	// reads.
+	mu       sync.RWMutex
+	disabled map[string]bool
 }
 
 // Build loads every built-in pack, registers its skill versions, and assembles the
@@ -120,7 +127,7 @@ func Build(ctx context.Context, options Options) (*Assembly, error) {
 	for _, key := range options.Tools.Keys() {
 		known[key] = true
 	}
-	assembly := &Assembly{packs: map[string]Loaded{}, toolKeys: known}
+	assembly := &Assembly{packs: map[string]Loaded{}, toolKeys: known, disabled: map[string]bool{}}
 	specs := make([]agent.Spec, 0, 16)
 	for _, name := range BuiltinPacks {
 		sub, err := skills.Sub(name)
@@ -296,6 +303,15 @@ func (a *Assembly) SkillDocument(agentKey string) (string, bool) {
 	if a == nil {
 		return "", false
 	}
+	// THE STOP SWITCH (T09): a disabled agent answers false at the one read
+	// the runtime already guards on, so a stopped agent's stage refuses at
+	// the assembly rather than needing a second mechanism in the runtime.
+	a.mu.RLock()
+	disabled := a.disabled[agentKey]
+	a.mu.RUnlock()
+	if disabled {
+		return "", false
+	}
 	for _, name := range BuiltinPacks {
 		pack, ok := a.packs[name]
 		if !ok {
@@ -341,4 +357,60 @@ func embeddedAgentSchemaSet() map[string]bool {
 		set[path] = true
 	}
 	return set
+}
+
+// SetAgentEnabled starts or stops one agent by key (T09, FR-090).
+//
+// The state is in-memory for THIS build: FR-090's management surface asks the
+// USER to stop and start agents, and a stopped agent resumes on the next app
+// start unless the user stops it again — recorded here rather than persisted,
+// because a persisted kill switch is a policy decision this work package does
+// not make. An unknown key is refused against the registered set.
+func (a *Assembly) SetAgentEnabled(agentKey string, enabled bool) error {
+	if a == nil {
+		return agent.InvalidError("The agent registry is unavailable.")
+	}
+	known := false
+	for _, name := range BuiltinPacks {
+		if pack, ok := a.packs[name]; ok {
+			if _, ok := pack.Pack.Skills[agentKey]; ok {
+				known = true
+			}
+		}
+	}
+	if !known {
+		return agent.InvalidError("That agent key is not registered in this build.")
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if enabled {
+		delete(a.disabled, agentKey)
+	} else {
+		a.disabled[agentKey] = true
+	}
+	return nil
+}
+
+// AgentEnabled reports whether one agent is currently enabled (T09's readback).
+func (a *Assembly) AgentEnabled(agentKey string) bool {
+	if a == nil {
+		return false
+	}
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return !a.disabled[agentKey]
+}
+
+// DisabledAgents lists the stopped keys.
+func (a *Assembly) DisabledAgents() []string {
+	if a == nil {
+		return nil
+	}
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	keys := make([]string, 0, len(a.disabled))
+	for key := range a.disabled {
+		keys = append(keys, key)
+	}
+	return keys
 }

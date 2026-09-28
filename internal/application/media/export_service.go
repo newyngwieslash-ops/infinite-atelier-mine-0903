@@ -501,9 +501,42 @@ func (s *ExportService) buildMix(ctx context.Context, scratch string, timeline T
 				// off a later shot.
 				startMS = 0
 			}
+			// THE USE'S OWN PLACEMENT (T05) overrides the role's default: the
+			// stored offset moves the clip relative to that default, and the
+			// trim/volume/mute travel with the clip. A use with no parameters
+			// keeps the behaviour every row written before the column existed
+			// had — the sparse-document rule `TrackParams` states.
+			if audio.Params.OffsetMS != nil {
+				startMS += *audio.Params.OffsetMS
+				if startMS < 0 {
+					startMS = 0
+				}
+			}
 			clip, reference, err := s.audioClipFor(ctx, scratch, audio.VersionID, audio.Role, startMS, label)
 			if err != nil {
 				return AudioMix{}, nil, err
+			}
+			// Trim and volume are the USE's, applied after the file is staged.
+			// Mute is applied as a zero gain — the mix keeps the clip's row so
+			// the label and the manifest still name it, and a `volume=0` is
+			// what the engine formats for silence.
+			if audio.Params.SourceStartMS != nil && *audio.Params.SourceStartMS > 0 {
+				clip.SourceStartMS = *audio.Params.SourceStartMS
+			}
+			if audio.Params.SourceEndMS != nil && *audio.Params.SourceEndMS > 0 {
+				clip.SourceEndMS = *audio.Params.SourceEndMS
+			}
+			if audio.Params.DurationMS != nil && *audio.Params.DurationMS > 0 {
+				clip.DurationMS = *audio.Params.DurationMS
+			}
+			if audio.Params.Volume != nil {
+				clip.Gain = *audio.Params.Volume
+			}
+			if audio.Params.Muted != nil && *audio.Params.Muted {
+				clip.Gain = 0
+			}
+			if audio.Params.Volume != nil || (audio.Params.Muted != nil && *audio.Params.Muted) {
+				clip.Overrides = &TrackOverrides{Volume: audio.Params.Volume, Muted: audio.Params.Muted != nil && *audio.Params.Muted}
 			}
 			references = append(references, reference)
 			switch audio.Role {
@@ -541,7 +574,21 @@ func (s *ExportService) buildMix(ctx context.Context, scratch string, timeline T
 	// the point the mix is BUILT is what makes "unstated means the role's default" true of the value
 	// the engine receives, and `TestTheComposedRequestOrdersBedsBeforeEffectsBeforeDialogue` asserts the
 	// 0.35 in the request rather than in the struct this function returns.
-	return AudioMix{Clips: clips}.Normalized(), references, nil
+		mix := AudioMix{Clips: clips}.Normalized()
+	// THE USE'S OWN LEVEL (T05), applied AFTER normalization so an explicit
+	// value overrides the role default: a stated volume replaces it, and a
+	// stated mute is literal silence — `volume=0` — rather than the default
+	// the zero-gain convention would otherwise have Normalized into.
+	for index, clip := range mix.Clips {
+		if clip.Overrides != nil && clip.Overrides.Muted {
+			mix.Clips[index].Gain = 0
+			continue
+		}
+		if clip.Overrides != nil && clip.Overrides.Volume != nil {
+			mix.Clips[index].Gain = *clip.Overrides.Volume
+		}
+	}
+	return mix, references, nil
 }
 
 // audioClipFor stages one approved audio version and builds its clip.

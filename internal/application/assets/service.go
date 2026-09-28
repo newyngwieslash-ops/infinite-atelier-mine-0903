@@ -60,6 +60,14 @@ type Repository interface {
 	AddUsage(ctx context.Context, usage asset.Usage) error
 	ListUsages(ctx context.Context, versionID string) ([]asset.Usage, error)
 	CountUsages(ctx context.Context, versionID string) (int, error)
+
+	// CollectJobResultVersion is the atomic half of audio collection
+	// (`collect.go`): a job's result becomes an approved version with its
+	// usage in ONE transaction, and the boolean reports whether the version is
+	// new. It is declared on the interface the service holds rather than a
+	// separate port so the production wiring composes one repository for both
+	// the per-statement commands and this one.
+	CollectJobResultVersion(ctx context.Context, request CollectStorageRequest) (created bool, versionID string, versionNumber int, err error)
 }
 
 // EventRecorder builds and writes domain events for the commands that emit them.
@@ -90,6 +98,13 @@ type Service struct {
 	// its absence is a WARNING rather than a refusal — see `propagate.go`, which states
 	// why the direction differs from the projector's.
 	propagator ImpactPropagator
+	// transactions scopes the atomic collection command to one database
+	// transaction. It is OPTIONAL because every pre-existing command is
+	// transaction-per-statement and works without it; `CollectJobResult`
+	// REFUSES without it, because falling back to three separate writes would
+	// resurrect the halfway states that command exists to prevent
+	// (`collect.go`).
+	transactions TransactionRunner
 }
 
 // Options configures a Service.
@@ -102,16 +117,21 @@ type Options struct {
 	// Propagator enables the impact analysis §15.1 requires of an approval switch. A
 	// nil value skips the notice and leaves every command working.
 	Propagator ImpactPropagator
+	// Transactions enables `CollectJobResult`, the atomic collection command
+	// (`collect.go`). The production wiring supplies the asset repository
+	// itself, whose `WithinTx` satisfies the port.
+	Transactions TransactionRunner
 }
 
 // NewService builds the asset service.
 func NewService(options Options) *Service {
 	return &Service{
-		repository: options.Repository,
-		clock:      options.Clock,
-		ids:        options.IDs,
-		events:     options.Events,
-		propagator: options.Propagator,
+		repository:   options.Repository,
+		clock:        options.Clock,
+		ids:          options.IDs,
+		events:       options.Events,
+		propagator:   options.Propagator,
+		transactions: options.Transactions,
 	}
 }
 

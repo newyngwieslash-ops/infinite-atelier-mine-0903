@@ -164,6 +164,8 @@ type AssetUsageDTO struct {
 	UsageRole      string `json:"usageRole"`
 	Required       bool   `json:"required"`
 	CreatedAt      string `json:"createdAt"`
+	// Params is the use's placement document (T05), empty when none stored.
+	Params string `json:"params,omitempty"`
 }
 
 // ApprovalImpactDTO is what approving a version would disturb.
@@ -722,4 +724,64 @@ func toAssetError(err error) error {
 		return apperror.New("ASSET_REQUEST_FAILED", "asset", false, "The asset request failed.", err)
 	}
 	return apperror.New("ASSET_"+upperText(string(domainErr.Category)), "asset", false, domainErr.SafeMessage, nil)
+}
+
+// SetUsageParamsRequest edits one use's placement document (T05).
+type SetUsageParamsRequest struct {
+	UsageID        string   `json:"usageId"`
+	OffsetMS       *int     `json:"offsetMs,omitempty"`
+	SourceStartMS  *int     `json:"sourceStartMs,omitempty"`
+	SourceEndMS    *int     `json:"sourceEndMs,omitempty"`
+	DurationMS     *int     `json:"durationMs,omitempty"`
+	Volume         *float64 `json:"volume,omitempty"`
+	Muted          *bool    `json:"muted,omitempty"`
+	DialogueLineID string   `json:"dialogueLineId,omitempty"`
+}
+
+// SetUsageParams stores one use's placement document — the track editor's
+// write. The mixer consumes it on the next export.
+func (b *AssetsBinding) SetUsageParams(request SetUsageParamsRequest) error {
+	service := b.assetService()
+	if service == nil {
+		return bindingUnavailable()
+	}
+	if err := service.SetUsageParams(b.context(), appassets.SetUsageParamsRequest{
+		UsageID:        request.UsageID,
+		OffsetMS:       request.OffsetMS,
+		SourceStartMS:  request.SourceStartMS,
+		SourceEndMS:    request.SourceEndMS,
+		DurationMS:     request.DurationMS,
+		Volume:         request.Volume,
+		Muted:          request.Muted,
+		DialogueLineID: request.DialogueLineID,
+	}); err != nil {
+		return toAssetError(err)
+	}
+	return nil
+}
+
+// ListUsagesOfConsumer returns the uses one consumer makes (T05 read), with
+// each use's stored placement document.
+func (b *AssetsBinding) ListUsagesOfConsumer(consumerType, consumerID string) ([]AssetUsageDTO, error) {
+	service := b.assetService()
+	if service == nil {
+		return nil, bindingUnavailable()
+	}
+	usages, err := service.ListUsagesOfConsumer(b.context(), asset.ConsumerType(consumerType), consumerID)
+	if err != nil {
+		return nil, toAssetError(err)
+	}
+	out := make([]AssetUsageDTO, 0, len(usages))
+	for _, usage := range usages {
+		out = append(out, AssetUsageDTO{
+			AssetVersionID: usage.AssetVersionID,
+			ConsumerType:   string(usage.ConsumerType),
+			ConsumerID:     usage.ConsumerID,
+			UsageRole:      usage.UsageRole,
+			Required:       usage.Required,
+			CreatedAt:      usage.CreatedAt.UTC().Format("2006-01-02T15:04:05Z"),
+			Params:         usage.Params,
+		})
+	}
+	return out, nil
 }

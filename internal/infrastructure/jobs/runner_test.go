@@ -509,3 +509,10 @@ func minimalMP4() []byte {
 		'm', 'p', '4', '1', 'i', 's', 'o', 'm',
 	}
 }
+
+// EffectPortFor refuses: the stub's effect jobs are the ones the effect tests
+// drive directly, so a runner test reaching this port means the composition
+// under test was built without an effect channel — the honest answer.
+func (s stubAdapters) EffectPortFor(context.Context, string) (appjobs.EffectPort, error) {
+	return nil, job.FailedJobError(job.CategoryUnsupported, "no effect adapter")
+}

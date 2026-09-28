@@ -1087,6 +1087,51 @@ export async function collectAudioJobResults(
     return CollectAudioJobResults(request);
 }
 
+/**
+ * collectVideoJobResults turns succeeded video jobs' results into candidate
+ * versions whose usages name their shots — the collection half of FR-080's
+ * adopt-one-of-several path (see video-view.tsx for the preview and the
+ * approve button that completes it).
+ */
+/**
+ * listUsagesOfConsumer returns the uses one consumer makes, with each use's
+ * placement document (T05 read half).
+ */
+export async function listUsagesOfConsumer(consumerType: string, consumerId: string): Promise<desktop.AssetUsageDTO[]> {
+    if (!isAssetsBindingsAvailable()) throw unavailableError();
+    const { ListUsagesOfConsumer } = await loadAssetsBinding();
+    return ListUsagesOfConsumer(consumerType, consumerId);
+}
+
+/**
+ * setUsageParams stores one use's placement document — the track editor's
+ * write (T05). The mixer consumes it on the next export.
+ */
+export async function setUsageParams(request: desktop.SetUsageParamsRequest): Promise<void> {
+    if (!isAssetsBindingsAvailable()) throw unavailableError();
+    const { SetUsageParams } = await loadAssetsBinding();
+    return SetUsageParams(request);
+}
+
+export async function collectVideoJobResults(
+    request: desktop.CollectVideoJobResultsRequest,
+): Promise<desktop.CollectedCandidateDTO[]> {
+    if (!isDramaBindingsAvailable()) throw unavailableError();
+    const { CollectVideoJobResults } = await loadDramaBinding();
+    return CollectVideoJobResults(request);
+}
+
+/**
+ * isVideoCollectionAvailable reports whether the video collection command
+ * exists in this build — the same sixth-probe pattern the job service's
+ * availability checks follow, so a build whose binding predates the command
+ * keeps its submission surface working and hides only what it cannot act on.
+ */
+export function isVideoCollectionAvailable(): boolean {
+    const drama = getDesktopWindow()?.go?.desktop?.DramaBinding;
+    return typeof drama?.CollectVideoJobResults === "function";
+}
+
 export async function createPanelVersion(
     request: desktop.CreatePanelVersionRequest,
 ): Promise<desktop.StoryboardPanelVersionDTO> {

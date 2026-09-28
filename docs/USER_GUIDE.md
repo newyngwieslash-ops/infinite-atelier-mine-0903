@@ -677,7 +677,7 @@ What does not exist:
   own description says the data is "仅保存在浏览器本地", which is accurate for what it does and
   misleading about what it does not.
 
-**Until a screen exists, back up by copying the data directory** (`%AppData%\InfiniteAtelier`)
+**备份已可从界面完成**：设置 → 备份与恢复 可导出/恢复全量备份；此外应用默认每日自动备份一份普通（无密钥）备份到数据目录（T12）。（历史建议 "直接复制数据目录" 仍有效，但不再是唯一途径。）
 **while the application is closed.** That is a file copy, not a supported operation: it has no
 checksum verification and no manifest, and copying `app.db` while the application is running can
 capture a torn database. Copying the whole directory with the application shut down is safe.

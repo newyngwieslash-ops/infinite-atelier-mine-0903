@@ -156,7 +156,7 @@ func (r *ExportRepository) attachAudioClips(ctx context.Context, storyboardVersi
 	if len(facts) == 0 {
 		return nil
 	}
-	rows, err := conn.QueryContext(ctx, `SELECT i.shot_id, au.asset_version_id, au.usage_role
+	rows, err := conn.QueryContext(ctx, `SELECT i.shot_id, au.asset_version_id, au.usage_role, au.params_json
 		FROM storyboard_items i
 		JOIN asset_usages au ON au.consumer_type = 'shot' AND au.consumer_id = i.shot_id
 		JOIN assets aa ON aa.id = (SELECT asset_id FROM asset_versions WHERE id = au.asset_version_id)
@@ -170,13 +170,14 @@ func (r *ExportRepository) attachAudioClips(ctx context.Context, storyboardVersi
 	defer rows.Close()
 	byShot := map[string][]appmedia.AudioVersionRef{}
 	for rows.Next() {
-		var shotID, versionID, usageRole string
-		if err := rows.Scan(&shotID, &versionID, &usageRole); err != nil {
+		var shotID, versionID, usageRole, paramsJSON string
+		if err := rows.Scan(&shotID, &versionID, &usageRole, &paramsJSON); err != nil {
 			return media.StorageError("The approved audio for the board could not be read.", err)
 		}
 		byShot[shotID] = append(byShot[shotID], appmedia.AudioVersionRef{
 			VersionID: versionID,
 			Role:      appmedia.AudioRoleForUsage(usageRole),
+			Params:    appmedia.ParseTrackParams(paramsJSON),
 		})
 	}
 	if err := rows.Err(); err != nil {

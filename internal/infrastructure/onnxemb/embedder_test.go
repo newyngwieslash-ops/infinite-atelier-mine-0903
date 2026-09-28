@@ -66,15 +66,30 @@ func findRuntimeAndModel(t *testing.T) (runtimeDir, modelPath, vocabPath string)
 }
 
 // requireInference skips — naming both halves — when the runtime or the model is absent.
+//
+// T20's boundary: a SKIP is correct for a DEVELOPER machine and must FAIL on
+// a release run whose configuration requires the embedding capability. The
+// release gate is the environment variable IA_REQUIRE_ONNX=1 (set in the
+// release pipeline's ONNX-capable job); the same absence that skips locally
+// fails there, so a release can never green-light with the capability
+// silently absent.
 func requireInference(t *testing.T, runtimeDir, modelPath, vocabPath string) {
 	t.Helper()
 	if runtimeDir == "" {
-		t.Skip("no ONNX runtime library on this machine, so inference cannot be checked: " +
-			"set the runtime path or put the library beside the test binary")
+		message := "no ONNX runtime library on this machine, so inference cannot be checked: " +
+			"set the runtime path or put the library beside the test binary"
+		if os.Getenv("IA_REQUIRE_ONNX") == "1" {
+			t.Fatal("release run requires ONNX inference: " + message)
+		}
+		t.Skip(message)
 	}
 	if modelPath == "" || vocabPath == "" {
-		t.Skip("no ONNX model on this machine, so inference cannot be checked: " +
-			"set IA_ONNX_MODEL and IA_ONNX_VOCAB to a sentence-embedding model and its vocabulary")
+		message := "no ONNX model on this machine, so inference cannot be checked: " +
+			"set IA_ONNX_MODEL and IA_ONNX_VOCAB to a sentence-embedding model and its vocabulary"
+		if os.Getenv("IA_REQUIRE_ONNX") == "1" {
+			t.Fatal("release run requires ONNX inference: " + message)
+		}
+		t.Skip(message)
 	}
 }
 

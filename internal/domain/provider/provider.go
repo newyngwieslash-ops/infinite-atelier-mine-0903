@@ -82,6 +82,13 @@ const (
 	CapabilityVideo Capability = "video"
 	// CapabilityAudio is speech synthesis.
 	CapabilityAudio Capability = "audio"
+	// CapabilityEffect is sound-EFFECT synthesis. It exists separately from
+	// CapabilityAudio because the two name different provider contracts: an
+	// effect channel produces sounds from descriptions, a speech channel
+	// produces words from scripts. A config advertising only `audio` cannot
+	// serve an effect job — the runner refuses it rather than reading the
+	// effect's name aloud.
+	CapabilityEffect Capability = "effect"
 	// CapabilityEmbedding is vector embedding, which WP-10 added.
 	//
 	// It was deliberately absent until then, and a test asserted so: "embedding is not
@@ -99,7 +106,7 @@ const (
 // IsValidCapability reports whether the capability is registered in Go.
 func IsValidCapability(capability Capability) bool {
 	switch capability {
-	case CapabilityText, CapabilityImage, CapabilityVideo, CapabilityAudio, CapabilityEmbedding:
+	case CapabilityText, CapabilityImage, CapabilityVideo, CapabilityAudio, CapabilityEffect, CapabilityEmbedding:
 		return true
 	default:
 		return false
@@ -147,6 +154,10 @@ type Config struct {
 	// stop image, video and audio work on every installation that had not set a limit. A
 	// negative is refused rather than read as a second spelling of unlimited.
 	MaxConcurrency int
+	// RateLimitPerMinute bounds how many provider REQUESTS may start inside a
+	// rolling sixty-second window (T07). ZERO MEANS UNLIMITED — the same
+	// convention MaxConcurrency states — and a negative is refused.
+	RateLimitPerMinute int
 	LocalApproved  bool
 	Enabled        bool
 	Revision       int64
@@ -161,6 +172,10 @@ type Config struct {
 // they asked for. The ceiling is far above any provider's real limit and far below anything that
 // would overflow a counter.
 const MaxConcurrencyCeiling = 1000
+
+// RateLimitCeiling bounds what a configuration may ask for, for the same
+// typo-protection reason MaxConcurrencyCeiling states.
+const RateLimitCeiling = 100000
 
 // IsValidMaxConcurrency reports whether a configured limit may be persisted.
 func IsValidMaxConcurrency(value int) bool {
@@ -178,6 +193,9 @@ type ConfigInput struct {
 	Enabled      bool
 	// MaxConcurrency is the limit to store, 0 for unlimited.
 	MaxConcurrency int
+	// RateLimitPerMinute is the per-minute request ceiling to store, 0 for
+	// unlimited (T07).
+	RateLimitPerMinute int
 }
 
 // RequestRecord is the redacted audit entry persisted per provider call. It

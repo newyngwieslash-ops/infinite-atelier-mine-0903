@@ -423,3 +423,15 @@ func minIntLen(a, b int) int {
 	}
 	return b
 }
+
+func (r *stubJobRepository) ProviderRateLimit(context.Context, string) (int, error) {
+	return 0, nil
+}
+
+func (r *stubJobRepository) ProviderWindowCount(context.Context, string, time.Time) (int, error) {
+	return 0, nil
+}
+
+func (r *stubJobRepository) RecordProviderRequest(context.Context, string, time.Time) error {
+	return nil
+}
