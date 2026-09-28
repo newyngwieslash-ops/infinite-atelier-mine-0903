@@ -113,6 +113,17 @@
 - "effect 提交走 SubmitAudioJob"（timeline-view 注释）**已被 T03 取代**。
 
 ---
+### T32 已执行（2026-09-27，用户授权后）
+
+- **commit**：`f22fe22`「T-batch: audit remediation T01-T24」——121 文件（含全部
+  T01–T24 修复、迁移 000027–000031、七份文档、ADR-0032、执行清单），已推送到
+  `origin/codex/wp-01-desktop-foundation`（push exit 0，`ea10c35..f22fe22`）。
+- **干净基线哈希**（推送后重建，EXE `a5bc0003…3616c`、安装包 `b5ed8a23…c93c4`）：
+  EXE 33,962,496 字节 `a5bc0003933147507953b7710775858b70f739922a0834bdef88efc29d73616c`；
+  安装包 15,899,831 字节 `b5ed8a236070ac9d8158d05d45ad4fd2115383e71d11370fc9d32cf4728c93c4`。
+  （构建含运行时刻差，哈希与推送前 dirty 版不同属正常。）
+- **T32 状态：COMPLETE**。剩余 BLOCKED：T25（VM）、T29（证书）、T28 后半（付费授权）。
+
 ### T32 执行包更新（2026-09-27 补充二）
 
 `scripts/local-toolchain-env.sh` 已入 `.gitignore`（机器本地 Go/gcc 路径，非仓库
