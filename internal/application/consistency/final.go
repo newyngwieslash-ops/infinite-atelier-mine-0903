@@ -510,7 +510,6 @@ func (f *FinalRuleset) checkAudio(facts FinalFacts) []consistency.Finding {
 	return findings
 }
 
-
 // checkSubtitles is 11.4's "音频和字幕完整", the subtitle half, and AC-MEDIA-002's missing-line clause.
 func (f *FinalRuleset) checkSubtitles(facts FinalFacts) []consistency.Finding {
 	findings := []consistency.Finding{}
